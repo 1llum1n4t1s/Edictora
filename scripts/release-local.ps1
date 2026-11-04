@@ -307,7 +307,7 @@ foreach ($runtime in $Runtimes) {
 
     Write-Host "== restore: $runtime ==" -ForegroundColor Cyan
     Invoke-Native "dotnet restore ($runtime)" {
-        dotnet restore ExtWeigh.slnx -r $runtime -p:Configuration=Release --locked-mode
+        dotnet restore src/ExtWeigh.UI/ExtWeigh.UI.csproj -p:Configuration=Release --locked-mode
     }
 
     Write-Host "== publish: $runtime ==" -ForegroundColor Cyan

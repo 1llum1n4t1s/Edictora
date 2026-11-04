@@ -34,13 +34,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $config = if (Test-Path -LiteralPath 'global.json') { Get-Content -LiteralPath 'global.json' -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
           if (-not $config.ContainsKey('sdk')) { $config['sdk'] = @{} }
-          $config['sdk']['version'] = '10.0.401'
+          $config['sdk']['version'] = '10.0.403'
           $config['sdk']['rollForward'] = 'disable'
           $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath 'global.json' -Encoding utf8
       - name: .NET SDK をセットアップ
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.401
+          dotnet-version: 10.0.403
 
       - name: NuGet パッケージをキャッシュ
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -50,7 +50,7 @@ jobs:
           restore-keys: ${{ runner.os }}-nuget-
 
       - name: 復元
-        run: dotnet restore ExtWeigh.slnx -r win-x64 -p:Configuration=Release --locked-mode
+        run: dotnet restore ExtWeigh.slnx -p:Configuration=Release --locked-mode
 
       - name: ビルド
         run: dotnet build ExtWeigh.slnx -c Release --no-restore
