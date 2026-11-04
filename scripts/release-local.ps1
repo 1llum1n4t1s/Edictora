@@ -1,4 +1,4 @@
-# release-local.ps1 — ローカル署名付き Velopack リリース
+﻿# release-local.ps1 — ローカル署名付き Velopack リリース
 #
 # Certum SimplySign は Desktop 接続とスマホトークンの承認が必要なため、
 # GitHub Actions ではなくこのスクリプトからローカル署名する。
@@ -54,10 +54,27 @@ function Remove-LocalWorkItem {
     }
 }
 
+# R2 への書込みは同梱の PowerShell/.NET 実装で行う。
+. (Join-Path $PSScriptRoot 'R2Distribution.Common.ps1')
+
+function Send-ReleaseR2Object {
+    param([Parameter(Mandatory)][System.IO.FileInfo]$File)
+    # バージョン付き成果物は不変、固定 URL とメタデータは毎回再検証する。
+    $immutable = $File.Extension -eq '.nupkg' -or $File.Name -match '\d+\.\d+\.\d+'
+    $cacheControl = if ($immutable) { 'public, max-age=31536000, immutable' } else { 'no-cache, must-revalidate' }
+    $contentType = switch ($File.Extension.ToLowerInvariant()) {
+        '.json' { 'application/json'; break }
+        '.exe' { 'application/vnd.microsoft.portable-executable'; break }
+        '.zip' { 'application/zip'; break }
+        default { if ($File.Name -like 'RELEASES*') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' } }
+    }
+    $null = Publish-R2Object -AccountId $AccountId -Bucket $Bucket -FilePath $File.FullName `
+        -ApiToken $env:CLOUDFLARE_API_TOKEN -ContentType $contentType -CacheControl $cacheControl -Immutable:$immutable
+}
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$WranglerVersion = '4.144.0'
 $Bucket = 'extweigh-updates'
 $BaseUrl = 'https://extweigh.kagayoi.com'
 $AccountId = '10901bfadbf1005164774a7350082985'
@@ -150,9 +167,7 @@ function Send-R2Object {
     param([Parameter(Mandatory)][System.IO.FileInfo]$File)
 
     Write-Host "  ↑ $($File.Name)"
-    Invoke-Native "R2 put ($($File.Name))" {
-        pnpm dlx "wrangler@$WranglerVersion" r2 object put "$Bucket/$($File.Name)" --file $File.FullName --remote
-    }
+    Send-ReleaseR2Object -File $File
 }
 
 function Test-PublishedObject {
@@ -368,8 +383,9 @@ if ($SkipUpload) {
 
 # manifest を先に公開すると、クライアントが未到達の package を参照し得る。
 # package と固定成果物を先に upload・検証し、manifest は最後に公開する。
+$metadataFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File | Where-Object { ($_.Name -like 'assets.*.json' -or $_.Name -like 'RELEASES*') -and $_.Name -notlike 'releases.*.json' } | Sort-Object Name)
 $payloadFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File |
-    Where-Object { $_.Name -notlike 'releases.*.json' } |
+    Where-Object { $_.Name -notlike 'releases.*.json' -and $_.Name -notlike 'assets.*.json' -and $_.Name -notlike 'RELEASES*' } |
     Sort-Object Name)
 if ($payloadFiles.Count -eq 0) {
     throw 'R2 へアップロードする成果物がありません'
@@ -386,7 +402,7 @@ foreach ($file in $payloadFiles) {
 }
 
 Write-Host '== R2 アップロード: manifest ==' -ForegroundColor Cyan
-foreach ($manifest in $manifestFiles | Sort-Object Name) {
+foreach ($manifest in @($metadataFiles + @($manifestFiles | Sort-Object Name))) {
     Send-R2Object -File $manifest
 }
 
@@ -417,7 +433,7 @@ if ($purgeUrls.Count -gt 0) {
 }
 
 Write-Host '== 配信確認: manifest 公開後 ==' -ForegroundColor Cyan
-foreach ($file in @($payloadFiles) + @($manifestFiles)) {
+foreach ($file in @($payloadFiles) + @($metadataFiles) + @($manifestFiles)) {
     Test-PublishedObject -File $file -CacheKey "$Version-final"
 }
 
