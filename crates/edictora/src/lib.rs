@@ -7,6 +7,7 @@
 //! - [`cdp`] — Chrome DevTools Protocol クライアント（localhost の WebSocket のみ）
 //! - [`chrome`] — Chrome の検出と起動（プロファイルは削除しない）
 //! - [`dashboard`] — ダッシュボード操作（要素の特定・書き込み可否・1 操作ずつの実装）
+//! - [`jev`] — `--jev` モード: 操作対象の選択を TypeSafe Jev にも確かめさせる（WinHTTP で直接呼ぶ）
 //! - [`services`] — pull / diff / push / submit の手順と中止判断
 //! - [`cli`] — 引数・出力・終了コード
 //!
@@ -20,6 +21,7 @@ pub mod cli;
 pub mod config;
 pub mod dashboard;
 pub mod error;
+pub mod jev;
 pub mod listing;
 pub mod logging;
 pub mod services;

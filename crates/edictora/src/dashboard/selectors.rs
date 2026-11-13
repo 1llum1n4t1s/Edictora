@@ -93,6 +93,13 @@ fn str_of(e: &Value, name: &str) -> String {
         .to_string()
 }
 
+/// 言語切替のコンボボックスの条件（ルール）。ラベルか表示テキストの 1 行が「言語」と完全一致する。
+///
+/// `pick_*` と `--jev` の判断（`dashboard::jev_assist`）が同じ条件を使うよう、述語として切り出している。
+pub fn is_language_combobox(c: &ElementInfo) -> bool {
+    has_label_line(Some(&c.label), LANGUAGE_LABEL) || has_label_line(Some(&c.text), LANGUAGE_LABEL)
+}
+
 /// 言語切替のコンボボックスを選ぶ。最初の combobox はパブリッシャー選択なので、ラベル「言語」で絞り込む
 pub fn pick_language_combobox(comboboxes: &[ElementInfo]) -> Result<&ElementInfo> {
     // 部分一致ではなく「ラベルの 1 行が完全一致」で選ぶ。
@@ -100,10 +107,7 @@ pub fn pick_language_combobox(comboboxes: &[ElementInfo]) -> Result<&ElementInfo
     // カテゴリ欄まで「言語」に当たって 2 件になった（2026-11-13 の実ダッシュボードで確認）。
     let matches: Vec<&ElementInfo> = comboboxes
         .iter()
-        .filter(|c| {
-            has_label_line(Some(&c.label), LANGUAGE_LABEL)
-                || has_label_line(Some(&c.text), LANGUAGE_LABEL)
-        })
+        .filter(|c| is_language_combobox(c))
         .collect();
     match matches.len() {
         1 => Ok(matches[0]),
@@ -171,11 +175,16 @@ pub fn locale_codes(options: &[ElementInfo]) -> Vec<String> {
     codes
 }
 
+/// 言語の選択肢の条件（ルール）。「言語名 – code」と解釈でき、コードが完全一致する（大文字小文字は無視）
+pub fn is_locale_option(option: &ElementInfo, code: &str) -> bool {
+    parse_locale_option(Some(&option.text)).is_some_and(|p| eq_ic(&p.code, code))
+}
+
 /// コードが完全一致する選択肢を 1 つ選ぶ
 pub fn pick_locale_option<'a>(options: &'a [ElementInfo], code: &str) -> Result<&'a ElementInfo> {
     let matches: Vec<&ElementInfo> = options
         .iter()
-        .filter(|o| parse_locale_option(Some(&o.text)).is_some_and(|p| eq_ic(&p.code, code)))
+        .filter(|o| is_locale_option(o, code))
         .collect();
     match matches.len() {
         1 => Ok(matches[0]),
@@ -203,6 +212,11 @@ pub fn pick_button<'a>(buttons: &'a [ElementInfo], text: &str) -> Result<&'a Ele
     }
 }
 
+/// URL 欄の条件（ルール）。ラベルの 1 行が `label` と完全一致する（空白の有無は無視）
+pub fn is_field_with_label(input: &ElementInfo, label: &str) -> bool {
+    has_label_line(Some(&input.label), label)
+}
+
 /// ラベルで URL 欄を 1 つ選ぶ。空白の有無（「公式 URL」と「公式URL」）は区別しない
 pub fn pick_field_by_label(inputs: &[ElementInfo], field: ListingField) -> Result<&ElementInfo> {
     let Some(label) = field_label(field) else {
@@ -213,7 +227,7 @@ pub fn pick_field_by_label(inputs: &[ElementInfo], field: ListingField) -> Resul
     // 言語欄と同じ理由で、ラベルの 1 行が完全一致するものだけを選ぶ（親要素の説明文に別の欄名が含まれても当たらない）。
     let matches: Vec<&ElementInfo> = inputs
         .iter()
-        .filter(|i| has_label_line(Some(&i.label), label))
+        .filter(|i| is_field_with_label(i, label))
         .collect();
     match matches.len() {
         1 => Ok(matches[0]),

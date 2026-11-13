@@ -4,6 +4,8 @@
 //! - `Usage` / `Config` … 引数・設定の誤り（終了コード 2。Chrome を開く前に検出する）
 //! - `Dashboard` / `WriteBlocked` / `LoginRequired` … ダッシュボード操作の失敗（C# の `DashboardException` 系）
 //! - `Cdp` / `Timeout` / `JavaScript` / `Io` … 下位層の失敗（C# では `DashboardException` ではない例外）
+//! - `Jev` … `--jev` の TypeSafe Jev 呼び出しの失敗（接続不可・タイムアウト・4xx/5xx・応答の形の誤り）。
+//!   推測で先へ進めないよう dashboard 系にはせず、手順全体を止める（終了コード 1）
 //! - `Cancelled` … Ctrl+C による中断（終了コード 130）
 //!
 //! 手順側（`ListingService`）は「DashboardException 系か」で扱いを変えるため、
@@ -35,6 +37,8 @@ pub enum Error {
     JavaScript(String),
     /// ファイル・プロセスなどの入出力の失敗
     Io(String),
+    /// TypeSafe Jev の呼び出しの失敗（`--jev` 指定時だけ起きる）。メッセージに API トークンを含めないこと
+    Jev(String),
     /// 利用者による中断（Ctrl+C）
     Cancelled,
 }
@@ -58,7 +62,8 @@ impl Error {
             | Error::Cdp(m)
             | Error::Timeout(m)
             | Error::JavaScript(m)
-            | Error::Io(m) => m.clone(),
+            | Error::Io(m)
+            | Error::Jev(m) => m.clone(),
             Error::LoginRequired => LOGIN_REQUIRED_MESSAGE.to_string(),
             Error::Cancelled => "中断しました。".to_string(),
         }
@@ -76,6 +81,7 @@ impl Error {
             Error::Timeout(_) => "Timeout",
             Error::JavaScript(_) => "JavaScript",
             Error::Io(_) => "Io",
+            Error::Jev(_) => "Jev",
             Error::Cancelled => "Cancelled",
         }
     }

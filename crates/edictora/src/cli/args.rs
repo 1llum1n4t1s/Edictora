@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::config::{is_valid_item_id, is_valid_locale_code, normalize_locale_code};
 use crate::error::{Error, Result};
+use crate::jev::DEFAULT_MODEL;
 use crate::util::eq_ic;
 
 /// サブコマンド
@@ -52,6 +53,8 @@ impl CliCommandKind {
                 "--item",
                 "--locale",
                 "--show-browser",
+                "--jev",
+                "--jev-model",
             ],
             CliCommandKind::Push => &[
                 "--config",
@@ -61,6 +64,8 @@ impl CliCommandKind {
                 "--locale",
                 "--yes",
                 "--show-browser",
+                "--jev",
+                "--jev-model",
             ],
             CliCommandKind::Submit => &[
                 "--config",
@@ -69,6 +74,8 @@ impl CliCommandKind {
                 "--item",
                 "--yes",
                 "--show-browser",
+                "--jev",
+                "--jev-model",
             ],
             CliCommandKind::Help | CliCommandKind::Version => &[],
         }
@@ -76,13 +83,14 @@ impl CliCommandKind {
 }
 
 /// 値を取るオプション
-const VALUE_OPTIONS: [&str; 6] = [
+const VALUE_OPTIONS: [&str; 7] = [
     "--config",
     "--profile",
     "--chrome",
     "--item",
     "--locale",
     "--wait",
+    "--jev-model",
 ];
 
 /// 解釈済みのコマンドライン
@@ -99,6 +107,10 @@ pub struct CliCommand {
     pub yes: bool,
     pub login_wait: Option<Duration>,
     pub show_browser: bool,
+    /// `--jev`: 操作対象の選択を TypeSafe Jev にも確かめさせる（opt-in。login では使えない）
+    pub jev: bool,
+    /// `--jev-model`（未指定なら None。使うときは [`CliCommand::jev_model_name`]）
+    pub jev_model: Option<String>,
 }
 
 impl CliCommand {
@@ -113,8 +125,25 @@ impl CliCommand {
             yes: false,
             login_wait: None,
             show_browser: false,
+            jev: false,
+            jev_model: None,
         }
     }
+
+    /// 使う Jev のモデル名（既定 `jev-latest`）
+    pub fn jev_model_name(&self) -> &str {
+        self.jev_model.as_deref().unwrap_or(DEFAULT_MODEL)
+    }
+}
+
+/// Jev のモデル名として受け付けるか（英数字と `.` `_` `-`、64 文字まで）。
+/// 送信本文に入るだけだが、打ち間違いや制御文字を早めに止める
+pub fn is_valid_model_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 /// 引数を解釈する。誤りは `Usage` エラー
@@ -232,11 +261,27 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                     })?;
                 cmd.login_wait = Some(Duration::from_secs(minutes as u64 * 60));
             }
+            "--jev-model" => {
+                let model = v.trim().to_string();
+                if !is_valid_model_name(&model) {
+                    return Err(Error::Usage(format!(
+                        "--jev-model のモデル名が正しくありません（英数字と . _ - で 64 文字まで）: {v}"
+                    )));
+                }
+                set_once(&mut cmd.jev_model, model, &name)?;
+            }
             "--yes" => cmd.yes = true,
             "--show-browser" => cmd.show_browser = true,
+            "--jev" => cmd.jev = true,
             _ => {}
         }
         index += 1;
+    }
+
+    if cmd.jev_model.is_some() && !cmd.jev {
+        return Err(Error::Usage(
+            "--jev-model は --jev と一緒に指定してください".to_string(),
+        ));
     }
 
     if kind == CliCommandKind::Submit {
@@ -293,6 +338,10 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   --item <id>       対象アイテム（複数可。省略時は設定ファイルの全アイテム）
   --locale <code>   対象ロケール（複数可。例: ja, en）
   --show-browser    Chrome のウィンドウを表示して操作する（既定はウィンドウなしで動き、作業中に前面へ出てこない）
+  --jev             入力欄・言語の選択欄・言語の選択肢を選ぶたびに TypeSafe Jev にも確かめさせる（login では使えません）。
+                    API トークンは環境変数 EDICTORA_JEV_API_TOKEN で渡します。画面の要素情報（役割・ラベル行など。
+                    欄の値・URL・パブリッシャー ID は含まない）を api.typesafe.ai へ送ります
+  --jev-model <名前> --jev で使うモデル（既定: jev-latest）
   --wait <分>       login で待つ時間（既定 10 分）。login は常にウィンドウを表示します
   --help            この説明を表示
   --version         バージョンを表示

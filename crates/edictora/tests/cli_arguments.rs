@@ -208,3 +208,119 @@ fn run_バージョンは1_0_5() {
     assert_eq!(code, 0);
     assert_eq!(output.trim(), "edictora 1.0.5");
 }
+
+// ───────── --jev ─────────
+
+#[test]
+fn parse_jevは既定でオフでpull_diff_push_submitで使えloginでは使えない() {
+    assert!(!parse(&["diff"]).unwrap().jev);
+    for args in [
+        vec!["pull", "--jev"],
+        vec!["diff", "--jev"],
+        vec!["push", "--jev", "--yes"],
+        vec!["submit", "--item", ITEM, "--yes", "--jev"],
+    ] {
+        let cmd = parse(&args).unwrap();
+        assert!(cmd.jev, "{args:?}");
+        assert_eq!(cmd.jev_model_name(), "jev-latest");
+    }
+    assert!(usage_error(&["login", "--jev"]));
+    assert!(usage_error(&["diff", "--jev=true"]));
+}
+
+#[test]
+fn parse_jev_modelは任意で_jevなしや不正な名前は拒否する() {
+    let cmd = parse(&["diff", "--jev", "--jev-model", "jev-2026-11"]).unwrap();
+    assert_eq!(cmd.jev_model_name(), "jev-2026-11");
+    let cmd = parse(&["diff", "--jev-model=jev.v2", "--jev"]).unwrap();
+    assert_eq!(cmd.jev_model_name(), "jev.v2");
+
+    assert!(usage_error(&["diff", "--jev-model", "jev-latest"]));
+    assert!(usage_error(&["diff", "--jev", "--jev-model"]));
+    assert!(usage_error(&["diff", "--jev", "--jev-model", "a b"]));
+    assert!(usage_error(&["diff", "--jev", "--jev-model", "日本語"]));
+    assert!(usage_error(&[
+        "diff",
+        "--jev",
+        "--jev-model",
+        "a",
+        "--jev-model",
+        "b"
+    ]));
+    assert!(usage_error(&["login", "--jev-model", "x"]));
+}
+
+fn run_with_token(dir_name: &str, args: &[&str], token: Option<&str>) -> (i32, String, String) {
+    let dir = work_dir(dir_name);
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let opener: &BrowserOpener = &no_browser;
+    let code = CliApp::new(&mut out, &mut err, test_paths(&dir), opener)
+        .with_jev_token(token.map(str::to_string))
+        .run(args, &CancelToken::new());
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+#[test]
+fn run_jevでトークンが無ければブラウザを開かず終了コード2() {
+    let config = write_config("cli-jev-no-token");
+    for token in [None, Some(""), Some("   ")] {
+        let (code, _, err) = run_with_token(
+            "cli-jev-no-token",
+            &["diff", "--jev", "--config", &config],
+            token,
+        );
+        assert_eq!(code, 2);
+        assert!(err.contains("EDICTORA_JEV_API_TOKEN"), "{err}");
+    }
+}
+
+#[test]
+fn run_jevのトークンはエラー出力に出さない() {
+    // 改行入りの不正なトークン
+    let (code, _, err) = run_with_token(
+        "cli-jev-bad-token",
+        &["diff", "--jev"],
+        Some("secret-value\nX"),
+    );
+    assert_eq!(code, 2);
+    assert!(!err.contains("secret-value"), "{err}");
+
+    // 正しいトークンでも、設定の誤りで止まるときに値を出さない（Chrome も開かない）
+    let dir = work_dir("cli-jev-token-ok");
+    let missing = dir.join("none.json");
+    let (code, out, err) = run_with_token(
+        "cli-jev-token-ok",
+        &["diff", "--jev", "--config", missing.to_str().unwrap()],
+        Some("secret-value-123"),
+    );
+    assert_eq!(code, 2);
+    assert!(err.contains("設定ファイルがありません"), "{err}");
+    assert!(!err.contains("secret-value-123") && !out.contains("secret-value-123"));
+}
+
+#[test]
+fn run_jevなしならトークンが無くても従来どおり() {
+    let dir = work_dir("cli-jev-off");
+    let missing = dir.join("none.json");
+    let (code, _, err) = run_with_token(
+        "cli-jev-off",
+        &["diff", "--config", missing.to_str().unwrap()],
+        None,
+    );
+    assert_eq!(code, 2);
+    assert!(err.contains("設定ファイルがありません"));
+    assert!(!err.contains("EDICTORA_JEV_API_TOKEN"));
+}
+
+#[test]
+fn run_ヘルプにjevの説明がある() {
+    let (_, output, _) = run("cli-help-jev", &["--help"]);
+    assert!(output.contains("--jev"));
+    assert!(output.contains("EDICTORA_JEV_API_TOKEN"));
+    assert!(output.contains("--jev-model"));
+}

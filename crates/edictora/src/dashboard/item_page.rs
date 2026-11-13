@@ -5,6 +5,9 @@
 //! - クリックは scrollIntoView → 矩形の中心へ実際のマウス入力（他要素に覆われていたら止める）
 //! - 書き換えはフォーカス → 全選択 → Input.insertText。DOM の value への直接代入はしない
 //! - 待ちは固定時間の sleep ではなく、条件を一定間隔で確かめる（上限時間つき）
+//! - `--jev` のとき（[`DashboardItemPage::with_jev`]）は、入力欄・言語の選択欄・言語の選択肢を
+//!   [`JevAssist`] で選ぶ（ルールと Jev の答えを突き合わせる）。ポーリング中の再特定では Jev を呼ばない。
+//!   確定ボタン・送信ダイアログ・write_gate の判断材料（`get_state`）はルールだけで扱う
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -13,6 +16,7 @@ use serde_json::Value;
 
 use crate::cancel::CancelToken;
 use crate::cdp::CdpPage;
+use crate::dashboard::jev_assist::{JevAssist, Target, non_language_combobox_texts};
 use crate::dashboard::page_scripts::{self as scripts, kinds};
 use crate::dashboard::selectors::{self as sel, ElementInfo};
 use crate::dashboard::text::*;
@@ -34,6 +38,8 @@ pub struct DashboardItemPage<'a> {
     publisher_id: String,
     item_id: Option<String>,
     diagnostics_dir: PathBuf,
+    /// `--jev` のときだけ Some（要素の選択を Jev にも確かめさせる）
+    jev: Option<JevAssist<'a>>,
 }
 
 impl<'a> DashboardItemPage<'a> {
@@ -48,7 +54,97 @@ impl<'a> DashboardItemPage<'a> {
             publisher_id,
             item_id: None,
             diagnostics_dir,
+            jev: None,
         }
+    }
+
+    /// `--jev` モードにする（入力欄・言語の選択欄・言語の選択肢の選択を Jev にも確かめさせる）
+    pub fn with_jev(mut self, assist: JevAssist<'a>) -> DashboardItemPage<'a> {
+        self.jev = Some(assist);
+        self
+    }
+
+    /// 言語のコンボボックスを選ぶ。`ask` が false（ポーリング中の確認）なら Jev を呼ばない
+    fn language_combobox(
+        &self,
+        combos: &[ElementInfo],
+        ask: bool,
+        cancel: &CancelToken,
+    ) -> Result<ElementInfo> {
+        match &self.jev {
+            None => Ok(sel::pick_language_combobox(combos)?.clone()),
+            Some(jev) if ask => {
+                // パブリッシャーの選択欄の表示（アカウント名の恐れ）は送らない
+                let sensitive = non_language_combobox_texts(combos);
+                jev.select(&Target::LanguageCombobox, combos, &sensitive, cancel)
+            }
+            Some(jev) => jev.reselect(&Target::LanguageCombobox, combos),
+        }
+    }
+
+    /// 言語の選択肢を選ぶ
+    fn locale_option(
+        &self,
+        options: &[ElementInfo],
+        code: &str,
+        cancel: &CancelToken,
+    ) -> Result<ElementInfo> {
+        match &self.jev {
+            None => Ok(sel::pick_locale_option(options, code)?.clone()),
+            Some(jev) => {
+                // 常に表示されているパブリッシャー名の選択肢は送らない（選択欄の表示を秘匿文字列にする）
+                let combos = self.collect(kinds::COMBOBOX, cancel)?;
+                let sensitive = non_language_combobox_texts(&combos);
+                jev.select(
+                    &Target::LocaleOption(code.to_string()),
+                    options,
+                    &sensitive,
+                    cancel,
+                )
+            }
+        }
+    }
+
+    /// 説明欄（textarea）を選ぶ。`ask` が false（ポーリング中の確認）なら Jev を呼ばない
+    fn description(
+        &self,
+        textareas: &[ElementInfo],
+        ask: bool,
+        writing: Option<&str>,
+        cancel: &CancelToken,
+    ) -> Result<ElementInfo> {
+        let target = Target::Field(ListingField::Description);
+        match &self.jev {
+            None => Ok(sel::pick_description(textareas)?.clone()),
+            Some(jev) if ask => {
+                let sensitive = self.field_secrets(kinds::TEXTAREA, textareas, writing, cancel)?;
+                jev.select(&target, textareas, &sensitive, cancel)
+            }
+            Some(jev) => jev.reselect(&target, textareas),
+        }
+    }
+
+    /// 送ってはならない文字列: 各欄の現在値・書き込む値・パブリッシャーの選択欄の表示
+    fn field_secrets(
+        &self,
+        kind: &str,
+        elements: &[ElementInfo],
+        writing: Option<&str>,
+        cancel: &CancelToken,
+    ) -> Result<Vec<String>> {
+        let mut secrets = Vec::new();
+        for e in elements {
+            let v = self.value(kind, e.index, cancel)?;
+            if !v.trim().is_empty() {
+                secrets.push(v);
+            }
+        }
+        if let Some(w) = writing.filter(|w| !w.trim().is_empty()) {
+            secrets.push(w.to_string());
+        }
+        let combos = self.collect(kinds::COMBOBOX, cancel)?;
+        secrets.extend(non_language_combobox_texts(&combos));
+        Ok(secrets)
     }
 
     fn item_label(&self) -> String {
@@ -97,25 +193,34 @@ impl<'a> DashboardItemPage<'a> {
     /// 言語欄の aria-expanded が "false" か（一覧が閉じているか）
     fn is_language_list_closed(&self, cancel: &CancelToken) -> Result<bool> {
         let combos = self.collect(kinds::COMBOBOX, cancel)?;
-        let combo = sel::pick_language_combobox(&combos)?;
+        let combo = self.language_combobox(&combos, false, cancel)?;
         Ok(combo.expanded.as_deref() == Some("false"))
     }
 
-    /// 欄の要素を特定する（説明は textarea、URL はラベル）
+    /// 欄の要素を特定する（説明は textarea、URL はラベル）。
+    /// `writing` は書き込む値（`--jev` のとき Jev へ送らない文字列に加える）
     fn locate(
         &self,
         field: ListingField,
+        writing: Option<&str>,
         cancel: &CancelToken,
     ) -> Result<(&'static str, ElementInfo)> {
         if field == ListingField::Description {
             let textareas = self.collect(kinds::TEXTAREA, cancel)?;
-            return Ok((kinds::TEXTAREA, sel::pick_description(&textareas)?.clone()));
+            return Ok((
+                kinds::TEXTAREA,
+                self.description(&textareas, true, writing, cancel)?,
+            ));
         }
         let inputs = self.collect(kinds::TEXT_INPUT, cancel)?;
-        Ok((
-            kinds::TEXT_INPUT,
-            sel::pick_field_by_label(&inputs, field)?.clone(),
-        ))
+        let element = match &self.jev {
+            None => sel::pick_field_by_label(&inputs, field)?.clone(),
+            Some(jev) => {
+                let sensitive = self.field_secrets(kinds::TEXT_INPUT, &inputs, writing, cancel)?;
+                jev.select(&Target::Field(field), &inputs, &sensitive, cancel)?
+            }
+        };
+        Ok((kinds::TEXT_INPUT, element))
     }
 
     /// 要素を画面内へスクロールし、中心を実際のマウス入力でクリックする
@@ -181,6 +286,9 @@ impl<'a> DashboardItemPage<'a> {
 impl ListingPage for DashboardItemPage<'_> {
     fn open_item(&mut self, item_id: &str, cancel: &CancelToken) -> Result<()> {
         self.item_id = Some(item_id.to_string());
+        if let Some(jev) = &self.jev {
+            jev.forget_pins();
+        }
         self.page.prepare_for_input(cancel)?;
         self.page
             .navigate(&urls::edit_url(&self.publisher_id, item_id), cancel)
@@ -208,6 +316,9 @@ impl ListingPage for DashboardItemPage<'_> {
     }
 
     fn reload(&mut self, cancel: &CancelToken) -> Result<()> {
+        if let Some(jev) = &self.jev {
+            jev.forget_pins();
+        }
         self.page.prepare_for_input(cancel)?;
         self.page.reload(cancel).map_err(|e| match e {
             Error::Cdp(m) => Error::Dashboard(format!("編集画面を読み込み直せませんでした: {m}")),
@@ -238,8 +349,8 @@ impl ListingPage for DashboardItemPage<'_> {
     fn get_locales(&mut self, cancel: &CancelToken) -> Result<Vec<String>> {
         self.page.prepare_for_input(cancel)?;
         let combos = self.collect(kinds::COMBOBOX, cancel)?;
-        let combo = sel::pick_language_combobox(&combos)?;
-        let current = sel::current_locale_code(combo);
+        let combo = self.language_combobox(&combos, true, cancel)?;
+        let current = sel::current_locale_code(&combo);
         self.click(kinds::COMBOBOX, combo.index, "言語の選択欄", cancel)?;
 
         let options = self.wait_for_options(cancel)?;
@@ -256,7 +367,7 @@ impl ListingPage for DashboardItemPage<'_> {
         )?;
         if !closed && let Some(current) = current {
             let again = self.collect(kinds::OPTION, cancel)?;
-            let option = sel::pick_locale_option(&again, &current)?;
+            let option = self.locale_option(&again, &current, cancel)?;
             self.click(kinds::OPTION, option.index, "言語の選択肢", cancel)?;
         }
         poll(
@@ -277,14 +388,14 @@ impl ListingPage for DashboardItemPage<'_> {
     fn switch_locale(&mut self, code: &str, cancel: &CancelToken) -> Result<()> {
         self.page.prepare_for_input(cancel)?;
         let combos = self.collect(kinds::COMBOBOX, cancel)?;
-        let combo = sel::pick_language_combobox(&combos)?;
-        if sel::current_locale_code(combo).is_some_and(|c| eq_ic(&c, code)) {
+        let combo = self.language_combobox(&combos, true, cancel)?;
+        if sel::current_locale_code(&combo).is_some_and(|c| eq_ic(&c, code)) {
             return Ok(());
         }
 
         self.click(kinds::COMBOBOX, combo.index, "言語の選択欄", cancel)?;
         let options = self.wait_for_options(cancel)?;
-        let option = sel::pick_locale_option(&options, code)?;
+        let option = self.locale_option(&options, code, cancel)?;
         self.click(
             kinds::OPTION,
             option.index,
@@ -296,8 +407,8 @@ impl ListingPage for DashboardItemPage<'_> {
         poll(
             || {
                 let combos = self.collect(kinds::COMBOBOX, cancel)?;
-                let c = sel::pick_language_combobox(&combos)?;
-                Ok(sel::current_locale_code(c)
+                let c = self.language_combobox(&combos, false, cancel)?;
+                Ok(sel::current_locale_code(&c)
                     .is_some_and(|c| eq_ic(&c, code))
                     .then_some(()))
             },
@@ -312,7 +423,7 @@ impl ListingPage for DashboardItemPage<'_> {
             || {
                 cancel.sleep(Duration::from_millis(400))?;
                 let textareas = self.collect(kinds::TEXTAREA, cancel)?;
-                let textarea = sel::pick_description(&textareas)?;
+                let textarea = self.description(&textareas, false, None, cancel)?;
                 let value = self.value(kinds::TEXTAREA, textarea.index, cancel)?;
                 let stable = previous.as_deref() == Some(value.as_str());
                 previous = Some(value);
@@ -331,7 +442,7 @@ impl ListingPage for DashboardItemPage<'_> {
     ) -> Result<FieldValues> {
         let mut result = FieldValues::new();
         for field in fields {
-            let (kind, element) = self.locate(*field, cancel)?;
+            let (kind, element) = self.locate(*field, None, cancel)?;
             result.insert(*field, self.value(kind, element.index, cancel)?);
         }
         Ok(result)
@@ -344,7 +455,8 @@ impl ListingPage for DashboardItemPage<'_> {
         cancel: &CancelToken,
     ) -> Result<()> {
         self.page.prepare_for_input(cancel)?;
-        let (kind, element) = self.locate(field, cancel)?;
+        let (kind, element) = self.locate(field, Some(value), cancel)?;
+        // Jev で選んだ要素でも、書き込める入力欄かは必ずルールで確かめる
         sel::ensure_writable(&element, field)?;
 
         self.evaluate(&scripts::scroll_to(kind, element.index), cancel)?;

@@ -15,7 +15,10 @@ use crate::app_paths::AppPaths;
 use crate::cancel::CancelToken;
 use crate::config::{self, EdictoraConfig};
 use crate::dashboard::browser::{DashboardBrowser, DashboardBrowserOptions};
+use crate::dashboard::item_page::DashboardItemPage;
+use crate::dashboard::jev_assist::JevAssist;
 use crate::error::{Error, Result};
+use crate::jev::client::{JevClient, JevToken};
 use crate::listing::{ComparisonStatus, ExpectedItem, ListingField, build_expected};
 use crate::logging::{log_error_detail, redact};
 use crate::services::{self, LocalePushOutcome};
@@ -48,6 +51,12 @@ pub fn open_real_browser(
     DashboardBrowser::open(options, cancel)
 }
 
+/// `--jev` の設定（トークンは検証済み。値は表示しない）
+struct JevSettings {
+    token: JevToken,
+    model: String,
+}
+
 /// CLI のコマンド実行
 pub struct CliApp<'a> {
     out: RefCell<&'a mut dyn Write>,
@@ -55,6 +64,10 @@ pub struct CliApp<'a> {
     paths: AppPaths,
     open_browser: &'a BrowserOpener<'a>,
     show_browser: bool,
+    /// 環境変数 EDICTORA_JEV_API_TOKEN の生の値（main が読んで渡す。テストは任意の値を渡せる）
+    jev_token_source: Option<String>,
+    /// `--jev` のときだけ Some
+    jev: Option<JevSettings>,
 }
 
 impl<'a> CliApp<'a> {
@@ -71,7 +84,16 @@ impl<'a> CliApp<'a> {
             paths,
             open_browser,
             show_browser: false,
+            jev_token_source: None,
+            jev: None,
         }
+    }
+
+    /// `--jev` で使う API トークン（環境変数 EDICTORA_JEV_API_TOKEN の値）を渡す。
+    /// 環境変数を読むのは main だけにし、テストではプロセスの環境変数に触れずに値を差し込む
+    pub fn with_jev_token(mut self, token: Option<String>) -> CliApp<'a> {
+        self.jev_token_source = token;
+        self
     }
 
     fn outln(&self, text: &str) {
@@ -119,6 +141,22 @@ impl<'a> CliApp<'a> {
             _ => {}
         }
 
+        // ── --jev のトークン（まだ Chrome は開かない。値はどこにも出さない）──
+        if command.jev {
+            match JevToken::parse(self.jev_token_source.as_deref()) {
+                Ok(token) => {
+                    self.jev = Some(JevSettings {
+                        token,
+                        model: command.jev_model_name().to_string(),
+                    });
+                }
+                Err(e) => {
+                    self.errln(&format!("エラー: {}", e.message()));
+                    return exit_codes::USAGE;
+                }
+            }
+        }
+
         // ── ここから先は設定の検証（まだ Chrome は開かない）──
         let prepared = config::load(
             command.config_path.as_deref(),
@@ -150,6 +188,12 @@ impl<'a> CliApp<'a> {
 
         // ── ブラウザ操作 ──
         self.show_browser = command.show_browser;
+        if let Some(jev) = &self.jev {
+            self.errln(&format!(
+                "Jev モード: 入力欄・言語の選択欄・言語の選択肢を選ぶたびに TypeSafe Jev（モデル {}）にも確かめます。画面の要素情報（役割・ラベル行など）を api.typesafe.ai へ送ります。",
+                jev.model
+            ));
+        }
         let result = match command.kind {
             CliCommandKind::Login => self.login(&config, &command, cancel),
             CliCommandKind::Pull => self.pull(&config, &targets, cancel),
@@ -224,6 +268,18 @@ impl<'a> CliApp<'a> {
         Ok(exit_codes::SUCCESS)
     }
 
+    /// 編集画面の操作を作る。`--jev` なら Jev の選択役を差し込む（採用結果と確信度は進捗へ出す）
+    fn item_page<'b>(&'b self, browser: &'b DashboardBrowser) -> Result<DashboardItemPage<'b>> {
+        let page = browser.create_item_page()?;
+        Ok(match &self.jev {
+            None => page,
+            Some(jev) => page.with_jev(JevAssist::new(
+                Box::new(JevClient::new(jev.token.clone(), &jev.model)),
+                Box::new(self.progress()),
+            )),
+        })
+    }
+
     /// ログイン済みのブラウザを開く。既定はヘッドレス（作業中に前面へ出てこない）。--show-browser のときだけウィンドウを表示する
     fn open_logged_in(
         &self,
@@ -244,7 +300,7 @@ impl<'a> CliApp<'a> {
         cancel: &CancelToken,
     ) -> Result<i32> {
         let browser = self.open_logged_in(config, cancel)?;
-        let mut page = browser.create_item_page()?;
+        let mut page = self.item_page(&browser)?;
         let progress = self.progress();
         let mut failed = false;
 
@@ -305,7 +361,7 @@ impl<'a> CliApp<'a> {
         push_hint: bool,
     ) -> Result<i32> {
         let browser = self.open_logged_in(config, cancel)?;
-        let mut page = browser.create_item_page()?;
+        let mut page = self.item_page(&browser)?;
         let progress = self.progress();
         let mut any_diff = false;
         let mut any_error = false;
@@ -348,7 +404,7 @@ impl<'a> CliApp<'a> {
         cancel: &CancelToken,
     ) -> Result<i32> {
         let browser = self.open_logged_in(config, cancel)?;
-        let mut page = browser.create_item_page()?;
+        let mut page = self.item_page(&browser)?;
         let progress = self.progress();
 
         // 1 件でも失敗したら残りは行わない（エラーがそのまま run へ上がる）
@@ -384,7 +440,7 @@ impl<'a> CliApp<'a> {
         cancel: &CancelToken,
     ) -> Result<i32> {
         let browser = self.open_logged_in(config, cancel)?;
-        let mut page = browser.create_item_page()?;
+        let mut page = self.item_page(&browser)?;
         let progress = self.progress();
 
         let mut confirm = |dialog: &crate::dashboard::SubmitDialogInfo| -> Result<bool> {
