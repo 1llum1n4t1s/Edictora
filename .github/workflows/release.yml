@@ -1,9 +1,11 @@
 name: Release
 
-# 署名付き Velopack リリース (Edictora.UI.exe + CLI の edictora.exe) を GitHub Actions で作り、R2 へ配信する。
+# 署名付き Portable ZIP (Rust 版 CLI の edictora.exe + LICENSE・README・PRIVACY_POLICY) を GitHub Actions で作り、R2 へ配信する。
 # - 配信先: Edictora の R2 bucket・公開ドメインは未確定。scripts/release-local.ps1 の $Bucket / $BaseUrl が
 #   空のあいだは、配信を伴う実行は release-local.ps1 側で「配布先が未設定」として止まる
-#   (ビルド・署名の確認だけなら skip_upload=true で実行できる)。作り替え前の配信先は削除済みで使わない。
+#   (ビルド・署名・ZIP 化の確認だけなら skip_upload=true で実行できる)。作り替え前の配信先は削除済みで使わない。
+# - ビルド: cargo build --release --locked。toolchain は rust-toolchain.toml に従う (ランナー同梱の rustup で導入)。
+#   page-scripts/dist の JS はコミット済みで include_str! で埋め込むため、Bun は要らない。
 # - 署名: Sigilune (https://github.com/1llum1n4t1s/Sigilune) が Certum SimplySign のクラウド鍵で行う。
 #   本人の PC や SimplySign Desktop は不要。
 # - 起動: 手動 (workflow_dispatch)。/vava で版を上げて push した後に、main を指定して実行する
@@ -20,7 +22,7 @@ on:
         type: boolean
         default: false
       cleanup:
-        description: '配信後に manifest 外の古い nupkg を R2 から削除する (release-local.ps1 -Cleanup)'
+        description: '配信後に直近 2 版より古い版付き ZIP を R2 から削除する (release-local.ps1 -Cleanup)'
         type: boolean
         default: false
 
@@ -34,8 +36,7 @@ concurrency:
 
 jobs:
   release:
-    # ci.yml と同じ Windows イメージでビルドする。Directory.Build.props の PublishAot により UI と CLI は
-    # Native AOT で発行されるため、イメージ同梱の Visual Studio C++ ツールチェーンを使う。
+    # ci.yml と同じ Windows イメージでビルドする。MSVC のリンカーはイメージ同梱の Visual Studio C++ ツールチェーンを使う。
     runs-on: windows-2022
     timeout-minutes: 60
     environment: release
@@ -48,23 +49,14 @@ jobs:
         with:
           persist-credentials: false
 
-      # release-local.ps1 は --locked-mode で restore するため、ci.yml と同じ SDK に固定する。
-      - name: Select SDK compatible with the locked compiler packs
+      - name: Rust toolchain を導入 (rust-toolchain.toml)
+        # 引数なしの `rustup toolchain install` は rust-toolchain.toml の channel・profile・components を読む。
+        # リリースではキャッシュを使わず、毎回まっさらな target/ から作る (キャッシュ汚染を配布物に持ち込まない)。
         run: |
-          $ErrorActionPreference = 'Stop'
-          $config = if (Test-Path -LiteralPath 'global.json') { Get-Content -LiteralPath 'global.json' -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
-          if (-not $config.ContainsKey('sdk')) { $config['sdk'] = @{} }
-          $config['sdk']['version'] = '11.0.100'
-          $config['sdk']['rollForward'] = 'disable'
-          $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath 'global.json' -Encoding utf8
-      - name: .NET SDK をセットアップ
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 11.0.100
-
-      - name: dotnet global tool の配置先を PATH へ追加
-        # release-local.ps1 は vpk を dotnet global tool として導入し、PATH から呼ぶ。
-        run: (Join-Path $env:USERPROFILE '.dotnet\tools') | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install が失敗しました (exit $LASTEXITCODE)" }
+          rustup show active-toolchain
+          rustc -vV
 
       - name: Sigilune を導入
         uses: 1llum1n4t1s/Sigilune@v1

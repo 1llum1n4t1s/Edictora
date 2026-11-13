@@ -8,7 +8,7 @@
 
 Chrome Web Store（CWS）の公開 API（v2）には、掲載情報の読み書きがありません。拡張機能から CWS のページを操作することも Chrome が許可しません。
 Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol（CDP）で操作し、デベロッパー ダッシュボードの画面を人と同じ入力で書き換えます。
-コマンドライン（`edictora.exe`）と画面（Edictora.UI）の両方を同梱し、どちらも同じ処理を使います。
+コマンドライン ツール（`edictora.exe`）1 つで動きます。Rust 製で、実行に .NET や Node.js などのランタイムは要りません。
 
 > [!IMPORTANT]
 > ダッシュボードの画面構成に依存するツールです。ダッシュボードは**日本語表示**で使ってください（英語表示は未対応）。
@@ -27,7 +27,7 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 - Windows 10 (20348) / Windows 11 以降
 - Google Chrome（自動検出。設定ファイルの `chromePath` か `--chrome` でも指定可能）
 - CWS デベロッパー アカウント
-- .NET 11 SDK（ソースからビルドする場合）
+- Rust 1.99.1（ソースからビルドする場合。`rust-toolchain.toml` で固定）。ページ内スクリプトを変更するときだけ Bun
 
 ## 使い方
 
@@ -105,10 +105,8 @@ edictora submit --item <id> --yes               # 1 件を審査に送信
 
 進捗は標準エラー、結果は標準出力に出ます。
 
-### 画面（Edictora.UI）
-
-アイテム × ロケールの一覧（一致 / 差分あり / 未取得 / エラー）と、選んだ行の現在値・正本の左右比較を表示します。
-「現在値を取得」で読み出し、チェックした行だけを「下書き保存」、選択中のアイテム 1 件を「審査に送信」できます（どちらも確認ダイアログが出ます）。
+`pull` / `diff` / `push` / `submit` は、Chrome をウィンドウなし（ヘッドレス）で動かすので、作業中に Chrome が前面へ出てきません。
+動きを目で確かめたいときは `--show-browser` を付けるとウィンドウを表示します。`login` は手で操作するため、常にウィンドウを表示します。
 
 ## 安全策
 
@@ -126,7 +124,6 @@ edictora submit --item <id> --yes               # 1 件を審査に送信
 | 内容 | 場所 |
 |---|---|
 | 設定ファイル（正本の対応づけ） | `%APPDATA%\Edictora\config.json` |
-| 画面の設定 | `%APPDATA%\Edictora\settings.json` |
 | Chrome プロファイル（ログイン情報を含む） | `%LOCALAPPDATA%\Edictora\chrome-profile` |
 | ログ | `%LOCALAPPDATA%\Edictora\logs` |
 | 失敗時の画面 | `%LOCALAPPDATA%\Edictora\diagnostics` |
@@ -136,11 +133,28 @@ Chrome プロファイルにはログイン情報（Cookie）が入ります。�
 
 ## ビルド
 
+本体は Rust（`crates/edictora/`）です。
+
 ```powershell
-dotnet build Edictora.slnx -c Release
-dotnet test Edictora.slnx -c Release
-dotnet publish src/Edictora.Cli/Edictora.Cli.csproj -c Release -r win-x64   # NativeAOT の edictora.exe
+cargo build --release          # target\release\edictora.exe（Bun は不要）
+cargo test
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 ```
+
+ダッシュボードのページ内で動かすスクリプトは `page-scripts/`（Bun + TypeScript）にあり、生成した `page-scripts/dist/edictora.js` を exe に埋め込みます。スクリプトを変えたときだけ Bun を使います。
+
+```powershell
+cd page-scripts
+bun install --frozen-lockfile   # 依存（typescript だけ）を入れる
+bun run typecheck      # 型検査
+bun run build          # dist/edictora.js を作り直す
+bun run check          # dist/edictora.js が最新か確かめる
+```
+
+**`sectionStart` / `sectionEnd` の正規表現**: Rust の `regex` を使うため、先読み・後読み（`(?=…)` `(?!…)` `(?<=…)` `(?<!…)`）と後方参照（`\1`）は使えません（設定の読み込み時にエラーになります）。`^■ 説明` のような通常の書き方はそのまま使えます。
+
+検証用に、保存先の根を環境変数 `EDICTORA_LOCAL_ROOT`（既定 `%LOCALAPPDATA%\Edictora`）と `EDICTORA_ROAMING_ROOT`（既定 `%APPDATA%\Edictora`）で差し替えられます。
 
 ## 配布
 

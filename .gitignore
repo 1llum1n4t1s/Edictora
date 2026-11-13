@@ -24,3 +24,7 @@ website/.wrangler/
 # Chrome プロファイル・診断情報を誤ってリポジトリ内に作った場合の保険（ログイン情報を含むため絶対にコミットしない）
 chrome-profile/
 diagnostics/
+
+# Rust のビルド成果物と page-scripts の依存
+target/
+node_modules/

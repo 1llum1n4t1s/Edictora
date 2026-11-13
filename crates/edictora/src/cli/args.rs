@@ -1,0 +1,307 @@
+//! コマンドライン引数の解釈（C# の `CliArguments`）。外部パーサを使わない小さな実装。
+//!
+//! ここではブラウザも設定ファイルも触らず、形式の検証だけを行う。誤りはブラウザを開く前に `Usage` エラーで止める。
+
+use std::time::Duration;
+
+use crate::config::{is_valid_item_id, is_valid_locale_code, normalize_locale_code};
+use crate::error::{Error, Result};
+use crate::util::eq_ic;
+
+/// サブコマンド
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliCommandKind {
+    /// 使い方を表示
+    Help,
+    /// バージョンを表示
+    Version,
+    /// Chrome を開いて手動ログインを待つ
+    Login,
+    /// 現在値を表示（読み取りのみ）
+    Pull,
+    /// 正本との差分を表示（読み取りのみ・既定）
+    Diff,
+    /// 差分のある欄を書き換えて下書き保存（--yes 必須）
+    Push,
+    /// 審査に送信（--item 1 件と --yes 必須）
+    Submit,
+}
+
+impl CliCommandKind {
+    /// コマンド名（小文字）
+    pub fn name(self) -> &'static str {
+        match self {
+            CliCommandKind::Help => "help",
+            CliCommandKind::Version => "version",
+            CliCommandKind::Login => "login",
+            CliCommandKind::Pull => "pull",
+            CliCommandKind::Diff => "diff",
+            CliCommandKind::Push => "push",
+            CliCommandKind::Submit => "submit",
+        }
+    }
+
+    /// コマンドごとに使えるオプション
+    fn allowed_options(self) -> &'static [&'static str] {
+        match self {
+            CliCommandKind::Login => &["--config", "--profile", "--chrome", "--wait"],
+            CliCommandKind::Pull | CliCommandKind::Diff => &[
+                "--config",
+                "--profile",
+                "--chrome",
+                "--item",
+                "--locale",
+                "--show-browser",
+            ],
+            CliCommandKind::Push => &[
+                "--config",
+                "--profile",
+                "--chrome",
+                "--item",
+                "--locale",
+                "--yes",
+                "--show-browser",
+            ],
+            CliCommandKind::Submit => &[
+                "--config",
+                "--profile",
+                "--chrome",
+                "--item",
+                "--yes",
+                "--show-browser",
+            ],
+            CliCommandKind::Help | CliCommandKind::Version => &[],
+        }
+    }
+}
+
+/// 値を取るオプション
+const VALUE_OPTIONS: [&str; 6] = [
+    "--config",
+    "--profile",
+    "--chrome",
+    "--item",
+    "--locale",
+    "--wait",
+];
+
+/// 解釈済みのコマンドライン
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliCommand {
+    pub kind: CliCommandKind,
+    pub config_path: Option<String>,
+    pub profile_dir: Option<String>,
+    pub chrome_path: Option<String>,
+    /// 指定されたアイテム（未指定なら空。小文字・重複なし）
+    pub item_ids: Vec<String>,
+    /// 指定されたロケール（未指定なら空。「-」区切りに正規化・重複なし）
+    pub locale_codes: Vec<String>,
+    pub yes: bool,
+    pub login_wait: Option<Duration>,
+    pub show_browser: bool,
+}
+
+impl CliCommand {
+    fn of(kind: CliCommandKind) -> CliCommand {
+        CliCommand {
+            kind,
+            config_path: None,
+            profile_dir: None,
+            chrome_path: None,
+            item_ids: Vec::new(),
+            locale_codes: Vec::new(),
+            yes: false,
+            login_wait: None,
+            show_browser: false,
+        }
+    }
+}
+
+/// 引数を解釈する。誤りは `Usage` エラー
+pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
+    let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+    if args
+        .iter()
+        .any(|a| matches!(*a, "--help" | "-h" | "/?" | "help"))
+    {
+        return Ok(CliCommand::of(CliCommandKind::Help));
+    }
+    if args
+        .iter()
+        .any(|a| matches!(*a, "--version" | "-v" | "version"))
+    {
+        return Ok(CliCommand::of(CliCommandKind::Version));
+    }
+
+    let mut index = 0;
+    let mut kind = CliCommandKind::Diff; // 既定は差分表示（読み取りのみ）
+    if let Some(first) = args.first()
+        && !first.starts_with('-')
+    {
+        kind = match first.to_lowercase().as_str() {
+            "login" => CliCommandKind::Login,
+            "pull" => CliCommandKind::Pull,
+            "diff" => CliCommandKind::Diff,
+            "push" => CliCommandKind::Push,
+            "submit" => CliCommandKind::Submit,
+            _ => {
+                return Err(Error::Usage(format!(
+                    "不明なコマンドです: {first}（--help で使い方を表示）"
+                )));
+            }
+        };
+        index = 1;
+    }
+
+    let command_name = kind.name();
+    let mut cmd = CliCommand::of(kind);
+
+    while index < args.len() {
+        let arg = args[index];
+        if !arg.starts_with("--") {
+            return Err(Error::Usage(format!("余分な引数です: {arg}")));
+        }
+
+        // --name=value 形式にも対応する
+        let (name, mut value) = match arg.find('=') {
+            Some(eq) if eq > 0 => (arg[..eq].to_lowercase(), Some(arg[eq + 1..].to_string())),
+            _ => (arg.to_lowercase(), None),
+        };
+
+        if !kind.allowed_options().contains(&name.as_str()) {
+            return Err(Error::Usage(format!(
+                "{command_name} では {name} は使えません（--help で使い方を表示）"
+            )));
+        }
+
+        if VALUE_OPTIONS.contains(&name.as_str()) {
+            if value.is_none() {
+                match args.get(index + 1) {
+                    Some(next) if !next.starts_with("--") => {
+                        value = Some(next.to_string());
+                        index += 1;
+                    }
+                    _ => return Err(Error::Usage(format!("{name} の値がありません"))),
+                }
+            }
+            if value.as_deref().is_none_or(|v| v.trim().is_empty()) {
+                return Err(Error::Usage(format!("{name} の値が空です")));
+            }
+        } else if value.is_some() {
+            return Err(Error::Usage(format!("{name} は値を取りません")));
+        }
+
+        let v = value.unwrap_or_default();
+        match name.as_str() {
+            "--config" => set_once(&mut cmd.config_path, v, &name)?,
+            "--profile" => set_once(&mut cmd.profile_dir, v, &name)?,
+            "--chrome" => set_once(&mut cmd.chrome_path, v, &name)?,
+            "--item" => {
+                let id = v.trim().to_lowercase();
+                if !is_valid_item_id(&id) {
+                    return Err(Error::Usage(format!(
+                        "--item は 32 文字の CWS アイテム ID で指定してください: {v}"
+                    )));
+                }
+                if !cmd.item_ids.contains(&id) {
+                    cmd.item_ids.push(id);
+                }
+            }
+            "--locale" => {
+                let code = normalize_locale_code(&v);
+                if !is_valid_locale_code(&code) {
+                    return Err(Error::Usage(format!(
+                        "--locale のロケールコードが正しくありません: {v}"
+                    )));
+                }
+                if !cmd.locale_codes.iter().any(|c| eq_ic(c, &code)) {
+                    cmd.locale_codes.push(code);
+                }
+            }
+            "--wait" => {
+                // C# の int.TryParse と同じく前後の空白と符号を許す
+                let minutes = v
+                    .trim_matches(|c: char| {
+                        matches!(c, ' ' | '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r')
+                    })
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|m| (1..=120).contains(m))
+                    .ok_or_else(|| {
+                        Error::Usage("--wait は 1〜120 の分数で指定してください".to_string())
+                    })?;
+                cmd.login_wait = Some(Duration::from_secs(minutes as u64 * 60));
+            }
+            "--yes" => cmd.yes = true,
+            "--show-browser" => cmd.show_browser = true,
+            _ => {}
+        }
+        index += 1;
+    }
+
+    if kind == CliCommandKind::Submit {
+        // 審査送信は取り返しがつかないので、複数アイテムの一括送信はさせない
+        if cmd.item_ids.is_empty() {
+            return Err(Error::Usage(
+                "submit には --item <アイテム ID> を 1 件指定してください".to_string(),
+            ));
+        }
+        if cmd.item_ids.len() > 1 {
+            return Err(Error::Usage(
+                "submit は 1 件ずつ実行してください（--item は 1 つだけ指定できます）".to_string(),
+            ));
+        }
+        if !cmd.yes {
+            return Err(Error::Usage(
+                "submit は審査に送信します。実行するには --yes を付けてください".to_string(),
+            ));
+        }
+    }
+
+    Ok(cmd)
+}
+
+fn set_once(slot: &mut Option<String>, value: String, name: &str) -> Result<()> {
+    if slot.is_some() {
+        return Err(Error::Usage(format!("{name} が 2 回指定されています")));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+/// 使い方
+pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を正本ファイルと一括で比較・更新するツール
+
+使い方:
+  edictora login   [--config <file>] [--profile <dir>] [--chrome <exe>] [--wait <分>]
+  edictora pull    [--item <id>]... [--locale <code>]... [共通オプション]
+  edictora diff    [--item <id>]... [--locale <code>]... [共通オプション]   （既定のコマンド）
+  edictora push    [--item <id>]... [--locale <code>]... --yes [共通オプション]
+  edictora submit  --item <id> --yes [共通オプション]
+
+コマンド:
+  login    専用プロファイルの Chrome を開き、手動ログインしてダッシュボードに着くまで待ちます
+  pull     ダッシュボードの現在値を表示します（読み取りのみ）
+  diff     正本との差分を表示します（読み取りのみ）
+  push     差分のある欄だけを書き換えて下書き保存し、読み直して照合します。--yes が無ければ差分を表示して止まります
+  submit   1 件のアイテムを審査に送信します（「自動的に公開する」の設定は変更しません）
+
+共通オプション:
+  --config <file>   設定ファイル（既定: %APPDATA%\Edictora\config.json）
+  --profile <dir>   Chrome プロファイル（既定: 設定ファイルの profileDir、なければ %LOCALAPPDATA%\Edictora\chrome-profile）
+  --chrome <exe>    chrome.exe の場所（既定: 設定ファイルの chromePath、なければ自動検出）
+  --item <id>       対象アイテム（複数可。省略時は設定ファイルの全アイテム）
+  --locale <code>   対象ロケール（複数可。例: ja, en）
+  --show-browser    Chrome のウィンドウを表示して操作する（既定はウィンドウなしで動き、作業中に前面へ出てこない）
+  --wait <分>       login で待つ時間（既定 10 分）。login は常にウィンドウを表示します
+  --help            この説明を表示
+  --version         バージョンを表示
+
+終了コード:
+  0  成功（差分なし）
+  1  実行時エラー（画面操作の失敗・照合の不一致など）
+  2  引数・設定の誤り
+  3  差分あり（diff、または --yes なしの push）
+  4  書き込みを中止（審査待ち・状態を判定できない）
+  5  ログインが必要（login を実行してください）
+  130 中断（Ctrl+C）";

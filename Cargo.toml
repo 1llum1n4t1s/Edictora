@@ -1,0 +1,21 @@
+# Edictora の Rust 版（CLI）のワークスペース。
+#   - crates/edictora : ライブラリ（設定・比較・CDP・ダッシュボード操作・手順）と CLI（edictora.exe）
+# ページ内で実行する JavaScript は page-scripts/（Bun + TypeScript）で生成し、
+# 生成物（page-scripts/dist/*.js）を include_str! で埋め込む。cargo build に Bun は要らない。
+[workspace]
+members = ["crates/edictora"]
+resolver = "3"
+
+[workspace.package]
+version = "1.0.5"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+authors = ["Kagayoi"]
+publish = false
+
+[profile.release]
+# 配布用の exe を小さくする。
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

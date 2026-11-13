@@ -1,5 +1,13 @@
 name: Continuous Integration
 
+# Rust 版 Edictora (crates/edictora) と、ページ内で評価するスクリプト (page-scripts/, Bun + TypeScript) を検証する。
+# - Rust: rust-toolchain.toml の toolchain (rustfmt / clippy 込み) をランナー同梱の rustup で導入し、
+#   fmt・clippy (警告はエラー)・test を Cargo.lock 固定 (--locked) で実行する。
+# - page-scripts: 生成物 page-scripts/dist/*.js をコミットして Rust が include_str! で埋め込むため、
+#   型検査に加えて「dist が src から生成し直した内容と一致するか」(bun run check) を確かめる。
+# - R2 転送部品 (scripts/R2Transfer.Core.cs) の検証は PowerShell の Add-Type で動き、.NET SDK は要らない。
+# ジョブ ID と名前 (build-test / Build & Unit Test) は必須チェックに登録され得るので変えない。
+
 on:
   push:
     branches: [main]
@@ -17,7 +25,12 @@ concurrency:
 jobs:
   build-test:
     name: Build & Unit Test
+    # 配布対象は Windows (x86_64-pc-windows-msvc) だけなので、Windows ランナーで検証する。
     runs-on: windows-2022
+    env:
+      CARGO_TERM_COLOR: always
+      # CI ではインクリメンタルビルドの中間物が無駄になるだけなので切る (キャッシュも小さくなる)。
+      CARGO_INCREMENTAL: '0'
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,45 +41,55 @@ jobs:
         shell: pwsh
         run: |
           & (Join-Path $env:GITHUB_WORKSPACE 'tests/R2Transfer/Run.ps1') -WorkRoot (Join-Path $env:RUNNER_TEMP 'r2-transfer-check')
-      - name: Select SDK compatible with the locked compiler packs
+
+      - name: Rust toolchain を導入 (rust-toolchain.toml)
+        # 引数なしの `rustup toolchain install` は rust-toolchain.toml の channel・profile・components を読む。
+        # 外部アクションを使わず、ランナー同梱の rustup だけで toolchain を固定する。
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $config = if (Test-Path -LiteralPath 'global.json') { Get-Content -LiteralPath 'global.json' -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
-          if (-not $config.ContainsKey('sdk')) { $config['sdk'] = @{} }
-          $config['sdk']['version'] = '11.0.100'
-          $config['sdk']['rollForward'] = 'disable'
-          $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath 'global.json' -Encoding utf8
-      - name: .NET SDK をセットアップ
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 11.0.100
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install が失敗しました (exit $LASTEXITCODE)" }
+          rustup show active-toolchain
+          rustc -vV
+          cargo -V
 
-      - name: NuGet パッケージをキャッシュ
+      - name: Cargo の依存とビルド結果をキャッシュ
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props', '**/packages.lock.json') }}
-          restore-keys: ${{ runner.os }}-nuget-
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
 
-      - name: 復元
-        run: dotnet restore Edictora.slnx -p:Configuration=Release --locked-mode
+      - name: 書式 (cargo fmt)
+        run: cargo fmt --all --check
 
-      - name: ビルド
-        run: dotnet build Edictora.slnx -c Release --no-restore
+      - name: 静的検査 (cargo clippy)
+        run: cargo clippy --all-targets --locked -- -D warnings
 
-      - name: ユニットテスト
-        run: >-
-          dotnet test src/Edictora.Tests
-          -c Release
-          --no-build
-          --filter "TestCategory!=Integration"
-          --logger "trx;LogFileName=test-results.trx"
+      - name: ユニットテスト (cargo test)
+        run: cargo test --locked
 
-      - name: テスト結果をアップロード
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Bun をセットアップ
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          name: test-results
-          path: '**/TestResults/*.trx'
-          retention-days: 3
+          # page-scripts/package.json の packageManager (bun@x.y.z) に揃える。
+          bun-version-file: page-scripts/package.json
+
+      - name: page-scripts の依存を導入
+        working-directory: page-scripts
+        run: bun install --frozen-lockfile
+
+      - name: page-scripts の型検査
+        working-directory: page-scripts
+        run: bun run typecheck
+
+      - name: page-scripts の生成物が最新か確認
+        # dist/ を src/ から生成し直し、コミット済みの内容と一致しなければ失敗する (改行の CRLF/LF 差は無視する)。
+        working-directory: page-scripts
+        run: bun run check

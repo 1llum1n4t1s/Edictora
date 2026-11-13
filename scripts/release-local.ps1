@@ -1,29 +1,39 @@
-﻿# release-local.ps1 — 署名付き Velopack リリース
+﻿# release-local.ps1 — 署名付き Portable ZIP リリース（Rust 版 edictora.exe）
+#
+# 流れ:
+#   1. 配布先 (下の $Bucket / $BaseUrl) を確認する。未設定かつ配信を伴う実行なら、何も作らず・何も送らずに止まる
+#   2. cargo metadata から版を読み、Sigilune のクラウドログインと R2 / zone / DNS をプリフライト確認する
+#   3. cargo build --release --locked で edictora.exe を作る (page-scripts/dist の JS は include_str! で埋め込み済み。Bun は要らない)
+#   4. exe を作業フォルダーへ写し、Sigilune で署名して検証する (署名者 CN とタイムスタンプも照合)
+#   5. 署名済み exe と LICENSE・README などを Portable ZIP にまとめ、ZIP 内の exe の署名を再検証する
+#   6. 版付き ZIP を先に、固定名 ZIP を後に R2 へ upload し、固定 URL の Cloudflare キャッシュを purge する
 #
 # 署名は Sigilune (Certum SimplySign のクラウド鍵を signtool /dlib で使う CLI) で行う。
 # 通常のリリースは GitHub Actions の .github/workflows/release.yml (手動起動・Environment "release") が
 # 本スクリプトを実行する。ローカル実行も同じ手順で動き、検証や再実行に使う。
-# 生成した成果物は Cloudflare R2 にアップロードし、更新 manifest は最後に公開する。
 #
 # 前提:
 #   - Sigilune を使えること (scripts/Sigilune.Common.ps1 参照)。
 #     ローカルは `sigilune setup` で Certum アカウントを登録済み、CI は SIGILUNE_EMAIL / SIGILUNE_TOTP_URI を渡す
-#   - Directory.Build.props の <Version> が配布したいバージョンになっていること
+#   - Cargo.toml の [workspace.package] version が配布したいバージョンになっていること (更新は /vava のときだけ)
+#   - rust-toolchain.toml の toolchain (rustup が自動で使う) と MSVC リンカーが使えること
 #   - 配布先 (下の $Bucket / $BaseUrl) が設定済みで、Cloudflare 側にその bucket と公開ドメインが準備済みであること。
 #     Edictora の配布先は未確定のため、現在は空。公開を伴う実行は「配布先が未設定」で止まる (-SkipUpload は可)
 #   - 環境変数 CLOUDFLARE_API_TOKEN (CI)、なければ D:\Dev\Secret\secrets.json の cloudflare.api_token (ローカル)
+#
+# 成果物 (local-release/artifacts/):
+#   - Edictora-<version>-win-x64.zip … 版付き。中身が変わらないので R2 では immutable で配る
+#   - Edictora-win-x64.zip           … 固定名の最新版コピー。ダウンロードページから常に同じ URL で指せるようにする
 #
 # 使い方:
 #   pwsh scripts/release-local.ps1
 #   pwsh scripts/release-local.ps1 -SkipUpload
 #   pwsh scripts/release-local.ps1 -Cleanup
-#   pwsh scripts/release-local.ps1 -Runtimes win-x64
 
 [CmdletBinding()]
 param(
     [switch]$SkipUpload,
-    [switch]$Cleanup,
-    [string[]]$Runtimes = @('win-x64')
+    [switch]$Cleanup
 )
 
 
@@ -62,14 +72,12 @@ function Remove-LocalWorkItem {
 
 function Send-ReleaseR2Object {
     param([Parameter(Mandatory)][System.IO.FileInfo]$File)
-    # バージョン付き成果物は不変、固定 URL とメタデータは毎回再検証する。
-    $immutable = $File.Extension -eq '.nupkg' -or $File.Name -match '\d+\.\d+\.\d+'
+    # バージョン付き成果物は不変 (immutable)、固定名の最新版コピーは毎回再検証させる。
+    $immutable = $File.Name -match '\d+\.\d+\.\d+'
     $cacheControl = if ($immutable) { 'public, max-age=31536000, immutable' } else { 'no-cache, must-revalidate' }
     $contentType = switch ($File.Extension.ToLowerInvariant()) {
-        '.json' { 'application/json'; break }
-        '.exe' { 'application/vnd.microsoft.portable-executable'; break }
         '.zip' { 'application/zip'; break }
-        default { if ($File.Name -like 'RELEASES*') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' } }
+        default { 'application/octet-stream' }
     }
     $null = Publish-R2Object -AccountId $AccountId -Bucket $Bucket -FilePath $File.FullName `
         -ApiToken $env:CLOUDFLARE_API_TOKEN -ContentType $contentType -CacheControl $cacheControl -Immutable:$immutable
@@ -79,27 +87,38 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 # 配布先 (R2 bucket と公開 URL)。Edictora の配布先はまだ決まっていない (外部リソースの作成は未決定)。
-# 決まるまで空のままにし、公開を伴う実行は下の検査で「配布先が未設定」として止める。
+# 決まるまで空のままにし、公開を伴う実行は下の検査で「配布先が未設定」として止める (fail closed)。
 # 作り替え前の製品の bucket・ドメインは削除済みなので流用しない。決まったらここに設定する。
+# ⚠️ この検査は Sigilune のログイン・ビルド・local-release の削除・Cloudflare への接続より前に置くこと。
 $Bucket = ''
 $BaseUrl = ''
 if (-not $SkipUpload -and ([string]::IsNullOrWhiteSpace($Bucket) -or [string]::IsNullOrWhiteSpace($BaseUrl))) {
     # 署名ログインやビルドより前に止める (何も作らず・何も送らない)。
-    # -SkipUpload (build・package・署名の確認だけ) は配布先を使わないので続行できる。
+    # -SkipUpload (build・ZIP 化・署名の確認だけ) は配布先を使わないので続行できる。
     throw '配布先が未設定です。scripts/release-local.ps1 の $Bucket と $BaseUrl を設定してから実行してください (確認だけなら -SkipUpload)。'
+}
+if ($Cleanup -and $SkipUpload) {
+    # -Cleanup は R2 の一覧取得と削除を伴う。ビルドや署名の前に矛盾した指定を止める。
+    throw '-Cleanup は R2 へ接続するため、-SkipUpload と同時には指定できません'
 }
 $AccountId = '10901bfadbf1005164774a7350082985'
 # 秘密情報の正本 (ローカル実行時だけ読む。CI は環境変数で渡す)。
 $SecretsPath = 'D:\Dev\Secret\secrets.json'
 # 署名者の CN。証明書の年次更新で thumbprint が変わっても同じ値で照合できる。
 $CertSubjectName = 'Open Source Developer Yuichiro Shinozaki'
-$RuntimeMatrix = @{
-    'win-x64' = @{ Channel = 'win-x64' }
-}
+# 配布する唯一の runtime。cargo build は既定で host 向けに作るため、host がこの triple であることを確かめる。
+$Channel = 'win-x64'
+$ExpectedHostTriple = 'x86_64-pc-windows-msvc'
+# 配布する crate と実行ファイル名 (crates/edictora の [[bin]])。
+$PackageName = 'edictora'
+$ExeName = 'edictora.exe'
+# ZIP に同梱する文書 (リポジトリ直下からの相対パス)。どれかが欠けていたら配布物が不完全なので止める。
+$BundledDocuments = @('LICENSE', 'README.md', 'PRIVACY_POLICY.md')
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $WorkDir = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot 'local-release'))
 $ArtifactsDir = Join-Path $WorkDir 'artifacts'
+$StagingDir = Join-Path $WorkDir "publish-$Channel"
 $SignatureVerificationDir = Join-Path $WorkDir 'signature-verification'
 $RepoPrefix = $RepoRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
 
@@ -108,6 +127,7 @@ if (-not $WorkDir.StartsWith($RepoPrefix, [System.StringComparison]::OrdinalIgno
 }
 
 Set-Location $RepoRoot
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 function Invoke-Native {
@@ -137,6 +157,7 @@ function Test-Signature {
     Write-Host "  ✅ $([System.IO.Path]::GetFileName($Path)): Valid ($($signature.SignerCertificate.Subject -replace ',.*$'))"
 }
 
+# ZIP の中の実行ファイルを取り出して署名を確かめる (ZIP 化の途中で未署名の exe に入れ替わっていないことの確認)。
 function Test-ArchiveEntrySignature {
     param(
         [Parameter(Mandatory)][string]$ArchivePath,
@@ -183,61 +204,47 @@ function Send-R2Object {
 
 Write-Host '== プリフライト ==' -ForegroundColor Cyan
 
-if (-not ${env:ProgramFiles(x86)}) {
-    ${env:ProgramFiles(x86)} = 'C:\Program Files (x86)'
+# 版と出力先は cargo metadata から読む。crate 側は version.workspace = true でリテラルの版を持たないため、
+# Cargo.toml を正規表現で読むより、cargo が解決した値を使うほうが確実。--locked で Cargo.lock の不整合も早く落とす。
+$metadataJson = cargo metadata --no-deps --format-version 1 --locked
+if ($LASTEXITCODE -ne 0) {
+    throw "cargo metadata が失敗しました (exit $LASTEXITCODE)"
 }
-
-$vsInstallerDir = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
-if ($env:PATH -notlike "*$vsInstallerDir*") {
-    $env:PATH = "$env:PATH;$vsInstallerDir"
+$metadata = ($metadataJson -join "`n") | ConvertFrom-Json
+$package = @($metadata.packages | Where-Object { $_.name -eq $PackageName })
+if ($package.Count -ne 1) {
+    throw "cargo metadata に crate '$PackageName' が見つかりません"
 }
-
-$env:DOTNET_ROLL_FORWARD = 'Major'
-
-$versionNode = ([xml](Get-Content -LiteralPath 'Directory.Build.props' -Raw)).SelectSingleNode('/Project/PropertyGroup/Version')
-$Version = if ($versionNode) { $versionNode.InnerText.Trim() } else { $null }
-if (-not $Version) {
-    throw 'Directory.Build.props から <Version> を取得できませんでした'
+$Version = [string]$package[0].version
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    # R2 の保持ポリシーと immutable 判定は x.y.z を前提にするため、プレリリース表記などは止める。
+    throw "配布できない版の形式です: '$Version' (x.y.z のみ)"
 }
+$TargetDir = [string]$metadata.target_directory
 Write-Host "バージョン: $Version"
+
+# cargo build --release は host 向けに作る。配布 runtime (win-x64) と host が違えば別物を配ってしまうので止める。
+$rustcInfo = rustc -vV
+if ($LASTEXITCODE -ne 0) {
+    throw "rustc -vV が失敗しました (exit $LASTEXITCODE)"
+}
+$hostLine = @($rustcInfo | Where-Object { $_ -like 'host:*' }) | Select-Object -First 1
+$hostTriple = if ($hostLine) { ($hostLine -replace '^host:\s*', '').Trim() } else { '' }
+if ($hostTriple -ne $ExpectedHostTriple) {
+    throw "ビルド環境の host が $ExpectedHostTriple ではありません: '$hostTriple'"
+}
+Write-Host "rustc host: $hostTriple"
+
+foreach ($document in $BundledDocuments) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $document) -PathType Leaf)) {
+        throw "ZIP に同梱する文書がありません: $document"
+    }
+}
 
 # 署名の準備 (Sigilune の場所とクラウドへのログインを、ビルド前に確認して早く落とす)。
 . (Join-Path $PSScriptRoot 'Sigilune.Common.ps1')
 $Sigilune = Resolve-SigiluneExe
 Connect-Sigilune -SigiluneExe $Sigilune
-# Velopack はファイルごとに別プロセスで署名テンプレートを実行する。Sigilune はログインを共有し、
-# 署名後に有効性・署名者・タイムスタンプ (http://time.certum.pl) を検証して失敗なら非0で終わる。
-$SignTemplate = "`"$Sigilune`" sign {{file}}"
-
-$vpkVersion = (Invoke-RestMethod 'https://api.nuget.org/v3-flatcontainer/vpk/index.json' -TimeoutSec 30).versions |
-    Where-Object { $_ -notmatch '-' } |
-    Select-Object -Last 1
-if (-not $vpkVersion) {
-    throw 'vpk の最新安定版バージョンの取得に失敗しました (NuGet API)'
-}
-Write-Host "vpk 最新安定版: $vpkVersion"
-
-$vpkToolLine = dotnet tool list --global |
-    Where-Object { $_ -match '^\s*vpk\s+' } |
-    Select-Object -First 1
-$installedVpkVersion = if ($vpkToolLine) {
-    @($vpkToolLine -split '\s+' | Where-Object { $_ })[1]
-} else {
-    $null
-}
-
-if (-not $installedVpkVersion) {
-    Invoke-Native 'vpk のインストール' { dotnet tool install --global vpk --version $vpkVersion }
-}
-elseif ($installedVpkVersion -ne $vpkVersion) {
-    Invoke-Native 'vpk の更新' { dotnet tool update --global vpk --version $vpkVersion }
-}
-
-foreach ($runtime in $Runtimes) {
-    if (-not $RuntimeMatrix.ContainsKey($runtime)) {
-        throw "未知の runtime: $runtime"
-    }
-}
 
 $cloudflareHeaders = $null
 $zoneId = $null
@@ -281,102 +288,45 @@ if (-not $SkipUpload) {
     }
 }
 
-if ($Cleanup -and $SkipUpload) {
-    throw '-Cleanup は R2 へ接続するため、-SkipUpload と同時には指定できません'
-}
-
 if (Test-Path -LiteralPath $WorkDir) {
     Remove-LocalWorkItem -LiteralPath $WorkDir -AllowedRoot $RepoRoot
 }
 New-Item -ItemType Directory -Path $ArtifactsDir -Force | Out-Null
+New-Item -ItemType Directory -Path $StagingDir -Force | Out-Null
 New-Item -ItemType Directory -Path $SignatureVerificationDir -Force | Out-Null
 
-foreach ($runtime in $Runtimes) {
-    $config = $RuntimeMatrix[$runtime]
-    $publishDir = Join-Path $WorkDir "publish-$runtime"
-    $mainExe = Join-Path $publishDir 'Edictora.UI.exe'
+Write-Host "== cargo build: $Channel ==" -ForegroundColor Cyan
+# --locked: Cargo.lock を書き換えない (CI と同じ依存で作る)。toolchain は rust-toolchain.toml に従う。
+Invoke-Native 'cargo build --release' { cargo build --release --locked -p $PackageName }
 
-    # 画面版 (Edictora.UI.exe) と CLI (edictora.exe) を同じフォルダに入れて 1 つのパッケージで配る。
-    $cliExe = Join-Path $publishDir 'edictora.exe'
-
-    Write-Host "== restore: $runtime ==" -ForegroundColor Cyan
-    Invoke-Native "dotnet restore ($runtime)" {
-        dotnet restore src/Edictora.UI/Edictora.UI.csproj -p:Configuration=Release --locked-mode
-    }
-    Invoke-Native "dotnet restore CLI ($runtime)" {
-        dotnet restore src/Edictora.Cli/Edictora.Cli.csproj -p:Configuration=Release --locked-mode
-    }
-
-    Write-Host "== publish: $runtime ==" -ForegroundColor Cyan
-    Invoke-Native "dotnet publish ($runtime)" {
-        dotnet publish src/Edictora.UI/Edictora.UI.csproj -c Release -r $runtime --self-contained true --no-restore -o $publishDir
-    }
-    Invoke-Native "dotnet publish CLI ($runtime)" {
-        dotnet publish src/Edictora.Cli/Edictora.Cli.csproj -c Release -r $runtime --self-contained true --no-restore -o $publishDir
-    }
-
-    if (-not (Test-Path -LiteralPath $mainExe)) {
-        throw "Edictora.UI.exe が publish 出力にありません ($runtime)"
-    }
-    if (-not (Test-Path -LiteralPath $cliExe)) {
-        throw "edictora.exe (CLI) が publish 出力にありません ($runtime)"
-    }
-
-    Write-Host "== vpk pack + 署名: $runtime ==" -ForegroundColor Cyan
-    Invoke-Native "vpk pack ($runtime)" {
-        vpk pack `
-            --packId Edictora `
-            --packVersion $Version `
-            --packTitle 'Edictora' `
-            --packAuthors 'Kagayoi' `
-            --mainExe 'Edictora.UI.exe' `
-            --icon (Join-Path 'icon' 'app.ico') `
-            --packDir $publishDir `
-            --outputDir $ArtifactsDir `
-            --channel $config.Channel `
-            --shortcuts 'StartMenuRoot,Desktop' `
-            --signParallel 1 `
-            --signTemplate $SignTemplate
-    }
-
-    Write-Host "== 署名検証: $runtime ==" -ForegroundColor Cyan
-    $fullPackage = Join-Path $ArtifactsDir "Edictora-$Version-$($config.Channel)-full.nupkg"
-    $portablePackage = Join-Path $ArtifactsDir "Edictora-$($config.Channel)-Portable.zip"
-    $setupPackage = Join-Path $ArtifactsDir "Edictora-$($config.Channel)-Setup.exe"
-    if (-not (Test-Path -LiteralPath $fullPackage) -or
-        -not (Test-Path -LiteralPath $portablePackage) -or
-        -not (Test-Path -LiteralPath $setupPackage)) {
-        throw "配布パッケージが生成されませんでした ($runtime)"
-    }
-
-    Test-ArchiveEntrySignature -ArchivePath $fullPackage -EntryPath 'lib/app/Edictora.UI.exe' -Label 'フルパッケージ'
-    Test-ArchiveEntrySignature -ArchivePath $portablePackage -EntryPath 'current/Edictora.UI.exe' -Label 'Portable パッケージ'
-    Test-ArchiveEntrySignature -ArchivePath $fullPackage -EntryPath 'lib/app/edictora.exe' -Label 'フルパッケージ (CLI)'
-    Test-ArchiveEntrySignature -ArchivePath $portablePackage -EntryPath 'current/edictora.exe' -Label 'Portable パッケージ (CLI)'
-    Test-Signature -Path $setupPackage
-
-    # 内容が変わらないバージョン付き URL のインストーラーも残す (Microsoft Store は未申請だが、申請時に必要になる)。
-    $storeInstaller = Join-Path $ArtifactsDir "Edictora-$Version-$($config.Channel)-Setup.exe"
-    Copy-Item -LiteralPath $setupPackage -Destination $storeInstaller
-    Test-Signature -Path $storeInstaller
+$builtExe = Join-Path (Join-Path $TargetDir 'release') $ExeName
+if (-not (Test-Path -LiteralPath $builtExe -PathType Leaf)) {
+    throw "$ExeName がビルド出力にありません: $builtExe"
 }
 
-$manifestFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -Filter 'releases.*.json' -File)
-if ($manifestFiles.Count -ne $Runtimes.Count) {
-    throw "manifest 数が runtime 数と一致しません (manifest=$($manifestFiles.Count), runtime=$($Runtimes.Count))"
+# target/ の exe には直接署名しない (次の cargo build で上書き・再利用されるため)。作業フォルダーへ写してから署名する。
+$stagedExe = Join-Path $StagingDir $ExeName
+Copy-Item -LiteralPath $builtExe -Destination $stagedExe
+foreach ($document in $BundledDocuments) {
+    Copy-Item -LiteralPath (Join-Path $RepoRoot $document) -Destination (Join-Path $StagingDir (Split-Path $document -Leaf))
 }
 
-foreach ($manifest in $manifestFiles) {
-    $manifestData = Get-Content -LiteralPath $manifest.FullName -Raw | ConvertFrom-Json
-    foreach ($asset in @($manifestData.Assets)) {
-        if (-not $asset.FileName) {
-            throw "manifest に FileName のない asset があります: $($manifest.Name)"
-        }
-        if (-not (Test-Path -LiteralPath (Join-Path $ArtifactsDir $asset.FileName))) {
-            throw "manifest 参照パッケージが artifacts にありません: $($asset.FileName)"
-        }
-    }
-}
+Write-Host "== 署名: $Channel ==" -ForegroundColor Cyan
+# Sigilune は署名後に有効性・署名者・タイムスタンプ (http://time.certum.pl) を検証して失敗なら非0で終わる。
+# Invoke-SigiluneSign はさらに署名者 CN とタイムスタンプの有無を照合する。
+Invoke-SigiluneSign -SigiluneExe $Sigilune -Path $stagedExe -CertificateSubjectName $CertSubjectName
+Test-Signature -Path $stagedExe
+
+Write-Host "== Portable ZIP: $Channel ==" -ForegroundColor Cyan
+$versionedZip = Join-Path $ArtifactsDir "Edictora-$Version-$Channel.zip"
+$latestZip = Join-Path $ArtifactsDir "Edictora-$Channel.zip"
+# ZIP の直下に exe と文書を置く (展開してすぐ edictora.exe を実行できるように)。
+[System.IO.Compression.ZipFile]::CreateFromDirectory($StagingDir, $versionedZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+Test-ArchiveEntrySignature -ArchivePath $versionedZip -EntryPath $ExeName -Label 'Portable ZIP'
+
+# 固定名の最新版コピー。中身は版付き ZIP と同一。
+Copy-Item -LiteralPath $versionedZip -Destination $latestZip
+Test-ArchiveEntrySignature -ArchivePath $latestZip -EntryPath $ExeName -Label 'Portable ZIP (固定名)'
 
 if ($SkipUpload) {
     Write-Host "`n✅ -SkipUpload 指定のため公開せず終了します: $ArtifactsDir" -ForegroundColor Green
@@ -386,32 +336,27 @@ if ($SkipUpload) {
     return
 }
 
-# manifest を先に公開すると、クライアントが未到達の package を参照し得る。
-# package と固定成果物を先に upload・検証し、manifest は最後に公開する。
-$metadataFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File | Where-Object { ($_.Name -like 'assets.*.json' -or $_.Name -like 'RELEASES*') -and $_.Name -notlike 'releases.*.json' } | Sort-Object Name)
-$payloadFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File |
-    Where-Object { $_.Name -notlike 'releases.*.json' -and $_.Name -notlike 'assets.*.json' -and $_.Name -notlike 'RELEASES*' } |
-    Sort-Object Name)
-if ($payloadFiles.Count -eq 0) {
-    throw 'R2 へアップロードする成果物がありません'
+# 版付き ZIP を先に、固定名 ZIP を最後に公開する。
+# 固定名を先に置くと、版付き ZIP の upload が失敗したときに「最新版」だけが先行して公開されてしまう。
+$versionedFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File | Where-Object { $_.Name -match '\d+\.\d+\.\d+' } | Sort-Object Name)
+$fixedFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File | Where-Object { $_.Name -notmatch '\d+\.\d+\.\d+' } | Sort-Object Name)
+if ($versionedFiles.Count -eq 0 -or $fixedFiles.Count -eq 0) {
+    throw 'R2 へアップロードする成果物が揃っていません'
 }
 
-Write-Host '== R2 アップロード: package / 固定成果物 ==' -ForegroundColor Cyan
-foreach ($file in $payloadFiles) {
+Write-Host '== R2 アップロード: 版付き成果物 ==' -ForegroundColor Cyan
+foreach ($file in $versionedFiles) {
     Send-R2Object -File $file
 }
 
-Write-Host '== R2 アップロード: manifest ==' -ForegroundColor Cyan
-foreach ($manifest in @($metadataFiles + @($manifestFiles | Sort-Object Name))) {
-    Send-R2Object -File $manifest
+Write-Host '== R2 アップロード: 固定名成果物 ==' -ForegroundColor Cyan
+foreach ($file in $fixedFiles) {
+    Send-R2Object -File $file
 }
 
-# 固定 URL の Setup / Portable / manifest が旧キャッシュを返さないよう purge する。
+# 固定 URL の ZIP が旧キャッシュを返さないよう purge する (版付きは immutable なので不要)。
 Write-Host '== Cloudflare キャッシュパージ ==' -ForegroundColor Cyan
-$purgeFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File | Where-Object {
-    $_.Name -notlike '*.nupkg' -and $_.Name -notmatch "^Edictora-$([regex]::Escape($Version))-.*-Setup\.exe$"
-})
-$purgeUrls = @($purgeFiles | ForEach-Object { "$BaseUrl/$([uri]::EscapeDataString($_.Name))" })
+$purgeUrls = @($fixedFiles | ForEach-Object { "$BaseUrl/$([uri]::EscapeDataString($_.Name))" })
 if ($purgeUrls.Count -gt 0) {
     try {
         for ($offset = 0; $offset -lt $purgeUrls.Count; $offset += 30) {
@@ -433,23 +378,14 @@ if ($purgeUrls.Count -gt 0) {
 }
 
 if ($Cleanup) {
-    if ($Runtimes.Count -ne $RuntimeMatrix.Count) {
-        throw '-Cleanup は全 runtime の manifest を生成した実行でのみ使用できます'
-    }
-
-    Write-Host '== manifest 外 nupkg クリーンアップ ==' -ForegroundColor Cyan
+    Write-Host '== 古い版のクリーンアップ ==' -ForegroundColor Cyan
+    # 今回 upload したファイルは必ず保持する。
     $keep = @{}
-    foreach ($manifest in $manifestFiles) {
-        $manifestData = Get-Content -LiteralPath $manifest.FullName -Raw | ConvertFrom-Json
-        foreach ($asset in @($manifestData.Assets)) {
-            # manifest が参照するファイルはすべて保持対象 (拡張子で絞らない)
-            if ($asset.FileName) {
-                $keep[$asset.FileName] = $true
-            }
-        }
+    foreach ($file in @($versionedFiles + $fixedFiles)) {
+        $keep[$file.Name] = $true
     }
     if ($keep.Count -eq 0) {
-        throw '保持対象 nupkg が空のため cleanup を中止します'
+        throw '保持対象が空のため cleanup を中止します'
     }
 
     $api = "https://api.cloudflare.com/client/v4/accounts/$AccountId/r2/buckets/$Bucket"
@@ -472,11 +408,7 @@ if ($Cleanup) {
     }
 
     # 全プロジェクト共通の保持ポリシー: 直近 2 バージョン。
-    # ⚠️ 旧実装は '*.nupkg' だけを削除対象にしていたため、バージョン付きの配布物
-    #    (zip / deb / rpm / AppImage 等) が R2 に永久に溜まる構造だった
-    #    (Ferry では同原因で 351 個 7.2GB = 含有枠 10GB の 72% を滞留させていた)。
-    #    固定ファイル名 (Setup.exe / Portable.zip / RELEASES* / releases.*.json) は
-    #    バージョン文字列を含まないので対象外 = 安全。
+    # 固定ファイル名 (Edictora-win-x64.zip) はバージョン文字列を含まないので対象外 = 毎リリース上書きで保持。
     $KeepVersionCount = 2
     $versionPattern = '(\d+\.\d+\.\d+)'
     $allVersions = @(
@@ -486,10 +418,14 @@ if ($Cleanup) {
         } | Sort-Object -Property { [version]$_ } -Unique
     )
     $keepVersions = @($allVersions | Select-Object -Last $KeepVersionCount)
+    # 今回の版が保持対象に入っていなければ (R2 に今回より新しい版が 2 つ以上ある等)、何かがおかしいので消さずに止める。
+    if ($keepVersions -notcontains $Version) {
+        throw "今回の版 $Version が保持対象 ($($keepVersions -join ', ')) に入らないため cleanup を中止します"
+    }
     Write-Host "  保持バージョン: $($keepVersions -join ', ') (全 $($allVersions.Count) 世代)"
 
     $deleteCandidates = @($allKeys | Where-Object {
-        # manifest が参照するファイルは絶対保持 (消すと自動更新が壊れる)
+        # 今回 upload したファイルは絶対保持
         if ($keep.ContainsKey($_)) { return $false }
         # 固定ファイル名はバージョン文字列を含まない = 毎リリース上書きなので保持
         $m = [regex]::Match($_, $versionPattern)
@@ -510,7 +446,7 @@ if ($Cleanup) {
 }
 else {
     Write-Host '== cleanup ==' -ForegroundColor Cyan
-    Write-Host '  省略（必要なリリースで -Cleanup を明示してください）'
+    Write-Host '  省略（古い版を消すリリースで -Cleanup を明示してください）'
 }
 
 Write-Host "`n🎉 リリース完了: v$Version → $BaseUrl" -ForegroundColor Green

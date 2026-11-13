@@ -1,0 +1,7 @@
+[install]
+# 公開直後24時間は取り込まない（乗っ取られた版を避けるため）。
+minimumReleaseAge = 86400
+
+[run]
+# スクリプトの node shebang も Bun で実行する。
+bun = true

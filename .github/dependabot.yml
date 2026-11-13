@@ -1,4 +1,5 @@
 # 更新方針: 毎週月曜09:00（日本時間）、minor/patchを集約、majorは個別PR。
+# 対象: GitHub Actions / Rust (Cargo ワークスペース) / page-scripts (Bun)。
 version: 2
 updates:
 - package-ecosystem: github-actions
@@ -18,12 +19,29 @@ updates:
       - patch
   commit-message:
     prefix: deps
-- package-ecosystem: nuget
-  directories:
-  - /src/Edictora.Cli
-  - /src/Edictora.Core
-  - /src/Edictora.Tests
-  - /src/Edictora.UI
+# Rust: ルートの Cargo.toml (workspace) と Cargo.lock を見る。メンバー crate の依存もここで扱われる。
+- package-ecosystem: cargo
+  directory: /
+  schedule:
+    interval: weekly
+    day: monday
+    time: '09:00'
+    timezone: Asia/Tokyo
+  open-pull-requests-limit: 5
+  groups:
+    minor-and-patch:
+      patterns:
+      - '*'
+      update-types:
+      - minor
+      - patch
+  commit-message:
+    prefix: deps
+  allow:
+  - dependency-type: all
+# page-scripts: package.json と bun.lock を見る (devDependencies の TypeScript など)。
+- package-ecosystem: bun
+  directory: /page-scripts
   schedule:
     interval: weekly
     day: monday

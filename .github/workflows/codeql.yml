@@ -1,5 +1,10 @@
 name: CodeQL Analysis
 
+# Rust 版 (crates/) と page-scripts (TypeScript) を CodeQL で解析する。
+# どちらも build-mode: none (ソースを直接読む) で、ビルド手順は持たない。
+# Rust の抽出は cargo でワークスペースを読むため、rust-toolchain.toml の toolchain を先に導入する。
+# 配布対象が Windows なので、cfg(windows) のコードも解析対象に入るよう Windows ランナーで動かす。
+
 on:
   push:
     branches: [ main ]
@@ -14,36 +19,33 @@ permissions:
 
 jobs:
   analyze:
-    name: C# CodeQL
+    name: CodeQL (${{ matrix.language }})
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ rust, javascript-typescript ]
     steps:
       - name: リポジトリをチェックアウト
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Select SDK compatible with the locked compiler packs
+
+      - name: Rust toolchain を導入 (rust-toolchain.toml)
+        if: matrix.language == 'rust'
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $config = if (Test-Path -LiteralPath 'global.json') { Get-Content -LiteralPath 'global.json' -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
-          if (-not $config.ContainsKey('sdk')) { $config['sdk'] = @{} }
-          $config['sdk']['version'] = '11.0.100'
-          $config['sdk']['rollForward'] = 'disable'
-          $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath 'global.json' -Encoding utf8
-      - name: .NET SDK をセットアップ
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
-        with:
-          dotnet-version: 11.0.100
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install が失敗しました (exit $LASTEXITCODE)" }
+          rustup show active-toolchain
+
       - name: CodeQL を初期化
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          languages: csharp
-          build-mode: manual
-      - name: 復元
-        run: dotnet restore Edictora.slnx -p:Configuration=Release --locked-mode
-      - name: ビルド
-        run: dotnet build Edictora.slnx -c Release --no-restore
+          languages: ${{ matrix.language }}
+          build-mode: none
+
       - name: CodeQL 解析を実行
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          category: /language:csharp
+          category: /language:${{ matrix.language }}

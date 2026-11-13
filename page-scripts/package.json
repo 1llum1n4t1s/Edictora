@@ -1,0 +1,15 @@
+{
+  "name": "edictora-page-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Edictora がダッシュボードのページ内で評価するスクリプト（TypeScript）。生成物 dist/ を Rust が埋め込む。",
+  "packageManager": "bun@1.4.4",
+  "scripts": {
+    "build": "bun build.ts",
+    "check": "bun build.ts --check",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}
