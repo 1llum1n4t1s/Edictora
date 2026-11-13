@@ -31,11 +31,11 @@ jobs:
           $config['sdk']['rollForward'] = 'disable'
           $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath 'global.json' -Encoding utf8
       - name: .NET SDK をセットアップ
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
         with:
           dotnet-version: 11.0.100
       - name: CodeQL を初期化
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: csharp
           build-mode: manual
@@ -44,6 +44,6 @@ jobs:
       - name: ビルド
         run: dotnet build Edictora.slnx -c Release --no-restore
       - name: CodeQL 解析を実行
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:csharp
