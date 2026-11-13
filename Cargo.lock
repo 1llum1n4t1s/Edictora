@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "edictora"
-version = "1.0.6"
+version = "1.0.7"
 dependencies = [
  "regex",
  "serde",
