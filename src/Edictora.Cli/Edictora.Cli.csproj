@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Edictora のコマンドライン版。vava などのスクリプトから呼べるよう、外部の引数パーサには依存しない。
+    NativeAOT（Directory.Build.props の PublishAot）で単体の exe として配布できる形を保つ。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>edictora</AssemblyName>
+    <RootNamespace>Edictora.Cli</RootNamespace>
+    <ApplicationIcon>..\..\icon\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Edictora.Core\Edictora.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Edictora.Tests" />
+  </ItemGroup>
+
+</Project>

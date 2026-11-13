@@ -1,0 +1,143 @@
+============================================================
+Chrome Web Store listing (copy & paste) — English (en)
+============================================================
+
+[Store listing] tab
+------------------------------------------------------------
+
+■ Name (max 75 chars)
+Replace AI Translator API
+
+■ Summary (max 132 chars)
+Translate any page in place with cloud LLMs via your own API key. Natural, context-aware results with one-click restore.
+
+■ Description (max 16,000 chars)
+
+Translate the web page you are viewing in place using the cloud LLM of your choice. Like Chrome's built-in page translation, it replaces the original text with the translation and lets you switch back with one click — but it uses large language models for more natural, context-aware results.
+
+[Features]
+- In-place replacement — replace the original text with the translation, toggle back to the original
+- Multiple LLM providers — switch between providers such as OpenAI / Anthropic / Google Gemini / xAI using your own API key
+- Per-model reasoning control — remember reasoning effort or thinking-budget choices for each supported model; Auto uses the translation-optimized minimum
+- No-key option — MyMemory (free NMT) works with no key or signup (best for short text, instant trial)
+- Pinpoint mixed-language translation — text already in the target language is left untouched; only the other languages are translated
+- Optional settings sync — share languages, models, display preferences, and exclusions across PCs through browser sync. Off by default; API keys and translation data stay out of sync.
+- Auto-translate exclusions — skip auto-translate only on sites matching a URL, host, or wildcard rule
+- Infinite scroll / SPA friendly — content loaded later is translated automatically
+- Translation styles — choose adorable, formal, and other styles; additional prompts apply only with Custom
+- Rewrite mode — in addition to translating, rewrites text already written in the target language in a chosen style, such as softening harsh wording or making it formal (LLMs only)
+- Quick translate — a dedicated tab with source and target languages independent of page translation
+- Image text translation (experimental, vision-capable LLMs)
+- Privacy-first — API keys stay local in your browser; text is sent only to the provider you chose
+
+[About API keys]
+In line with each provider's terms, this extension works with API keys (API tokens) only. It does not reuse consumer chat-plan logins, which would violate those terms. To try it for free, a provider with a free tier or the no-key MyMemory option is a good start.
+
+[How to use]
+1. Install from the Chrome Web Store
+2. Click the toolbar icon, open the "Keys" tab, and enter the API key for the provider you want (MyMemory needs no key)
+3. In the "Translate" tab, pick the source and target languages, then click "Translate". Click "Restore" to go back
+4. You can also toggle translate/restore from the floating button at the bottom-right of the page, or the right-click menu
+5. Add or remove sites where auto-translate should stay off from the "Exclusions" tab or the right-click menu
+6. Select a vision-capable LLM, then hover an image and click the translate button (experimental). Configure image-button visibility in the "Translate" tab
+
+[Privacy]
+- The developer does not collect, store, or receive your data (no analytics, no tracking)
+- API keys are stored only inside your browser (chrome.storage.local)
+- The text to translate (and images, when image translation is on) is sent only to the provider API you selected
+- Nothing is ever sent to the developer's servers
+- See the privacy policy for details
+
+■ Category
+Productivity
+
+■ Language
+English
+
+------------------------------------------------------------
+
+[Graphic assets] tab
+------------------------------------------------------------
+
+■ Store icon (128x128)
+→ icons/icon128.png
+
+■ Screenshots (1280x800) — up to 5, at least 1
+  webstore/images/en/01-hero.png … 05-image-quick.png
+
+■ Small promo tile (440x280) — optional
+→ webstore/images/en/promo-small-440x280.png
+
+■ Marquee promo tile (1400x560) — optional (required to be considered for featuring)
+→ webstore/images/en/promo-marquee-1400x560.png
+
+------------------------------------------------------------
+
+[Privacy practices] tab
+------------------------------------------------------------
+
+■ Does this item have a single purpose?
+Yes
+
+■ Single purpose description
+Translate the text (and, optionally, the text inside images) of the web page the user is viewing, using a cloud LLM / NMT API chosen by the user, and display the translation in place on the page.
+
+■ Permission justification
+
+  activeTab:
+  Used when the user triggers translation from the popup or the right-click menu, to read the
+  current tab's page content and replace it with the translated text.
+
+  storage:
+  Stores the user's settings (including auto-translate exclusions), API key, monthly token usage, and the auto-tuned batch size
+  locally in the browser (chrome.storage.local). When enabled, settings and exclusion rules also use chrome.storage.sync. API keys and translation data are not synced. Nothing is sent to the developer.
+
+  alarms:
+  Retries incomplete settings sync. The retry alarm is cleared when sync is turned off.
+
+  scripting:
+  Injects the translation engine (translator.js) into the target page (all frames) on demand to
+  translate text nodes in place and to restore the original text.
+
+  contextMenus:
+  Adds page translation, original restoration, and auto-translate exclusion controls to the right-click menu.
+
+  host permissions (<all_urls>):
+  Needed so the user can translate any web page. The content script is injected into the page,
+  and requests to the translation provider's API are proxied from the background service worker
+  (so the API key is never exposed to the page context, and CORS is avoided). No host is contacted
+  except the translation provider the user selected.
+
+■ Are you using remote code?
+No
+(All code is contained within the extension package; no remote code is loaded or executed. Calls to
+translation providers transmit data, not executable code.)
+
+■ Data usage disclosure
+
+  What user data do you collect / transfer?
+  - Website content: YES. The page text (and, when image translation is enabled, images) is sent
+    only to the translation provider the user selected, solely to perform the translation. It is
+    never sent to the developer's servers.
+  - Personally identifiable information: No
+  - Health information: No
+  - Financial and payment information: No
+  - Authentication information: The API key is stored locally only (chrome.storage.local) and is
+    sent only to the selected provider's API for authentication. It is never sent to the developer.
+  - Personal communications / location / web history / user activity: No
+
+  Certifications (all true):
+  - I do not sell or transfer user data to third parties, outside of the approved use cases
+  - I do not use or transfer user data for purposes that are unrelated to my item's single purpose
+  - I do not use or transfer user data to determine creditworthiness or for lending purposes
+
+------------------------------------------------------------
+
+[Distribution] tab
+------------------------------------------------------------
+
+■ Visibility
+Public
+
+■ Regions
+All regions

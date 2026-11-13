@@ -1,0 +1,17 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="src/Edictora.Core/Edictora.Core.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="src/Edictora.Cli/Edictora.Cli.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project DefaultStartup="true" Path="src/Edictora.UI/Edictora.UI.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="src/Edictora.Tests/Edictora.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
+</Solution>

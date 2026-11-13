@@ -1,14 +1,17 @@
-﻿# release-local.ps1 — ローカル署名付き Velopack リリース
+﻿# release-local.ps1 — 署名付き Velopack リリース
 #
-# Certum SimplySign は Desktop 接続とスマホトークンの承認が必要なため、
-# GitHub Actions ではなくこのスクリプトからローカル署名する。
+# 署名は Sigilune (Certum SimplySign のクラウド鍵を signtool /dlib で使う CLI) で行う。
+# 通常のリリースは GitHub Actions の .github/workflows/release.yml (手動起動・Environment "release") が
+# 本スクリプトを実行する。ローカル実行も同じ手順で動き、検証や再実行に使う。
 # 生成した成果物は Cloudflare R2 にアップロードし、更新 manifest は最後に公開する。
 #
 # 前提:
-#   - SimplySign Desktop が接続済みで、署名証明書が CurrentUser\My に見えていること
+#   - Sigilune を使えること (scripts/Sigilune.Common.ps1 参照)。
+#     ローカルは `sigilune setup` で Certum アカウントを登録済み、CI は SIGILUNE_EMAIL / SIGILUNE_TOTP_URI を渡す
 #   - Directory.Build.props の <Version> が配布したいバージョンになっていること
-#   - Cloudflare 側に extweigh-updates bucket と extweigh.kagayoi.com が準備済みであること
-#   - C:\Users\IMT\dev\Secret\secrets.json に cloudflare.api_token があること
+#   - 配布先 (下の $Bucket / $BaseUrl) が設定済みで、Cloudflare 側にその bucket と公開ドメインが準備済みであること。
+#     Edictora の配布先は未確定のため、現在は空。公開を伴う実行は「配布先が未設定」で止まる (-SkipUpload は可)
+#   - 環境変数 CLOUDFLARE_API_TOKEN (CI)、なければ D:\Dev\Secret\secrets.json の cloudflare.api_token (ローカル)
 #
 # 使い方:
 #   pwsh scripts/release-local.ps1
@@ -75,13 +78,21 @@ function Send-ReleaseR2Object {
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$Bucket = 'extweigh-updates'
-$BaseUrl = 'https://extweigh.kagayoi.com'
+# 配布先 (R2 bucket と公開 URL)。Edictora の配布先はまだ決まっていない (外部リソースの作成は未決定)。
+# 決まるまで空のままにし、公開を伴う実行は下の検査で「配布先が未設定」として止める。
+# 作り替え前の製品の bucket・ドメインは削除済みなので流用しない。決まったらここに設定する。
+$Bucket = ''
+$BaseUrl = ''
+if (-not $SkipUpload -and ([string]::IsNullOrWhiteSpace($Bucket) -or [string]::IsNullOrWhiteSpace($BaseUrl))) {
+    # 署名ログインやビルドより前に止める (何も作らず・何も送らない)。
+    # -SkipUpload (build・package・署名の確認だけ) は配布先を使わないので続行できる。
+    throw '配布先が未設定です。scripts/release-local.ps1 の $Bucket と $BaseUrl を設定してから実行してください (確認だけなら -SkipUpload)。'
+}
 $AccountId = '10901bfadbf1005164774a7350082985'
-$SecretsPath = 'C:\Users\IMT\dev\Secret\secrets.json'
+# 秘密情報の正本 (ローカル実行時だけ読む。CI は環境変数で渡す)。
+$SecretsPath = 'D:\Dev\Secret\secrets.json'
+# 署名者の CN。証明書の年次更新で thumbprint が変わっても同じ値で照合できる。
 $CertSubjectName = 'Open Source Developer Yuichiro Shinozaki'
-$TimestampUrl = 'http://time.certum.pl'
-$SignParams = "/n `"$CertSubjectName`" /fd SHA256 /td SHA256 /tr $TimestampUrl"
 $RuntimeMatrix = @{
     'win-x64' = @{ Channel = 'win-x64' }
 }
@@ -170,29 +181,6 @@ function Send-R2Object {
     Send-ReleaseR2Object -File $File
 }
 
-function Test-PublishedObject {
-    param(
-        [Parameter(Mandatory)][System.IO.FileInfo]$File,
-        [Parameter(Mandatory)][string]$CacheKey
-    )
-
-    $encodedName = [uri]::EscapeDataString($File.Name)
-    $url = "$BaseUrl/$encodedName`?release=$CacheKey"
-    $response = Invoke-WebRequest -Uri $url -Method Head -TimeoutSec 30 -MaximumRetryCount 3 -RetryIntervalSec 5
-    if ($response.StatusCode -ne 200) {
-        throw "配信確認失敗: $url → HTTP $($response.StatusCode)"
-    }
-
-    # PowerShell 7 の Invoke-WebRequest はヘッダ値を string[] で返すため、
-    # そのまま [long] へキャストすると "System.String[]" 変換エラーになる。
-    $contentLength = @($response.Headers['Content-Length'])[0]
-    if ($contentLength -and [long]$contentLength -ne $File.Length) {
-        throw "配信サイズ不一致: $($File.Name) (local=$($File.Length), remote=$contentLength)"
-    }
-
-    Write-Host "  ✅ $($File.Name): HTTP 200 ($($File.Length) bytes)"
-}
-
 Write-Host '== プリフライト ==' -ForegroundColor Cyan
 
 if (-not ${env:ProgramFiles(x86)}) {
@@ -213,13 +201,13 @@ if (-not $Version) {
 }
 Write-Host "バージョン: $Version"
 
-$certificate = Get-ChildItem Cert:\CurrentUser\My |
-    Where-Object { $_.Subject -like "CN=$CertSubjectName*" -and $_.NotAfter -gt (Get-Date) } |
-    Select-Object -First 1
-if (-not $certificate) {
-    throw "署名証明書 (CN=$CertSubjectName) が見つかりません。SimplySign Desktop を起動してトークンでログインしてください。"
-}
-Write-Host "署名証明書: $($certificate.Subject) (期限 $($certificate.NotAfter.ToString('yyyy-MM-dd')))"
+# 署名の準備 (Sigilune の場所とクラウドへのログインを、ビルド前に確認して早く落とす)。
+. (Join-Path $PSScriptRoot 'Sigilune.Common.ps1')
+$Sigilune = Resolve-SigiluneExe
+Connect-Sigilune -SigiluneExe $Sigilune
+# Velopack はファイルごとに別プロセスで署名テンプレートを実行する。Sigilune はログインを共有し、
+# 署名後に有効性・署名者・タイムスタンプ (http://time.certum.pl) を検証して失敗なら非0で終わる。
+$SignTemplate = "`"$Sigilune`" sign {{file}}"
 
 $vpkVersion = (Invoke-RestMethod 'https://api.nuget.org/v3-flatcontainer/vpk/index.json' -TimeoutSec 30).versions |
     Where-Object { $_ -notmatch '-' } |
@@ -254,16 +242,19 @@ foreach ($runtime in $Runtimes) {
 $cloudflareHeaders = $null
 $zoneId = $null
 if (-not $SkipUpload) {
-    if (-not (Test-Path -LiteralPath $SecretsPath)) {
-        throw "Cloudflare 認証情報が見つかりません: $SecretsPath"
-    }
+    # CI では Environment "release" の Secret が環境変数で渡る。ローカルは secrets.json から必要なキーだけ読む。
+    if (-not $env:CLOUDFLARE_API_TOKEN) {
+        if (-not (Test-Path -LiteralPath $SecretsPath)) {
+            throw "Cloudflare 認証情報が見つかりません: $SecretsPath"
+        }
 
-    $secrets = Get-Content -LiteralPath $SecretsPath -Raw | ConvertFrom-Json
-    if (-not $secrets.cloudflare.api_token) {
-        throw 'secrets.json に cloudflare.api_token が見つかりません'
-    }
+        $secrets = Get-Content -LiteralPath $SecretsPath -Raw | ConvertFrom-Json
+        if (-not $secrets.cloudflare.api_token) {
+            throw 'secrets.json に cloudflare.api_token が見つかりません'
+        }
 
-    $env:CLOUDFLARE_API_TOKEN = $secrets.cloudflare.api_token
+        $env:CLOUDFLARE_API_TOKEN = $secrets.cloudflare.api_token
+    }
     $env:CLOUDFLARE_ACCOUNT_ID = $AccountId
     $cloudflareHeaders = @{ Authorization = "Bearer $($env:CLOUDFLARE_API_TOKEN)" }
 
@@ -303,55 +294,69 @@ New-Item -ItemType Directory -Path $SignatureVerificationDir -Force | Out-Null
 foreach ($runtime in $Runtimes) {
     $config = $RuntimeMatrix[$runtime]
     $publishDir = Join-Path $WorkDir "publish-$runtime"
-    $mainExe = Join-Path $publishDir 'ExtWeigh.UI.exe'
+    $mainExe = Join-Path $publishDir 'Edictora.UI.exe'
+
+    # 画面版 (Edictora.UI.exe) と CLI (edictora.exe) を同じフォルダに入れて 1 つのパッケージで配る。
+    $cliExe = Join-Path $publishDir 'edictora.exe'
 
     Write-Host "== restore: $runtime ==" -ForegroundColor Cyan
     Invoke-Native "dotnet restore ($runtime)" {
-        dotnet restore src/ExtWeigh.UI/ExtWeigh.UI.csproj -p:Configuration=Release --locked-mode
+        dotnet restore src/Edictora.UI/Edictora.UI.csproj -p:Configuration=Release --locked-mode
+    }
+    Invoke-Native "dotnet restore CLI ($runtime)" {
+        dotnet restore src/Edictora.Cli/Edictora.Cli.csproj -p:Configuration=Release --locked-mode
     }
 
     Write-Host "== publish: $runtime ==" -ForegroundColor Cyan
     Invoke-Native "dotnet publish ($runtime)" {
-        dotnet publish src/ExtWeigh.UI/ExtWeigh.UI.csproj -c Release -r $runtime --self-contained true --no-restore -o $publishDir
+        dotnet publish src/Edictora.UI/Edictora.UI.csproj -c Release -r $runtime --self-contained true --no-restore -o $publishDir
+    }
+    Invoke-Native "dotnet publish CLI ($runtime)" {
+        dotnet publish src/Edictora.Cli/Edictora.Cli.csproj -c Release -r $runtime --self-contained true --no-restore -o $publishDir
     }
 
     if (-not (Test-Path -LiteralPath $mainExe)) {
-        throw "ExtWeigh.UI.exe が publish 出力にありません ($runtime)"
+        throw "Edictora.UI.exe が publish 出力にありません ($runtime)"
+    }
+    if (-not (Test-Path -LiteralPath $cliExe)) {
+        throw "edictora.exe (CLI) が publish 出力にありません ($runtime)"
     }
 
     Write-Host "== vpk pack + 署名: $runtime ==" -ForegroundColor Cyan
     Invoke-Native "vpk pack ($runtime)" {
         vpk pack `
-            --packId ExtWeigh `
+            --packId Edictora `
             --packVersion $Version `
-            --packTitle 'ExtWeigh' `
+            --packTitle 'Edictora' `
             --packAuthors 'Kagayoi' `
-            --mainExe 'ExtWeigh.UI.exe' `
+            --mainExe 'Edictora.UI.exe' `
             --icon (Join-Path 'icon' 'app.ico') `
             --packDir $publishDir `
             --outputDir $ArtifactsDir `
             --channel $config.Channel `
             --shortcuts 'StartMenuRoot,Desktop' `
             --signParallel 1 `
-            --signParams $SignParams
+            --signTemplate $SignTemplate
     }
 
     Write-Host "== 署名検証: $runtime ==" -ForegroundColor Cyan
-    $fullPackage = Join-Path $ArtifactsDir "ExtWeigh-$Version-$($config.Channel)-full.nupkg"
-    $portablePackage = Join-Path $ArtifactsDir "ExtWeigh-$($config.Channel)-Portable.zip"
-    $setupPackage = Join-Path $ArtifactsDir "ExtWeigh-$($config.Channel)-Setup.exe"
+    $fullPackage = Join-Path $ArtifactsDir "Edictora-$Version-$($config.Channel)-full.nupkg"
+    $portablePackage = Join-Path $ArtifactsDir "Edictora-$($config.Channel)-Portable.zip"
+    $setupPackage = Join-Path $ArtifactsDir "Edictora-$($config.Channel)-Setup.exe"
     if (-not (Test-Path -LiteralPath $fullPackage) -or
         -not (Test-Path -LiteralPath $portablePackage) -or
         -not (Test-Path -LiteralPath $setupPackage)) {
         throw "配布パッケージが生成されませんでした ($runtime)"
     }
 
-    Test-ArchiveEntrySignature -ArchivePath $fullPackage -EntryPath 'lib/app/ExtWeigh.UI.exe' -Label 'フルパッケージ'
-    Test-ArchiveEntrySignature -ArchivePath $portablePackage -EntryPath 'current/ExtWeigh.UI.exe' -Label 'Portable パッケージ'
+    Test-ArchiveEntrySignature -ArchivePath $fullPackage -EntryPath 'lib/app/Edictora.UI.exe' -Label 'フルパッケージ'
+    Test-ArchiveEntrySignature -ArchivePath $portablePackage -EntryPath 'current/Edictora.UI.exe' -Label 'Portable パッケージ'
+    Test-ArchiveEntrySignature -ArchivePath $fullPackage -EntryPath 'lib/app/edictora.exe' -Label 'フルパッケージ (CLI)'
+    Test-ArchiveEntrySignature -ArchivePath $portablePackage -EntryPath 'current/edictora.exe' -Label 'Portable パッケージ (CLI)'
     Test-Signature -Path $setupPackage
 
-    # Microsoft Store の MSI/EXE 申請は、内容が変わらないバージョン付き URL が必須。
-    $storeInstaller = Join-Path $ArtifactsDir "ExtWeigh-$Version-$($config.Channel)-Setup.exe"
+    # 内容が変わらないバージョン付き URL のインストーラーも残す (Microsoft Store は未申請だが、申請時に必要になる)。
+    $storeInstaller = Join-Path $ArtifactsDir "Edictora-$Version-$($config.Channel)-Setup.exe"
     Copy-Item -LiteralPath $setupPackage -Destination $storeInstaller
     Test-Signature -Path $storeInstaller
 }
@@ -396,11 +401,6 @@ foreach ($file in $payloadFiles) {
     Send-R2Object -File $file
 }
 
-Write-Host '== 配信確認: manifest 公開前 ==' -ForegroundColor Cyan
-foreach ($file in $payloadFiles) {
-    Test-PublishedObject -File $file -CacheKey "$Version-pre-manifest"
-}
-
 Write-Host '== R2 アップロード: manifest ==' -ForegroundColor Cyan
 foreach ($manifest in @($metadataFiles + @($manifestFiles | Sort-Object Name))) {
     Send-R2Object -File $manifest
@@ -409,7 +409,7 @@ foreach ($manifest in @($metadataFiles + @($manifestFiles | Sort-Object Name))) 
 # 固定 URL の Setup / Portable / manifest が旧キャッシュを返さないよう purge する。
 Write-Host '== Cloudflare キャッシュパージ ==' -ForegroundColor Cyan
 $purgeFiles = @(Get-ChildItem -LiteralPath $ArtifactsDir -File | Where-Object {
-    $_.Name -notlike '*.nupkg' -and $_.Name -notmatch "^ExtWeigh-$([regex]::Escape($Version))-.*-Setup\.exe$"
+    $_.Name -notlike '*.nupkg' -and $_.Name -notmatch "^Edictora-$([regex]::Escape($Version))-.*-Setup\.exe$"
 })
 $purgeUrls = @($purgeFiles | ForEach-Object { "$BaseUrl/$([uri]::EscapeDataString($_.Name))" })
 if ($purgeUrls.Count -gt 0) {
@@ -430,11 +430,6 @@ if ($purgeUrls.Count -gt 0) {
     catch {
         Write-Warning "R2 アップロードは完了しましたが、キャッシュパージに失敗しました: $($_.Exception.Message)"
     }
-}
-
-Write-Host '== 配信確認: manifest 公開後 ==' -ForegroundColor Cyan
-foreach ($file in @($payloadFiles) + @($metadataFiles) + @($manifestFiles)) {
-    Test-PublishedObject -File $file -CacheKey "$Version-final"
 }
 
 if ($Cleanup) {

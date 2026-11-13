@@ -20,9 +20,10 @@ updates:
     prefix: deps
 - package-ecosystem: nuget
   directories:
-  - /src/ExtWeigh.Core
-  - /src/ExtWeigh.Tests
-  - /src/ExtWeigh.UI
+  - /src/Edictora.Cli
+  - /src/Edictora.Core
+  - /src/Edictora.Tests
+  - /src/Edictora.UI
   schedule:
     interval: weekly
     day: monday

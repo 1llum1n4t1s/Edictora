@@ -12,11 +12,15 @@ obj/
 TestResults/
 *.trx
 
-# 計測出力（開発中のローカル結果）
-extweigh-out/
+# 開発中に手元で作る設定ファイル（正本の対応づけ。個人の環境パスを含むためコミットしない）
+config.local.json
 
 # ローカル署名付きリリース成果物
 local-release/
 
 # ローカルツールの作業状態（LSPキャッシュ・Wrangler dev state）
 website/.wrangler/
+
+# Chrome プロファイル・診断情報を誤ってリポジトリ内に作った場合の保険（ログイン情報を含むため絶対にコミットしない）
+chrome-profile/
+diagnostics/
