@@ -24,7 +24,7 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 
 ## 必要環境
 
-- Windows 10 (20348) / Windows 11 以降
+- Windows 10 / Windows 11（x86_64）
 - Google Chrome（自動検出。設定ファイルの `chromePath` か `--chrome` でも指定可能）
 - CWS デベロッパー アカウント
 - Rust 1.99.1（ソースからビルドする場合。`rust-toolchain.toml` で固定）。ページ内スクリプトを変更するときだけ Bun
