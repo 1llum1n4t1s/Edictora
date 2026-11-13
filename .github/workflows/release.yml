@@ -1,11 +1,12 @@
 name: Release
 
-# 署名付き Portable ZIP (Rust 版 CLI の edictora.exe + LICENSE・README・PRIVACY_POLICY) を GitHub Actions で作り、R2 へ配信する。
-# - 配信先: Edictora の R2 bucket・公開ドメインは未確定。scripts/release-local.ps1 の $Bucket / $BaseUrl が
-#   空のあいだは、配信を伴う実行は release-local.ps1 側で「配布先が未設定」として止まる
-#   (ビルド・署名・ZIP 化の確認だけなら skip_upload=true で実行できる)。作り替え前の配信先は削除済みで使わない。
+# 署名付きの Velopack パッケージ (Rust 版 CLI の edictora.exe と自動更新用の edictora-updater.exe、
+# LICENSE・README・PRIVACY_POLICY) を GitHub Actions で作り、R2 へ配信する。
+# - 配信先: R2 bucket `edictora-updates`、公開ドメイン https://edictora.kagayoi.com
+#   (scripts/release-local.ps1 の $Bucket / $BaseUrl)。クライアントは releases.win.json を読んで自動更新する。
 # - ビルド: cargo build --release --locked。toolchain は rust-toolchain.toml に従う (ランナー同梱の rustup で導入)。
 #   page-scripts/dist の JS はコミット済みで include_str! で埋め込むため、Bun は要らない。
+# - パッケージ: Velopack CLI (vpk) 1.2.161 の vpk pack。full nupkg・Setup.exe・Portable.zip・フィードを作る。
 # - 署名: Sigilune (https://github.com/1llum1n4t1s/Sigilune) が Certum SimplySign のクラウド鍵で行う。
 #   本人の PC や SimplySign Desktop は不要。
 # - 起動: 手動 (workflow_dispatch)。/vava で版を上げて push した後に、main を指定して実行する
@@ -18,11 +19,11 @@ on:
   workflow_dispatch:
     inputs:
       skip_upload:
-        description: 'ビルドと署名だけ行い、R2 へ配信しない (成果物は Actions に残る)'
+        description: 'ビルド・パッケージ作成・署名だけ行い、R2 へ配信しない (成果物は Actions に残る)'
         type: boolean
         default: false
       cleanup:
-        description: '配信後に直近 2 版より古い版付き ZIP を R2 から削除する (release-local.ps1 -Cleanup)'
+        description: '配信後に直近 2 版より古い版付きファイル (nupkg・Setup・Portable) を R2 から削除する (release-local.ps1 -Cleanup)'
         type: boolean
         default: false
 
@@ -40,6 +41,10 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     environment: release
+    env:
+      # vpk 1.2.161 は .NET 9 ランタイム向け。ランナーに無い場合でも新しい版のランタイムで動かす
+      # (無いと vpk が起動できず、release-local.ps1 の版確認で止まる。Skilvella と同じ)。
+      DOTNET_ROLL_FORWARD: Major
     defaults:
       run:
         shell: pwsh
@@ -57,6 +62,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install が失敗しました (exit $LASTEXITCODE)" }
           rustup show active-toolchain
           rustc -vV
+
+      - name: Velopack CLI を導入 (vpk 1.2.161)
+        # release-local.ps1 が要求する固定版。版を変えるときはスクリプトの $VpkVersion と合わせる。
+        run: |
+          dotnet tool install --global vpk --version 1.2.161
+          if ($LASTEXITCODE -ne 0) { throw "vpk のインストールが失敗しました (exit $LASTEXITCODE)" }
+          # 起動できることをここで確かめる (失敗時は vpk 自身のエラーをログに残す)。
+          # 色付け用のエスケープシーケンスを取り除いてから版を照合する。
+          $help = (vpk --help 2>&1 | Out-String) -replace "`e\[[0-9;]*m", ''
+          if ($help -notmatch '\bVelopack CLI 1\.2\.161\b') { Write-Host $help; throw 'vpk 1.2.161 を起動できません' }
 
       - name: Sigilune を導入
         uses: 1llum1n4t1s/Sigilune@v1

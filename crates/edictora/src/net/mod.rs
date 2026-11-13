@@ -1,0 +1,7 @@
+//! 外部との通信（HTTP/TLS crate は使わず、Windows の WinHTTP を FFI で直接使う）。
+//!
+//! - [`winhttp`] — `--jev`（TypeSafe Jev への POST）と自動更新（配信元からの GET・ダウンロード）が共用する、
+//!   最小限の HTTP クライアント。リダイレクト無効・操作ごとのタイムアウトと全体の期限・Ctrl+C で抜ける・
+//!   平文は 127.0.0.1（テストの偽サーバー）だけ、という性質をここで一括して守る。
+
+pub mod winhttp;

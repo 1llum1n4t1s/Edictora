@@ -9,6 +9,7 @@ pub mod diff_formatter;
 
 use std::cell::RefCell;
 use std::io::Write;
+use std::path::Path;
 use std::time::Duration;
 
 use crate::app_paths::AppPaths;
@@ -20,8 +21,11 @@ use crate::dashboard::jev_assist::JevAssist;
 use crate::error::{Error, Result};
 use crate::jev::client::{JevClient, JevToken};
 use crate::listing::{ComparisonStatus, ExpectedItem, ListingField, build_expected};
-use crate::logging::{log_error_detail, redact};
+use crate::logging::{LogLevel, log, log_error_detail, redact};
 use crate::services::{self, LocalePushOutcome};
+use crate::update::UpdateOutcome;
+use crate::update::lock::{LockFile, is_held_by_another};
+use crate::update::source::UpdateSource;
 use crate::util::{eq_ic, format_n0, utf16_len};
 use args::{CliCommand, CliCommandKind, HELP_TEXT};
 
@@ -51,6 +55,33 @@ pub fn open_real_browser(
     DashboardBrowser::open(options, cancel)
 }
 
+/// 更新処理を行う関数（配信元・実行中ロックの場所・進捗・中断を受け取る）。
+/// 本物は [`run_real_update`]。既定（テスト）は [`refuse_update`] で、ネットワークにも Update.exe にも届かない
+pub type UpdateRunner<'a> =
+    dyn Fn(&UpdateSource, &Path, &dyn Fn(&str), &CancelToken) -> Result<UpdateOutcome> + 'a;
+
+/// 実行中の exe のインストール先で、本物の配信元・Update.exe を使って更新する（`main` が渡す）
+pub fn run_real_update(
+    source: &UpdateSource,
+    running_lock: &Path,
+    progress: &dyn Fn(&str),
+    cancel: &CancelToken,
+) -> Result<UpdateOutcome> {
+    crate::update::run_installed_update(source, running_lock, progress, cancel)
+}
+
+/// 既定の更新処理（何もせずに失敗する）。`main` 以外（テスト）から本物の更新に届かないようにする
+pub fn refuse_update(
+    _source: &UpdateSource,
+    _running_lock: &Path,
+    _progress: &dyn Fn(&str),
+    _cancel: &CancelToken,
+) -> Result<UpdateOutcome> {
+    Err(Error::Update(
+        "この実行環境では更新処理を使えません".to_string(),
+    ))
+}
+
 /// `--jev` の設定（トークンは検証済み。値は表示しない）
 struct JevSettings {
     token: JevToken,
@@ -68,6 +99,10 @@ pub struct CliApp<'a> {
     jev_token_source: Option<String>,
     /// `--jev` のときだけ Some
     jev: Option<JevSettings>,
+    /// `update` で使う更新処理（既定は refuse_update）
+    update_runner: &'a UpdateRunner<'a>,
+    /// 環境変数 EDICTORA_UPDATE_URL の生の値（main が読んで渡す。None なら本番の配信元）
+    update_source_override: Option<String>,
 }
 
 impl<'a> CliApp<'a> {
@@ -86,7 +121,21 @@ impl<'a> CliApp<'a> {
             show_browser: false,
             jev_token_source: None,
             jev: None,
+            update_runner: &refuse_update,
+            update_source_override: None,
         }
+    }
+
+    /// `update` で使う更新処理と、配信元を差し替える値（環境変数 EDICTORA_UPDATE_URL の値）を渡す。
+    /// 環境変数を読むのは main だけにし、テストでは偽の更新処理を差し込む
+    pub fn with_update(
+        mut self,
+        runner: &'a UpdateRunner<'a>,
+        source_override: Option<String>,
+    ) -> CliApp<'a> {
+        self.update_runner = runner;
+        self.update_source_override = source_override;
+        self
     }
 
     /// `--jev` で使う API トークン（環境変数 EDICTORA_JEV_API_TOKEN の値）を渡す。
@@ -138,6 +187,8 @@ impl<'a> CliApp<'a> {
                 self.outln(&format!("edictora {}", env!("CARGO_PKG_VERSION")));
                 return exit_codes::SUCCESS;
             }
+            // 更新は設定を読まない（設定が壊れていても更新できるように）。Chrome も開かない
+            CliCommandKind::Update => return self.update(cancel),
             _ => {}
         }
 
@@ -186,6 +237,28 @@ impl<'a> CliApp<'a> {
             }
         };
 
+        // ── 実行中の印（更新の適用側に、Chrome を開くコマンドが動いていることを知らせる）──
+        // Update.exe の apply がインストール先配下のプロセスを止めて push の途中で落とすのを防ぐため、
+        // ブラウザ操作の間だけ共有ロックを持つ（CLI 同士は同時に動ける）。更新の適用中（排他で持たれている）
+        // なら Chrome を開かずに止める。ロックファイル自体を開けない（フォルダーを作れないなど）ときは
+        // 使えなくしないよう、ログに残して続ける（インストールされていない実行でも無害）
+        let _running = match LockFile::try_acquire_shared(&self.paths.running_lock_path()) {
+            Ok(lock) => Some(lock),
+            Err(e) if is_held_by_another(&e) => {
+                self.errln(
+                    "エラー: edictora の更新を適用している最中です。少し待ってから実行し直してください。",
+                );
+                return exit_codes::FAILURE;
+            }
+            Err(e) => {
+                log(
+                    &format!("実行中を知らせるロックファイルを開けませんでした（続行します）: {e}"),
+                    LogLevel::Warning,
+                );
+                None
+            }
+        };
+
         // ── ブラウザ操作 ──
         self.show_browser = command.show_browser;
         if let Some(jev) = &self.jev {
@@ -201,7 +274,9 @@ impl<'a> CliApp<'a> {
             CliCommandKind::Push if command.yes => self.push(&config, &targets, cancel),
             CliCommandKind::Push => self.diff(&config, &targets, cancel, true),
             CliCommandKind::Submit => self.submit(&config, &targets[0], cancel),
-            CliCommandKind::Help | CliCommandKind::Version => Ok(exit_codes::USAGE),
+            CliCommandKind::Help | CliCommandKind::Version | CliCommandKind::Update => {
+                Ok(exit_codes::USAGE)
+            }
         };
         match result {
             Ok(code) => code,
@@ -223,6 +298,46 @@ impl<'a> CliApp<'a> {
                     &format!("{}: {}", e.kind_name(), e.message()),
                 );
                 self.errln(&format!("エラー: {}", redact(&e.message())));
+                exit_codes::FAILURE
+            }
+        }
+    }
+
+    /// `update`: 更新を確認し、新しい版があればダウンロードして Update.exe に適用を任せる。
+    /// 結果は標準エラーへ出す（標準出力は使わない）。最新・更新の開始は 0、失敗・別の更新処理が動いているときは 1
+    fn update(&self, cancel: &CancelToken) -> i32 {
+        let source = match UpdateSource::from_override(self.update_source_override.as_deref()) {
+            Ok(s) => s,
+            Err(m) => {
+                self.errln(&format!("エラー: {m}"));
+                return exit_codes::USAGE;
+            }
+        };
+        let progress = |m: &str| {
+            log(&format!("update: {m}"), LogLevel::Info);
+            self.errln(m);
+        };
+        let running_lock = self.paths.running_lock_path();
+        match (self.update_runner)(&source, &running_lock, &progress, cancel) {
+            Ok(outcome) => {
+                let message = outcome.message();
+                log(&format!("update: {message}"), LogLevel::Info);
+                self.errln(&message);
+                match outcome {
+                    UpdateOutcome::Busy | UpdateOutcome::AppInUse { .. } => exit_codes::FAILURE,
+                    _ => exit_codes::SUCCESS,
+                }
+            }
+            Err(Error::Cancelled) => {
+                self.errln("中断しました。");
+                exit_codes::CANCELLED
+            }
+            Err(e) => {
+                log_error_detail(
+                    "update の実行に失敗",
+                    &format!("{}: {}", e.kind_name(), e.message()),
+                );
+                self.errln(&format!("エラー: {}", e.message()));
                 exit_codes::FAILURE
             }
         }

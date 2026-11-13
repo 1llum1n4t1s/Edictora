@@ -15,7 +15,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 
 2 本立てで、画面操作の「判断」は Rust、ページ内での「情報収集」だけを TypeScript に分ける。
 
-- `crates/edictora`（Rust、lib + bin `edictora.exe`）: 設定・比較・Chrome 起動・CDP・ダッシュボード操作・手順・CLI。外部の引数パーサ・CDP ライブラリ・HTTP/TLS crate は使わない（`--jev` の HTTPS は WinHTTP を FFI で直接使う）。
+- `crates/edictora`（Rust、lib + bin `edictora.exe`・`edictora-updater.exe`）: 設定・比較・Chrome 起動・CDP・ダッシュボード操作・手順・CLI・自動更新。外部の引数パーサ・CDP ライブラリ・HTTP/TLS crate は使わない（`--jev` と自動更新の HTTPS は WinHTTP を FFI で直接使う）。
 - `page-scripts`（Bun + TypeScript）: ページ内で評価するスクリプトだけ。生成物 `page-scripts/dist/edictora.js` をコミットし、`include_str!` で exe に埋め込む。`cargo build` と配布 exe に Bun は要らない。
 
 ### 本体の内訳（`crates/edictora/src/`）
@@ -27,7 +27,10 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 | `config/` | 設定ファイルの読込と検証（未知のキーはエラー）、正本の区間切り出し |
 | `listing/` | 欄の定義、正本と現在値の完全一致の比較、行単位の差分表示 |
 | `dashboard/` | ダッシュボード操作。`urls.rs`（publisherId の取り出し）/ `text.rs`（画面の文言）/ `page_scripts.rs`（埋め込み JS の呼び出し）/ `selectors.rs`（要素の選択）/ `write_gate.rs`（書き込み可否）/ `item_page.rs`（1 操作ずつの実装）/ `browser.rs`（接続とログイン確認）。trait `ListingPage` が手順と画面操作の境目 |
-| `jev/` | `--jev` モード。`protocol.rs`（送信本文・応答の検証）/ `decision.rs`（ルール × Jev の判断表）/ `client.rs`（API クライアント・トークン）/ `winhttp.rs`（WinHTTP の FFI）。trait `ElementChooser` が Jev 呼び出しの境目 |
+| `jev/` | `--jev` モード。`protocol.rs`（送信本文・応答の検証）/ `decision.rs`（ルール × Jev の判断表）/ `client.rs`（API クライアント・トークン）/ `winhttp.rs`（共用の WinHTTP を Jev 向けに包む）。trait `ElementChooser` が Jev 呼び出しの境目 |
+| `net/` | `winhttp.rs`: WinHTTP を FFI で直接使う HTTP クライアント（GET / POST、メモリかファイルへ受ける）。`--jev` と自動更新が共用 |
+| `update/` | 自動更新。`locate.rs`（インストールの判定）/ `manifest.rs`（`sq.version`）/ `feed.rs`（フィードと更新先の選択）/ `version.rs`（SemVer）/ `source.rs`（配信元）/ `download.rs`（ダウンロードと検証）/ `hash.rs`（CNG）/ `lock.rs` / `apply.rs`（Update.exe の起動。trait `ApplyLauncher` が境目） |
+| `install/` | Velopack のフック（`hooks.rs`）と HKCU の Run・PATH の読み書き（`registry.rs`） |
 | `services.rs` | pull・diff・push・submit の手順と中止判断 |
 | `cli/` | 引数解析・実行と終了コード・差分表示 |
 | `logging.rs` ほか | ログ（publisherId を伏せる）、保存先（`AppPaths`）、エラー型、Ctrl+C |
@@ -39,6 +42,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 - **CDP**: 入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答は id ごと、イベントは購読ごとのチャネルへ配る。応答待ちの間も `Page.loadEventFired` と beforeunload の `Page.javascriptDialogOpening` を受け取れる。切断時は応答待ちと購読をすべて失敗させる。
 - **中断**: Ctrl+C は `SetConsoleCtrlHandler` で受け、待ちの各所が合図を見て抜ける（終了コード 130）。その後の `Browser.close` と終了待ちは合図を見ないので、Chrome は正常終了する。
 - **保存先の注入**: `AppPaths` を値として持ち回し、`main` だけが環境（`EDICTORA_LOCAL_ROOT` / `EDICTORA_ROAMING_ROOT` による上書きを含む）から決める。テストは `target/tmp` 配下を根にする。
+- **環境変数は入口だけが読む**: `EDICTORA_JEV_API_TOKEN`・`EDICTORA_UPDATE_URL` は `main`（と更新用 exe の入口）が読み、値で渡す。
 - **正規表現**: 設定の `sectionStart` / `sectionEnd` は Rust の `regex` で解釈する。先読み・後読み・後方参照は使えない（読み込み時にエラー）。どのパターンも線形時間で終わるので、時間による打ち切りは持たない。ログの publisherId 伏せ字も `regex` で行う。
 
 ## データフロー
@@ -51,9 +55,11 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 6. **書き込み（`push --yes`）**: 言語ごとに「切替 → 書換 → 全欄照合 → 保存 → 再読込 → 照合」を行い、最後に全言語を読み直して照合する。
 7. **審査送信（`submit --item <id> --yes`）**: 確認ダイアログで送信する。
 
+`update` は 1〜7 を通らず、配信元のフィードを見て新しい版をダウンロードし、Update.exe に差し替えを任せる（下の「配布・インストール・自動更新」）。
+
 結果は標準出力、進捗は標準エラー。終了コードは 0（成功・差分なし）/ 1（実行時エラー）/ 2（引数・設定の誤り、Chrome は開かない）/ 3（差分あり）/ 4（書き込み中止）/ 5（ログインが必要）/ 130（中断）。
 
-保存先: Chrome プロファイル（既定 `%LOCALAPPDATA%\Edictora\chrome-profile`、`profileDir` / `--profile` で変更可）・ログ（`...\logs`）・失敗時の画面（`...\diagnostics`）は `%LOCALAPPDATA%\Edictora`、設定は `%APPDATA%\Edictora`。いずれもリポジトリの外。
+保存先: Chrome プロファイル（既定 `%LOCALAPPDATA%\Edictora.Data\chrome-profile`、`profileDir` / `--profile` で変更可）・ログ（`...\logs`）・失敗時の画面（`...\diagnostics`）は `%LOCALAPPDATA%\Edictora.Data`、設定は `%APPDATA%\Edictora`。いずれもリポジトリの外。`%LOCALAPPDATA%\Edictora` は Velopack のインストール先（アンインストールで消える）なので、データを置かない。
 
 ## 重要な不変条件
 
@@ -65,7 +71,8 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 - **要素の特定が曖昧なら止める。** 候補がちょうど 1 つに絞れなければ、最初の 1 つを選ばず止める（別の欄を書き換える事故を防ぐ）。例外は `--jev` の補い（下の「Jev モード」）だけ。
 - **Chrome を前面に出さない。** `Page.bringToFront` は使わず、操作の前に毎回 `Emulation.setFocusEmulationEnabled` を行う。
 - **引数と設定の誤りは Chrome を開く前に終了コード 2 で止める。**
-- **失敗時の画面保存はリポジトリの外**（`%LOCALAPPDATA%\Edictora\diagnostics`）に置く。
+- **失敗時の画面保存はリポジトリの外**（`%LOCALAPPDATA%\Edictora.Data\diagnostics`）に置く。
+- **検証していないパッケージは適用しない。** サイズとハッシュがフィードと一致したものだけを Update.exe に渡す。
 
 ## 採用済みの設計判断
 
@@ -125,9 +132,23 @@ TypeSafe の分類 API「Jev」（`POST https://api.typesafe.ai/v1/systemone`、
 
 - 切り出し結果は検証スクリプト（push.mjs）と同じにする。`crates/edictora/tests/fixtures/ReplaceTranslator` の SHA-256・文字数（ja=1492 / en=3172）のテストで固める。
 
-### 配布
+### 配布・インストール・自動更新（Velopack）
 
-- 配布物は署名済み `edictora.exe` の Portable ZIP（Sigilune で署名、手順は [docs/release.md](docs/release.md)）。配布先（R2 バケット・ドメイン）は未確定で、決まるまで配信スクリプトは「配布先が未設定」で止める。
+- **配布物**: Velopack（vpk 1.2.161、packId `Edictora`、チャンネル `win`）のパッケージ。主 exe は `edictora.exe`、同じパッケージに更新用の `edictora-updater.exe` を入れる。Setup で `%LOCALAPPDATA%\Edictora`（以下「根」）に入る（`Update.exe`・`current\`・`packages\`）。配信元は Cloudflare R2 の `https://edictora.kagayoi.com`。署名・パッケージ作成・配信の手順は [docs/release.md](docs/release.md)。
+- **役割の分け方**: インストール・アンインストール・`current` の差し替えは Velopack の Setup.exe / Update.exe に任せる。Edictora は**更新の確認とダウンロードだけ**を自前で行う（`update/`）。velopack crate は ureq / rustls を引き込むので使わない。通信は `--jev` と共用の `net/winhttp.rs`。
+- **約束は vendored の Velopack 1.2.161 Rust SDK に合わせる**（Petarin の `desktop/src-tauri/vendor/velopack-1.2.161`）:
+  - インストールの判定（`locator.rs`）: exe の親か、パスの最後の `\current\` より前に `Update.exe` があればそこが根。`<根>\Update.exe` と `<根>\current\sq.version` が無ければ「インストールされていない」。現在の版・id・チャンネル・mainExe は `sq.version`（nuspec XML）から読む。チャンネルが空なら `win`。
+  - フィード（`sources/http.rs`・`manager.rs`）: `<配信元>/releases.{channel}.json`。`{"Assets":[{PackageId, Version, Type, FileName, SHA1, SHA256, Size, …}]}` でキーは大文字小文字を区別しない。Type が `Full` の最大の版が現在より新しければ更新（ダウングレードしない・差分パッケージは使わない）。問い合わせ文字列は `localVersion` と `id` だけ（SDK が付ける端末固有の `stagingId` は送らない）。
+  - ダウンロード（`manager.rs` の `download_updates`）: `<packages>\.velopack_lock` を持ち、`<FileName の拡張子を .partial にしたもの>` に保存 → サイズと SHA256（無ければ SHA1）を検証 → `<packages>\<FileName>` へ改名 → 前からあった `*.nupkg`・`*.partial`・`*-delta.nupkg` を消す。検証に失敗したら適用しない。ハッシュは CNG（bcrypt.dll）で計算する。
+  - 適用（`manager.rs` の `unsafe_apply_updates`）: `Update.exe apply --package <nupkg> --waitPid <自分> --silent --norestart --root <根> --packageDir <packages>` を `CREATE_NO_WINDOW` で起動し、起動した側はすぐに終了する。Update.exe が終了を待って差し替える。
+  - フック（`app.rs`・`constants.rs`）: 引数が 2 つ以上で 1 つ目（小文字にして）が `--veloapp-install` / `--veloapp-updated` / `--veloapp-obsolete` / `--veloapp-uninstall` ならフック。処理後は必ず終了コード 0。install / uninstall は 30 秒、updated / obsolete は 15 秒で止められる。
+- **SDK と違う点（意図的）**: ダウンロード済みのパッケージも検証し直す（SDK は検証せずに使う）。宣言の Size を上限にダウンロードを打ち切る。nupkg から `Squirrel.exe` を取り出して `Update.exe` を差し替える処理は持たない（zip を展開しないため。Update.exe はインストール時の版のまま）。起動時の自動適用（SDK の `VelopackApp::run` がする、ダウンロード済みの新しい版の適用）はしない（ダウンロードしたその場で適用を任せるため）。
+- **フックで行うこと**（`install/hooks.rs`。`edictora.exe` と `edictora-updater.exe` の両方が引数の解釈より前に処理する）: install / updated で HKCU の `Run` に `"<根>\current\edictora-updater.exe"` を登録し、ユーザー環境変数 `Path` に `<根>\current` を足して `WM_SETTINGCHANGE` を通知する。uninstall で両方を取り除く（Run は現在の値が自分の値と一致するときだけ消す）。obsolete は何もしない。Portable 版（根に `.portable`）では install / updated でも登録しない（利用者が置いた場所をログオン時に起動させない。手動の `edictora update` は使える）。Run の同じ名前の値が別の場所の更新用 exe を指していれば上書きせず、警告をログへ残す（根のフォルダー名が同じ別のインストールを壊さない）。Run の値の名前（`<根のフォルダー名> Updater`）と PATH の要素は根から決めるので、packId を変えた検証用インストールと衝突しない。PATH は既存の型（REG_SZ / REG_EXPAND_SZ）を保ち、他の要素は変えない（比較のときだけ `%VAR%` を展開）。インストール先から起動されていなければレジストリに触れない。
+- **初回起動の扱い**: Velopack に引数なしで起動された（`VELOPACK_FIRSTRUN` / `VELOPACK_RESTART` がある）`edictora.exe` は、既定の `diff`（Chrome を開く）を走らせずに終える。
+- **更新の入口**: ログオン時の `edictora-updater.exe`（`windows_subsystem = "windows"`、結果はログ、失敗は 30 秒・90 秒の間隔で 2 回まで試し直す）と、手動の `edictora update`（設定を読まない・Chrome を開かない・結果は標準エラー、最新と更新の開始は 0、失敗と「別の更新処理が動いている」は 1、配信元の差し替えの誤りは 2、中断は 130）。両者は `<packages>\.edictora-update.lock` で排他する。
+- **実行中の edictora との排他**: Update.exe の apply はインストール先配下のプロセスを止める可能性があるので、Chrome を開くコマンド（login / pull / diff / push / submit）はブラウザ操作の間だけ `<データの根>\edictora-running.lock` を共有で持つ（CLI 同士は同時に動ける）。更新側はダウンロードと検証の後、Update.exe を起動する直前にこれを排他で取り、取れなければ適用を後に回す（`AppInUse`。`update` は 1、更新用 exe は試し直す。次回はダウンロード済みのものを検証して使う）。取れたらプロセスの終了まで持つ。適用中に Chrome を開くコマンドを実行すると、Chrome を開かずに 1 で止まる。ロックファイルを開けないだけなら CLI は続行する（インストールされていない実行でも無害）。`pull` / `diff` / `push` / `submit` の中では更新を確かめない。インストールされていなければ、更新用 exe は何もせず、`edictora update` は失敗（1）にする。
+- **配信元の差し替え**: 検証用に環境変数 `EDICTORA_UPDATE_URL`（読むのは各 `main` だけ）。平文の http は 127.0.0.1 だけ。CLI のテストは偽の更新処理を差し込み、`CliApp` の既定（`refuse_update`）では本物の配信元・Update.exe に届かない。
+- **データの置き場を根と分ける**: 根はアンインストールでフォルダーごと消えるので、Chrome プロファイル・ログ・診断情報は `%LOCALAPPDATA%\Edictora.Data` に置く（旧 `%LOCALAPPDATA%\Edictora` からの自動移行はしない）。
 
 ## 実画面での確認状況
 
@@ -138,5 +159,6 @@ TypeSafe の分類 API「Jev」（`POST https://api.typesafe.ai/v1/systemone`、
   - 言語が 1 つだけのアイテム、ja / en 以外の言語を持つアイテム。
   - URL 欄（公式・ホームページ・サポート）の書き換えと保存。
   - 15 件の全アイテムでの読み出し。
+- 単体テストは 127.0.0.1 の偽配信元・専用ハイブ・偽の Update.exe 起動で行う。自動更新の結合は、検証用 packId `EdictoraTest` で実機確認済み: Install フックで Run（`EdictoraTest Updater`）と PATH（REG_EXPAND_SZ のまま）を登録、`edictora update` で 1.0.5 → 1.0.6（Obsolete / Updated フック）、`edictora-updater.exe` で 1.0.6 → 1.0.7、`Update.exe uninstall` で Uninstall フックが Run と PATH から自分の分だけを消し `Edictora.Data` は残る。未確認: 実署名での一連、R2 への実配信、本番の HTTPS（edictora.kagayoi.com）、本番 packId `Edictora` での Setup、Portable 版の一連、Setup 直後の初回起動の見え方（`--silent` の Setup は主 exe を起動しないらしい）、実行中ロックで適用を後に回す動作の実機確認。
 - ダッシュボードの英語表示は未対応（文言で要素を探すため）。
 - `--jev` は実画面・本物の API ではまだ確かめていない（送信本文の中身、確信度の分布、しきい値 0.8 の妥当性）。

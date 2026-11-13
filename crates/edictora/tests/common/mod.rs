@@ -1,13 +1,15 @@
 //! テスト共通の補助。
 //!
 //! 作業フォルダーは cargo が用意する `target/tmp`（CARGO_TARGET_TMPDIR）の下に、テストごとの固定名で作る。
-//! 利用者の TEMP・実プロファイル（%LOCALAPPDATA%\Edictora）・実設定（%APPDATA%\Edictora）は使わない。
+//! 利用者の TEMP・実プロファイル（%LOCALAPPDATA%\Edictora.Data）・実設定（%APPDATA%\Edictora）は使わない。
 //! 保存先（AppPaths）も作業フォルダーの下を指すものを渡す。
 
 #![allow(dead_code)]
 
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
+use edictora::Error;
 use edictora::app_paths::AppPaths;
 
 /// テスト用の作業フォルダー（固定名。中のファイルは毎回書き直す）
@@ -31,6 +33,15 @@ pub fn fixture(name: &str) -> PathBuf {
         .join("fixtures")
         .join("ReplaceTranslator")
         .join(name)
+}
+
+/// 設定の誤り（`Error::Config`）であることを確かめ、その文言を返す。
+/// 成功や別種のエラーなら、中身を表示してテストを失敗させる
+pub fn config_err<T: Debug>(r: edictora::Result<T>) -> String {
+    match r {
+        Err(Error::Config(m)) => m,
+        other => panic!("Config エラーを期待しました: {other:?}"),
+    }
 }
 
 /// 架空のアイテム ID

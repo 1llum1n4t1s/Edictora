@@ -21,13 +21,25 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 - **push** — 差分のある欄だけを書き換えて**下書き保存**し、読み込み直して正本と一致するか照合する
 - **submit** — 1 件ずつ審査に送信する（「審査の合格後に自動的に公開する」の設定は変更しません）
 - **login** — 専用プロファイルの Chrome を開き、Google へのログインを利用者に行ってもらう
+- **update** — 新しい版があればダウンロードして差し替える（Setup でインストールしたときだけ。ログオン時にも自動で行う）
+
+## インストールと更新
+
+配布物の `Edictora-win-Setup.exe`（Velopack のインストーラー）を実行すると、管理者権限なしで `%LOCALAPPDATA%\Edictora` に入ります。
+
+- インストール後は、新しく開いたコマンドプロンプトや PowerShell で `edictora` がそのまま使えます（ユーザー環境変数 `Path` に `%LOCALAPPDATA%\Edictora\current` を足します）。
+- Windows へのログオン時に `edictora-updater.exe` がウィンドウを出さずに動き、`https://edictora.kagayoi.com` に新しい版があれば、ダウンロードしてサイズとハッシュを確かめてから差し替えます（HKCU の `Run` に `Edictora Updater` として登録します。タスク マネージャーの「スタートアップ アプリ」で無効にできます）。結果はログに残ります。
+- 手動で更新するときは `edictora update` を実行します。結果は標準エラーに出し、最新・更新の開始なら終了コード 0、失敗なら 1 です。差し替えは `edictora` の終了後に Update.exe が行います。`pull` / `diff` / `push` / `submit` の実行中は更新を確かめません。
+- Portable 版（`Edictora-win-Portable.zip`）では、ログオン時の自動更新と `Path` の登録をしません。展開先の `current\edictora.exe update` で手動で更新できます。ソースからビルドした exe は更新しません。
+- `login` / `pull` / `diff` / `push` / `submit` の実行中は、更新を適用しません（ダウンロードまで済ませ、適用は後に回します）。更新の適用中にこれらを実行すると、Chrome を開かずに終了コード 1 で止まるので、少し待ってから実行し直してください。ただし、更新処理が終了してから Update.exe が差し替えを終えるまでの数秒間は防げないので、更新の直後は少し待ってから実行してください。
+- アンインストールすると、`%LOCALAPPDATA%\Edictora` と `Run`・`Path` の登録が取り除かれます。データ（`%LOCALAPPDATA%\Edictora.Data`）と設定（`%APPDATA%\Edictora`）は残るので、不要なら利用者自身で削除してください。
 
 ## 必要環境
 
 - Windows 10 / Windows 11（x86_64）
 - Google Chrome（自動検出。設定ファイルの `chromePath` か `--chrome` でも指定可能）
 - CWS デベロッパー アカウント
-- Rust 1.99.1（ソースからビルドする場合。`rust-toolchain.toml` で固定）。ページ内スクリプトを変更するときだけ Bun
+- Rust 1.100.0（ソースからビルドする場合。`rust-toolchain.toml` で固定）。ページ内スクリプトを変更するときだけ Bun
 
 ## 使い方
 
@@ -38,8 +50,8 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 
 ```jsonc
 {
-  // 任意。省略時は %LOCALAPPDATA%\Edictora\chrome-profile
-  "profileDir": "%LOCALAPPDATA%\\Edictora\\chrome-profile",
+  // 任意。省略時は %LOCALAPPDATA%\Edictora.Data\chrome-profile
+  "profileDir": "%LOCALAPPDATA%\\Edictora.Data\\chrome-profile",
   "items": [
     {
       "itemId": "abcdefghijklmnopabcdefghijklmnop",   // 32 文字の CWS アイテム ID
@@ -142,16 +154,19 @@ edictora push --item <id> --jev --jev-model jev-latest --yes  # モデルは既�
 - ステータスが「審査待ち」など、書き込んでよいと確認できない状態では書き込みません。審査の取り消しはしません。
 - 欄やボタンはラベル・役割・文言で探し、ちょうど 1 つに絞れないときは止めます（クラス名には依存しません）。`--jev` のときだけ、入力欄と言語の選択に限って、確信度 0.8 以上の Jev の選択で補います。
 - Chrome は自動化フラグを付けずに起動し、終了時は正常終了させます。**プロファイルは削除しません。**
-- 失敗時の画面は `%LOCALAPPDATA%\Edictora\diagnostics` に保存します（リポジトリには置きません）。
+- 失敗時の画面は `%LOCALAPPDATA%\Edictora.Data\diagnostics` に保存します（リポジトリには置きません）。
 
 ## 保存場所
 
 | 内容 | 場所 |
 |---|---|
 | 設定ファイル（正本の対応づけ） | `%APPDATA%\Edictora\config.json` |
-| Chrome プロファイル（ログイン情報を含む） | `%LOCALAPPDATA%\Edictora\chrome-profile` |
-| ログ | `%LOCALAPPDATA%\Edictora\logs` |
-| 失敗時の画面 | `%LOCALAPPDATA%\Edictora\diagnostics` |
+| Chrome プロファイル（ログイン情報を含む） | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
+| ログ（更新の結果を含む） | `%LOCALAPPDATA%\Edictora.Data\logs` |
+| 失敗時の画面 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| アプリ本体（Setup でインストールしたとき） | `%LOCALAPPDATA%\Edictora`（アンインストールでフォルダーごと消えます） |
+
+データの置き場を `Edictora.Data` としてアプリ本体と分けているのは、アンインストールでログイン済みの Chrome プロファイルまで消えないようにするためです。以前の場所（`%LOCALAPPDATA%\Edictora\chrome-profile` など）からの自動移行はしません。
 
 Chrome プロファイルにはログイン情報（Cookie）が入ります。他人と共有せず、不要になったら利用者自身で削除してください。
 ログには、パブリッシャー ID（ダッシュボード URL の一部）を伏せて記録します。
@@ -161,7 +176,7 @@ Chrome プロファイルにはログイン情報（Cookie）が入ります。�
 本体は Rust（`crates/edictora/`）です。
 
 ```powershell
-cargo build --release          # target\release\edictora.exe（Bun は不要）
+cargo build --release          # target\release\edictora.exe と edictora-updater.exe（Bun は不要）
 cargo test
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
@@ -179,11 +194,13 @@ bun run check          # dist/edictora.js が最新か確かめる
 
 **`sectionStart` / `sectionEnd` の正規表現**: Rust の `regex` を使うため、先読み・後読み（`(?=…)` `(?!…)` `(?<=…)` `(?<!…)`）と後方参照（`\1`）は使えません（設定の読み込み時にエラーになります）。`^■ 説明` のような通常の書き方はそのまま使えます。
 
-検証用に、保存先の根を環境変数 `EDICTORA_LOCAL_ROOT`（既定 `%LOCALAPPDATA%\Edictora`）と `EDICTORA_ROAMING_ROOT`（既定 `%APPDATA%\Edictora`）で差し替えられます。
+検証用に、保存先の根を環境変数 `EDICTORA_LOCAL_ROOT`（既定 `%LOCALAPPDATA%\Edictora.Data`）と `EDICTORA_ROAMING_ROOT`（既定 `%APPDATA%\Edictora`）で、更新の配信元を `EDICTORA_UPDATE_URL`（既定 `https://edictora.kagayoi.com`。平文の `http://` は `127.0.0.1` だけ）で差し替えられます。
+
+Velopack のパッケージには `edictora.exe`（主 exe）と `edictora-updater.exe` の両方を入れます。更新処理は velopack crate を使わず、フィードの取得・ダウンロード・検証を `--jev` と共用の WinHTTP で行い、インストール・差し替え・アンインストールは Velopack の Setup.exe / Update.exe に任せます。
 
 ## 配布
 
-配布先（R2 バケット・ドメイン）は未確定です。決まるまで配布物は公開していません。
+配信元は Cloudflare R2 の `https://edictora.kagayoi.com`（Velopack のチャンネル `win`）です。リリースの手順は [docs/release.md](docs/release.md) を参照してください。
 
 ## ライセンス
 

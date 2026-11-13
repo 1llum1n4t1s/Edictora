@@ -7,6 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 publish.workspace = true
+# bin が 2 つ（edictora と edictora-updater）あるので、素の `cargo run` は edictora を動かす
+default-run = "edictora"
 
 [lib]
 path = "src/lib.rs"
@@ -14,6 +16,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "edictora"
 path = "src/main.rs"
+
+# ログオン時に HKCU の Run から起動される更新用 exe（コンソールなし）。
+# Velopack のパッケージに edictora.exe と並べて入れる（install::hooks が Run に登録する）
+[[bin]]
+name = "edictora-updater"
+path = "src/updater_main.rs"
 
 [dependencies]
 regex = "1.13.1"

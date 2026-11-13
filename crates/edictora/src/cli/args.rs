@@ -26,6 +26,8 @@ pub enum CliCommandKind {
     Push,
     /// 審査に送信（--item 1 件と --yes 必須）
     Submit,
+    /// 自動更新を手動で行う（Velopack でインストールされたときだけ。Chrome も設定も使わない）
+    Update,
 }
 
 impl CliCommandKind {
@@ -39,6 +41,7 @@ impl CliCommandKind {
             CliCommandKind::Diff => "diff",
             CliCommandKind::Push => "push",
             CliCommandKind::Submit => "submit",
+            CliCommandKind::Update => "update",
         }
     }
 
@@ -77,7 +80,8 @@ impl CliCommandKind {
                 "--jev",
                 "--jev-model",
             ],
-            CliCommandKind::Help | CliCommandKind::Version => &[],
+            // update はオプションを取らない（配信元の差し替えは検証用の環境変数だけ）
+            CliCommandKind::Help | CliCommandKind::Version | CliCommandKind::Update => &[],
         }
     }
 }
@@ -173,6 +177,7 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
             "diff" => CliCommandKind::Diff,
             "push" => CliCommandKind::Push,
             "submit" => CliCommandKind::Submit,
+            "update" => CliCommandKind::Update,
             _ => {
                 return Err(Error::Usage(format!(
                     "不明なコマンドです: {first}（--help で使い方を表示）"
@@ -323,6 +328,7 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   edictora diff    [--item <id>]... [--locale <code>]... [共通オプション]   （既定のコマンド）
   edictora push    [--item <id>]... [--locale <code>]... --yes [共通オプション]
   edictora submit  --item <id> --yes [共通オプション]
+  edictora update
 
 コマンド:
   login    専用プロファイルの Chrome を開き、手動ログインしてダッシュボードに着くまで待ちます
@@ -330,10 +336,13 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   diff     正本との差分を表示します（読み取りのみ）
   push     差分のある欄だけを書き換えて下書き保存し、読み直して照合します。--yes が無ければ差分を表示して止まります
   submit   1 件のアイテムを審査に送信します（「自動的に公開する」の設定は変更しません）
+  update   新しい版があればダウンロードし、終了後に差し替えます（Velopack の Setup・Portable 版のとき。
+           Setup で入れたときはログオン時にも自動で行います。Portable 版は自動更新を登録しません。
+           pull などの実行中は適用を後に回します。https://edictora.kagayoi.com に接続します）
 
 共通オプション:
   --config <file>   設定ファイル（既定: %APPDATA%\Edictora\config.json）
-  --profile <dir>   Chrome プロファイル（既定: 設定ファイルの profileDir、なければ %LOCALAPPDATA%\Edictora\chrome-profile）
+  --profile <dir>   Chrome プロファイル（既定: 設定ファイルの profileDir、なければ %LOCALAPPDATA%\Edictora.Data\chrome-profile）
   --chrome <exe>    chrome.exe の場所（既定: 設定ファイルの chromePath、なければ自動検出）
   --item <id>       対象アイテム（複数可。省略時は設定ファイルの全アイテム）
   --locale <code>   対象ロケール（複数可。例: ja, en）
@@ -347,8 +356,8 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   --version         バージョンを表示
 
 終了コード:
-  0  成功（差分なし）
-  1  実行時エラー（画面操作の失敗・照合の不一致など）
+  0  成功（差分なし。update では最新・更新の開始）
+  1  実行時エラー（画面操作の失敗・照合の不一致・更新の失敗・更新の適用中など）
   2  引数・設定の誤り
   3  差分あり（diff、または --yes なしの push）
   4  書き込みを中止（審査待ち・状態を判定できない）

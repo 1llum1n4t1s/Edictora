@@ -1,6 +1,6 @@
 //! ログ出力（C# の `LoggerService` 相当の簡単な実装）。
 //!
-//! - `%LOCALAPPDATA%\Edictora\logs\Edictora_yyyy-MM-dd.log` へ 1 行ずつ追記する（UTF-8）
+//! - `%LOCALAPPDATA%\Edictora.Data\logs\Edictora_yyyy-MM-dd.log` へ 1 行ずつ追記する（UTF-8）
 //! - 形式: `yyyy-MM-dd HH:mm:ss.ffff [LEVEL] message`
 //! - 保持は 7 日。初期化時に、日付がそれより古い自アプリのログファイルだけを消す
 //! - [`init`] を呼ぶまでは何も書かない（テストはログを書かない）
@@ -11,7 +11,7 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 
 use regex::Regex;
 
@@ -90,13 +90,10 @@ fn write_line(message: &str, level: LogLevel) {
     let Some(dir) = guard.as_ref() else { return };
     let now = LocalTime::now();
     let path = dir.join(format!("{FILE_PREFIX}_{}.log", now.date_string()));
+    // 書式は `yyyy-MM-dd HH:mm:ss.ffff [LEVEL] message`（時刻部分は LocalTime::log_timestamp）
     let line = format!(
-        "{} {:02}:{:02}:{:02}.{:04} [{}] {}\n",
-        now.date_string(),
-        now.hour,
-        now.minute,
-        now.second,
-        now.millis * 10,
+        "{} [{}] {}\n",
+        now.log_timestamp(),
         level.label(),
         redact(message)
     );
@@ -111,11 +108,11 @@ fn write_line(message: &str, level: LogLevel) {
 /// C# 版の正規表現にあった否定先読み `(?!<publisher>)` は、Rust の regex では使えない。
 /// ただし置き換える文字の集合が `<` を含まないため、`<publisher>` は元から一致しない（先読みなしで同じ結果）。
 pub fn redact(text: &str) -> String {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
+    // 固定の正規表現は初回参照時に 1 度だけコンパイルする
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r#"(?i)(?P<prefix>devconsole/)[^/\s?#"'<>]+"#).expect("固定の正規表現")
     });
-    re.replace_all(text, "${prefix}<publisher>").into_owned()
+    RE.replace_all(text, "${prefix}<publisher>").into_owned()
 }
 
 /// 保持期間を超えた古いログファイルを片付ける（自アプリのログファイルだけが対象）
