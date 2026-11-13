@@ -20,6 +20,9 @@ src/
 ├─ Edictora.Cli/      … edictora.exe（login / pull / diff / push / submit。外部の引数パーサなし、NativeAOT 可）
 ├─ Edictora.UI/       … Avalonia 12 + FluentTheme + CommunityToolkit.Mvvm + Microsoft.Extensions.DependencyInjection
 └─ Edictora.Tests/    … MSTest（命名: Xxx.test.cs）。ブラウザ不要な部分だけを検証する
+scripts/              … リリース用 PowerShell（release-local.ps1 / Sigilune.Common.ps1 / R2 配信）
+tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が Run.ps1 を実行）
+.github/workflows/    … ci.yml（ビルド・テスト）/ codeql.yml / release.yml（署名付きリリース）
 ```
 
 ## 設計上の重要な前提（このとおりに実装する）
