@@ -112,13 +112,16 @@ fn no_browser(_: &DashboardBrowserOptions, _: &CancelToken) -> edictora::Result<
     panic!("このテストでは Chrome を開いてはいけません");
 }
 
-fn run(dir_name: &str, args: &[&str]) -> (i32, String, String) {
+/// CliApp を実行し、(終了コード, 標準出力, 標準エラー) を返す。
+/// `token` は環境変数 EDICTORA_JEV_API_TOKEN の値の代わり（プロセスの環境変数には触れない）
+fn run_with_token(dir_name: &str, args: &[&str], token: Option<&str>) -> (i32, String, String) {
     let dir = work_dir(dir_name);
     let mut out = Vec::new();
     let mut err = Vec::new();
     let opener: &BrowserOpener = &no_browser;
-    let code =
-        CliApp::new(&mut out, &mut err, test_paths(&dir), opener).run(args, &CancelToken::new());
+    let code = CliApp::new(&mut out, &mut err, test_paths(&dir), opener)
+        .with_jev_token(token.map(str::to_string))
+        .run(args, &CancelToken::new());
     (
         code,
         String::from_utf8(out).unwrap(),
@@ -126,11 +129,21 @@ fn run(dir_name: &str, args: &[&str]) -> (i32, String, String) {
     )
 }
 
+/// トークンなし（EDICTORA_JEV_API_TOKEN が無い状態）で実行する。
+/// CliApp::new の既定もトークンなしなので、`with_jev_token(None)` を通しても同じ状態になる
+fn run(dir_name: &str, args: &[&str]) -> (i32, String, String) {
+    run_with_token(dir_name, args, None)
+}
+
 #[test]
 fn run_ヘルプは成功で使い方を出す() {
     let (code, output, _) = run("cli-help", &["--help"]);
     assert_eq!(code, 0);
     assert!(output.contains("edictora submit  --item <id> --yes"));
+    // --jev とトークンの環境変数・モデル指定の説明もある
+    assert!(output.contains("--jev"));
+    assert!(output.contains("EDICTORA_JEV_API_TOKEN"));
+    assert!(output.contains("--jev-model"));
 }
 
 #[test]
@@ -150,6 +163,8 @@ fn run_設定ファイルが無ければブラウザを開かず終了コード2
     );
     assert_eq!(code, 2);
     assert!(err.contains("設定ファイルがありません"));
+    // --jev なしなら、EDICTORA_JEV_API_TOKEN が無くてもトークンを求めず従来どおり進む
+    assert!(!err.contains("EDICTORA_JEV_API_TOKEN"));
 }
 
 fn write_config(dir_name: &str) -> String {
@@ -157,7 +172,9 @@ fn write_config(dir_name: &str) -> String {
     let config = dir.join("config.json");
     std::fs::write(
         &config,
-        r#"{ "items": [ { "itemId": "abcdefghijklmnopabcdefghijklmnop", "locales": { "ja": { "homepageUrl": "https://example.com/" } } } ] }"#,
+        format!(
+            r#"{{ "items": [ {{ "itemId": "{ITEM}", "locales": {{ "ja": {{ "homepageUrl": "https://example.com/" }} }} }} ] }}"#
+        ),
     )
     .unwrap();
     config.to_str().unwrap().to_string()
@@ -168,17 +185,10 @@ fn run_設定に無いアイテムはブラウザを開かず終了コード2() 
     let config = write_config("cli-unknown-item");
     let (code, _, err) = run(
         "cli-unknown-item",
-        &[
-            "push",
-            "--config",
-            &config,
-            "--item",
-            "ponmlkjihgfedcbaponmlkjihgfedcba",
-            "--yes",
-        ],
+        &["push", "--config", &config, "--item", ITEM2, "--yes"],
     );
     assert_eq!(code, 2);
-    assert!(err.contains("ponmlkjihgfedcbaponmlkjihgfedcba"));
+    assert!(err.contains(ITEM2));
 }
 
 #[test]
@@ -187,13 +197,7 @@ fn run_指定ロケールを持たないアイテムを明示したら終了コ�
     let (code, _, err) = run(
         "cli-unknown-locale",
         &[
-            "diff",
-            "--config",
-            &config,
-            "--item",
-            "abcdefghijklmnopabcdefghijklmnop",
-            "--locale",
-            "fr",
+            "diff", "--config", &config, "--item", ITEM, "--locale", "fr",
         ],
     );
     assert_eq!(code, 2);
@@ -203,10 +207,14 @@ fn run_指定ロケールを持たないアイテムを明示したら終了コ�
 // ───────── Rust 版で足したもの ─────────
 
 #[test]
-fn run_バージョンは1_0_5() {
+fn run_バージョンはパッケージの版をedictora_版の書式で出す() {
+    // 版は Cargo.toml の [workspace.package] version に一元化しているので、テストに版番号を直書きしない
     let (code, output, _) = run("cli-version", &["--version"]);
     assert_eq!(code, 0);
-    assert_eq!(output.trim(), "edictora 1.0.5");
+    assert_eq!(
+        output.trim(),
+        format!("edictora {}", env!("CARGO_PKG_VERSION"))
+    );
 }
 
 // ───────── --jev ─────────
@@ -250,21 +258,6 @@ fn parse_jev_modelは任意で_jevなしや不正な名前は拒否する() {
     assert!(usage_error(&["login", "--jev-model", "x"]));
 }
 
-fn run_with_token(dir_name: &str, args: &[&str], token: Option<&str>) -> (i32, String, String) {
-    let dir = work_dir(dir_name);
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let opener: &BrowserOpener = &no_browser;
-    let code = CliApp::new(&mut out, &mut err, test_paths(&dir), opener)
-        .with_jev_token(token.map(str::to_string))
-        .run(args, &CancelToken::new());
-    (
-        code,
-        String::from_utf8(out).unwrap(),
-        String::from_utf8(err).unwrap(),
-    )
-}
-
 #[test]
 fn run_jevでトークンが無ければブラウザを開かず終了コード2() {
     let config = write_config("cli-jev-no-token");
@@ -301,26 +294,4 @@ fn run_jevのトークンはエラー出力に出さない() {
     assert_eq!(code, 2);
     assert!(err.contains("設定ファイルがありません"), "{err}");
     assert!(!err.contains("secret-value-123") && !out.contains("secret-value-123"));
-}
-
-#[test]
-fn run_jevなしならトークンが無くても従来どおり() {
-    let dir = work_dir("cli-jev-off");
-    let missing = dir.join("none.json");
-    let (code, _, err) = run_with_token(
-        "cli-jev-off",
-        &["diff", "--config", missing.to_str().unwrap()],
-        None,
-    );
-    assert_eq!(code, 2);
-    assert!(err.contains("設定ファイルがありません"));
-    assert!(!err.contains("EDICTORA_JEV_API_TOKEN"));
-}
-
-#[test]
-fn run_ヘルプにjevの説明がある() {
-    let (_, output, _) = run("cli-help-jev", &["--help"]);
-    assert!(output.contains("--jev"));
-    assert!(output.contains("EDICTORA_JEV_API_TOKEN"));
-    assert!(output.contains("--jev-model"));
 }

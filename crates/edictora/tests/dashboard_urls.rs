@@ -1,5 +1,8 @@
 //! C# の DashboardUrls.test.cs の移植
 
+mod common;
+
+use common::ITEM_A as ITEM;
 use edictora::dashboard::urls::{
     ROOT, edit_url, is_edit_page_of, is_login_page, try_parse_publisher_id,
 };
@@ -7,7 +10,6 @@ use edictora::logging::redact;
 
 // テスト用の架空の publisherId（実在の値は使わない）
 const PUBLISHER: &str = "00000000-1111-2222-3333-444444444444";
-const ITEM: &str = "abcdefghijklmnopabcdefghijklmnop";
 
 #[test]
 fn try_parse_publisher_id_ダッシュボードのurlから取り出す() {

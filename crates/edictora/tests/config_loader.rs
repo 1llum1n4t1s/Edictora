@@ -4,7 +4,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{ITEM_A, ITEM_B, test_paths, work_dir};
+use common::{ITEM_A, ITEM_B, config_err, test_paths, work_dir};
 use edictora::Error;
 use edictora::app_paths::AppPaths;
 use edictora::config::{self, EdictoraConfig};
@@ -47,13 +47,6 @@ impl Ctx {
             None,
             &self.paths,
         )
-    }
-}
-
-fn config_err(r: edictora::Result<EdictoraConfig>) -> String {
-    match r {
-        Err(Error::Config(m)) => m,
-        other => panic!("Config エラーを期待しました: {other:?}"),
     }
 }
 

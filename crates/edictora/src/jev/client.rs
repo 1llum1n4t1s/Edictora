@@ -112,11 +112,6 @@ impl JevClient {
             timeout,
         }
     }
-
-    /// 使うモデル名
-    pub fn model(&self) -> &str {
-        &self.model
-    }
 }
 
 impl ElementChooser for JevClient {

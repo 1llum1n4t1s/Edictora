@@ -30,11 +30,16 @@ pub fn format(row: &LocaleComparison) -> String {
                     ));
                     let lines = text_diff::compute(current, &field.expected);
                     if lines.iter().all(|l| l.kind == DiffKind::Same) {
-                        // 行単位では同じ（不可視文字・行末空白などの違い）
-                        out.push_str(&format!(
-                            "  （行単位では同じです。{} 文字目に見えない違いがあります）\n",
-                            text_diff::first_difference_index(current, &field.expected)
-                        ));
+                        // 行単位では同じ（不可視文字・行末空白などの違い）。
+                        // 差分ありの行なので位置は必ずあるが、念のため無ければ位置を出さない。
+                        match text_diff::first_difference_position(current, &field.expected) {
+                            Some(at) => out.push_str(&format!(
+                                "  （行単位では同じです。{at} 文字目に見えない違いがあります）\n"
+                            )),
+                            None => {
+                                out.push_str("  （行単位では同じです。見えない違いがあります）\n")
+                            }
+                        }
                     } else {
                         out.push_str(&text_diff::format(&lines, 2));
                     }

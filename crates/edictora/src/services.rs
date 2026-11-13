@@ -15,7 +15,7 @@ use crate::listing::{
     ComparisonStatus, ExpectedItem, ExpectedLocale, FieldValues, ItemSnapshot, ListingField,
     LocaleComparison, LocaleSnapshot, compare, compare_value,
 };
-use crate::logging::{LogLevel, log};
+use crate::logging::{LogLevel, log, redact};
 use crate::util::eq_ic;
 
 /// 進捗の出力先
@@ -73,7 +73,9 @@ pub fn pull(
                 status_text: None,
                 available_locales: Vec::new(),
                 locales: Vec::new(),
-                error: Some(e.message()),
+                // 結果は標準出力へ出るので、エラー文中のダッシュボード URL の publisherId を伏せる
+                // （ログと同じ redact。欄の値や差分本文には掛けない）
+                error: Some(redact(&e.message())),
             })
         }
         Err(e) => Err(e),
@@ -120,7 +122,8 @@ fn pull_core(
                     &format!("読み出し失敗 {} [{}]: {}", expected.item_id, locale.code, e),
                     LogLevel::Warning,
                 );
-                locales.push(LocaleSnapshot::failed(&locale.code, e.message()));
+                // 結果（標準出力）へ入るエラー文は publisherId を伏せる
+                locales.push(LocaleSnapshot::failed(&locale.code, redact(&e.message())));
             }
             Err(e) => return Err(e),
         }
@@ -156,25 +159,42 @@ pub fn push(
 ) -> Result<PushResult> {
     match push_core(page, expected, progress, cancel) {
         Ok(r) => Ok(r),
+        // 画面を保存する条件: ダッシュボード系の失敗のうちログイン切れ以外。書き込み不可（WriteBlocked）でも保存する。
+        // submit は WriteBlocked を除くので条件が違う。この差を保つため、条件は report_failure に入れず呼び出し側に置く。
         Err(e) if e.is_dashboard() && e != Error::LoginRequired => {
-            let shot = page.capture_diagnostics(&format!("push-{}", expected.item_id));
-            log(
-                &format!(
-                    "push 失敗 {}: {}{}",
-                    expected.item_id,
-                    e,
-                    shot.as_ref()
-                        .map(|s| format!("（画面: {s}）"))
-                        .unwrap_or_default()
-                ),
-                LogLevel::Error,
-            );
-            if let Some(s) = shot {
-                progress(&format!("失敗時の画面を保存しました: {s}"));
-            }
+            report_failure(page, "push", &expected.item_id, &e, progress);
             Err(e)
         }
         Err(e) => Err(e),
+    }
+}
+
+/// 失敗時の記録: 画面を診断用に保存し、エラーログを書き、保存できたら進捗にその場所を出す。
+///
+/// push と submit で同じ形だった処理をまとめたもの。どの失敗で呼ぶか（保存の条件）は
+/// 呼び出し側ごとに違うため、ここでは判断せず、呼ばれたら必ず記録する。
+/// - 画面のラベル: `<operation>-<item_id>`（診断ファイル名の一部になる）
+/// - ログ: `<operation> 失敗 <item_id>: <エラー>（画面: <パス>）`（保存できなければ括弧部分なし）
+/// - 進捗: `失敗時の画面を保存しました: <パス>`（保存できたときだけ）
+fn report_failure(
+    page: &mut dyn ListingPage,
+    operation: &str,
+    item_id: &str,
+    error: &Error,
+    progress: &Progress<'_>,
+) {
+    let shot = page.capture_diagnostics(&format!("{operation}-{item_id}"));
+    log(
+        &format!(
+            "{operation} 失敗 {item_id}: {error}{}",
+            shot.as_ref()
+                .map(|s| format!("（画面: {s}）"))
+                .unwrap_or_default()
+        ),
+        LogLevel::Error,
+    );
+    if let Some(s) = shot {
+        progress(&format!("失敗時の画面を保存しました: {s}"));
     }
 }
 
@@ -212,14 +232,7 @@ fn push_core(
         page.switch_locale(code, cancel)?;
         let fields = locale.fields();
         let current = page.read_fields(&fields, cancel)?;
-        let targets: Vec<ListingField> = fields
-            .iter()
-            .copied()
-            .filter(|f| {
-                compare_value(&locale.values[f], current.get(f).map(String::as_str))
-                    != ComparisonStatus::Match
-            })
-            .collect();
+        let targets = mismatched_fields(locale, &fields, &current);
         if targets.is_empty() {
             progress(&format!("{name}: [{code}] は正本と一致しています"));
             results.push(LocalePushResult {
@@ -239,7 +252,12 @@ fn push_core(
         }
 
         // 保存前に、このロケールの全対象欄が正本どおりか確かめる（書き換えていない欄が動いていないかも含む）
-        ensure_matches(locale, &page.read_fields(&fields, cancel)?, "保存前の照合")?;
+        ensure_matches(
+            locale,
+            &fields,
+            &page.read_fields(&fields, cancel)?,
+            "保存前の照合",
+        )?;
 
         // 保存の直前にも状態を確かめる
         ensure_allowed(&page.get_state(cancel)?)?;
@@ -249,7 +267,12 @@ fn push_core(
         // 読み込み直して、保存された値を確かめる
         page.reload(cancel)?;
         page.switch_locale(code, cancel)?;
-        ensure_matches(locale, &page.read_fields(&fields, cancel)?, "保存後の照合")?;
+        ensure_matches(
+            locale,
+            &fields,
+            &page.read_fields(&fields, cancel)?,
+            "保存後の照合",
+        )?;
         progress(&format!(
             "{name}: [{code}] を保存し、読み直して一致を確認しました"
         ));
@@ -355,36 +378,47 @@ pub fn submit(
         };
     match run(page, confirm) {
         Ok(r) => Ok(r),
+        // 画面を保存する条件: ダッシュボード系の失敗のうち、ログイン切れと書き込み不可（WriteBlocked）以外。
+        // push（WriteBlocked でも保存する）と条件が違うので、条件は report_failure に入れず呼び出し側に置く。
         Err(e)
             if e.is_dashboard() && !matches!(e, Error::LoginRequired | Error::WriteBlocked(_)) =>
         {
-            let shot = page.capture_diagnostics(&format!("submit-{item_id}"));
-            log(
-                &format!(
-                    "submit 失敗 {item_id}: {e}{}",
-                    shot.as_ref()
-                        .map(|s| format!("（画面: {s}）"))
-                        .unwrap_or_default()
-                ),
-                LogLevel::Error,
-            );
-            if let Some(s) = shot {
-                progress(&format!("失敗時の画面を保存しました: {s}"));
-            }
+            report_failure(page, "submit", item_id, &e, progress);
             Err(e)
         }
         Err(e) => Err(e),
     }
 }
 
-fn ensure_matches(locale: &ExpectedLocale, values: &FieldValues, phase: &str) -> Result<()> {
-    let bad: Vec<&str> = locale
-        .fields()
-        .into_iter()
+/// 対象欄のうち、読み出した値が正本と一致しない欄を `fields` の並びのまま返す。
+///
+/// push の「書き換える欄を決める」と「保存前後の照合」の両方で同じ判定を使うためにまとめている。
+/// 一致の判定は比較（`compare_value`）と同じ規則で、読み出せなかった欄（`values` に無い欄）は不一致として扱う。
+/// `fields` は呼び出し側が `locale.fields()` で一度だけ作ったものを渡す（同じ一覧を何度も作り直さない）。
+fn mismatched_fields(
+    locale: &ExpectedLocale,
+    fields: &[ListingField],
+    values: &FieldValues,
+) -> Vec<ListingField> {
+    fields
+        .iter()
+        .copied()
         .filter(|f| {
             compare_value(&locale.values[f], values.get(f).map(String::as_str))
                 != ComparisonStatus::Match
         })
+        .collect()
+}
+
+/// 対象欄がすべて正本と一致するか確かめる。一致しない欄があれば、その欄名を並べた `Dashboard` エラー
+fn ensure_matches(
+    locale: &ExpectedLocale,
+    fields: &[ListingField],
+    values: &FieldValues,
+    phase: &str,
+) -> Result<()> {
+    let bad: Vec<&str> = mismatched_fields(locale, fields, values)
+        .into_iter()
         .map(|f| f.display_name())
         .collect();
     if bad.is_empty() {

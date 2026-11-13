@@ -49,7 +49,6 @@ interface EdictoraApi {
   messages(): string[];
   dialogs(): string[];
   bodyText(): string;
-  ready(): DocumentReadyState;
 }
 
 /** 導入先（window に API を 1 つだけぶら下げる） */
@@ -206,7 +205,6 @@ function createApi(): EdictoraApi {
     messages: () => [...document.querySelectorAll("[role=alert], [role=status], [aria-live]")].map(text).filter(Boolean),
     dialogs: () => allDialogs().map(text),
     bodyText: () => (document.body ? document.body.innerText : ""),
-    ready: () => document.readyState,
   };
 }
 

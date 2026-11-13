@@ -127,8 +127,7 @@
       value: (kind, i) => get(kind, i).value,
       messages: () => [...document.querySelectorAll("[role=alert], [role=status], [aria-live]")].map(text).filter(Boolean),
       dialogs: () => allDialogs().map(text),
-      bodyText: () => document.body ? document.body.innerText : "",
-      ready: () => document.readyState
+      bodyText: () => document.body ? document.body.innerText : ""
     };
   }
   if (!host.__edictora) {

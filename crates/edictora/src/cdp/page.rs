@@ -97,7 +97,7 @@ impl CdpPage {
 
     /// 式を評価して値を返す。Promise は待つ。ページ側で例外が起きたら `JavaScript` エラー
     pub fn evaluate(&self, expression: &str, cancel: &CancelToken) -> Result<Value> {
-        let result = self.send(
+        let mut result = self.send(
             "Runtime.evaluate",
             Some(json!({
                 "expression": expression,
@@ -119,10 +119,11 @@ impl CdpPage {
                 "ページ内スクリプトの実行に失敗しました: {text}"
             )));
         }
+        // 例外が無いときだけ、評価結果の値を所有権ごと取り出す（大きな戻り値を深いコピーしない）
         Ok(result
-            .get("result")
-            .and_then(|r| r.get("value"))
-            .cloned()
+            .get_mut("result")
+            .and_then(|r| r.get_mut("value"))
+            .map(Value::take)
             .unwrap_or(Value::Null))
     }
 

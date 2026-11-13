@@ -30,8 +30,14 @@ pub const GUIDE_NOTICE_MARKER: &str = "ガイドやヒント";
 /// 確認ダイアログの自動公開チェックボックスのラベルの一部
 pub const AUTO_PUBLISH_MARKER: &str = "自動的に公開する";
 
-/// ステータス行の接頭辞（「ステータス: 審査待ち」）
-pub const STATUS_PREFIX: &str = "ステータス:";
+/// ステータス行のラベル（「ステータス: 審査待ち」の「ステータス」）。
+///
+/// 区切りのコロンは含めない。実画面の区切りが半角「:」か全角「：」かに依らず読めるよう、
+/// 区切りは `selectors::parse_status` の正規表現側で両方を受け付ける。
+pub const STATUS_LABEL: &str = "ステータス";
+
+/// 既定の言語を示す表記（選択肢「英語 – en （デフォルト）」の括弧の中身）
+pub const DEFAULT_LOCALE_MARKER: &str = "デフォルト";
 
 /// URL 欄のラベル（説明欄はラベルではなく textarea で特定するので None）
 pub fn field_label(field: ListingField) -> Option<&'static str> {

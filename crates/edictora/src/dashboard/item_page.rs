@@ -24,10 +24,10 @@ use crate::dashboard::urls;
 use crate::dashboard::write_gate::ItemPageState;
 use crate::dashboard::{ListingPage, SubmitConfirm, SubmitDialogInfo, SubmitResult};
 use crate::error::{Error, Result};
-use crate::listing::text_diff::first_difference_index;
+use crate::listing::text_diff::first_difference_position;
 use crate::listing::{FieldValues, ListingField};
 use crate::logging::{LogLevel, log};
-use crate::util::{LocalTime, eq_ic, utf16_len};
+use crate::util::{LocalTime, diagnostics_file_name, eq_ic, utf16_len};
 
 /// 条件確認の間隔
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
@@ -161,10 +161,8 @@ impl<'a> DashboardItemPage<'a> {
             || {
                 let combos = self.collect(kinds::COMBOBOX, cancel)?;
                 let textareas = self.collect(kinds::TEXTAREA, cancel)?;
-                let has_language = combos.iter().any(|c| {
-                    sel::contains_ignoring_space(Some(&c.label), LANGUAGE_LABEL)
-                        || sel::contains_ignoring_space(Some(&c.text), LANGUAGE_LABEL)
-                });
+                // 待ち条件なので緩い部分一致で足りる（条件は jev_assist の送信範囲と共通）
+                let has_language = combos.iter().any(sel::mentions_language_label);
                 Ok((has_language && !textareas.is_empty()).then_some(()))
             },
             Duration::from_secs(45),
@@ -328,22 +326,11 @@ impl ListingPage for DashboardItemPage<'_> {
     }
 
     fn get_state(&mut self, cancel: &CancelToken) -> Result<ItemPageState> {
+        // CDP での収集はこの順（本文 → textarea → ボタン）のまま。判断は selectors の純粋関数で行う
         let status = sel::parse_status(Some(&self.body_text(cancel)?));
         let textareas = self.collect(kinds::TEXTAREA, cancel)?;
         let buttons = self.collect(kinds::BUTTON, cancel)?;
-        let saves: Vec<&ElementInfo> = buttons
-            .iter()
-            .filter(|b| b.text.trim() == SAVE_DRAFT_BUTTON)
-            .collect();
-        Ok(ItemPageState {
-            status_text: status,
-            description_found: textareas.len() == 1,
-            description_editable: textareas.len() == 1
-                && !textareas[0].disabled
-                && !textareas[0].read_only,
-            save_button_found: saves.len() == 1,
-            save_button_enabled: saves.len() == 1 && !saves[0].disabled,
-        })
+        Ok(sel::item_page_state(status, &textareas, &buttons))
     }
 
     fn get_locales(&mut self, cancel: &CancelToken) -> Result<Vec<String>> {
@@ -489,7 +476,9 @@ impl ListingPage for DashboardItemPage<'_> {
         )?;
         if !ok {
             let last = last.unwrap_or_default();
-            let at = first_difference_index(&last, value);
+            // 表示は 1 始まり。一致しなかった経路なので位置は必ずあるが、無ければ 0 を出さず「?」にする。
+            let at = first_difference_position(&last, value)
+                .map_or_else(|| "?".to_string(), |p| p.to_string());
             return Err(Error::Dashboard(format!(
                 "{}を書き換えましたが、値が正本と一致しません（{at} 文字目から相違、現在 {} 文字 / 正本 {} 文字）。保存せずに止めます",
                 field.display_name(),
@@ -602,14 +591,7 @@ impl ListingPage for DashboardItemPage<'_> {
 
         // 自動公開チェックは読むだけで変更しない
         let checks = self.collect(kinds::DIALOG_CHECKBOX, cancel)?;
-        let auto_publish = match checks
-            .iter()
-            .find(|c| sel::contains_ignoring_space(Some(&c.label), AUTO_PUBLISH_MARKER))
-        {
-            Some(c) => c.checked,
-            None if checks.len() == 1 => checks[0].checked,
-            None => None,
-        };
+        let auto_publish = sel::auto_publish_state(&checks);
         let info = SubmitDialogInfo {
             text: dialog_text,
             auto_publish,
@@ -693,21 +675,8 @@ impl ListingPage for DashboardItemPage<'_> {
         // 失敗時の記録なので、中断の後でも保存を試みる（新しい合図を使う）
         let run = || -> Result<String> {
             std::fs::create_dir_all(&self.diagnostics_dir)?;
-            let safe: String = label
-                .chars()
-                .map(|c| {
-                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                        c
-                    } else {
-                        '_'
-                    }
-                })
-                .collect();
-            let t = LocalTime::now();
-            let name = format!(
-                "{:04}{:02}{:02}-{:02}{:02}{:02}-{safe}.png",
-                t.year, t.month, t.day, t.hour, t.minute, t.second
-            );
+            // ファイル名の規則（yyyyMMdd-HHmmss-<安全化したラベル>.png）は純粋関数にまとめ、util のテストで固めている
+            let name = diagnostics_file_name(&LocalTime::now(), label);
             let path = self.diagnostics_dir.join(name);
             let png = self.page.capture_screenshot(&CancelToken::new())?;
             std::fs::write(&path, png)?;

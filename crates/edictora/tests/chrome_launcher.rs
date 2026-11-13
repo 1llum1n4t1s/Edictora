@@ -1,80 +1,69 @@
 //! C# の ChromeLauncher.test.cs の移植（起動引数の組み立てだけを確かめる。Chrome は起動しない）
+//!
+//! 起動引数は「含む・含まない」の部分確認ではなく、引数列全体を完全一致で比べる。
+//! 1 つでも足し引き・並べ替えがあれば落ちるので、AGENTS.md の「起動引数は最小限」の契約
+//! （変える場合は実画面で Google ログインを再検証する）を変更時に必ず意識させられる。
 
 use std::path::PathBuf;
 
 use edictora::chrome::{ChromeLaunchOptions, build_args};
 
+/// テストの入力にするプロファイルのパス（実プロファイルではない架空の場所）
+const PROFILE: &str = r"C:\profiles\edictora";
+/// テストの入力にする起動時の URL
+const START_URL: &str = "about:blank";
+
 fn args(headless: bool) -> Vec<String> {
     build_args(&ChromeLaunchOptions {
         chrome_path: PathBuf::from("chrome.exe"),
-        user_data_dir: PathBuf::from(r"C:\profiles\edictora"),
-        start_url: "about:blank".to_string(),
+        user_data_dir: PathBuf::from(PROFILE),
+        start_url: START_URL.to_string(),
         headless,
     })
 }
 
-#[test]
-fn build_args_ヘッドレス指定のときだけheadlessと画面サイズを付ける() {
-    let headless = args(true);
-    assert!(headless.contains(&"--headless=new".to_string()));
-    assert!(headless.contains(&"--window-size=1280,900".to_string()));
-    assert!(
-        !headless
-            .iter()
-            .any(|a| a.starts_with("--enable-automation"))
-    );
-
-    let visible = args(false);
-    assert!(!visible.iter().any(|a| a.starts_with("--headless")));
-    assert!(!visible.iter().any(|a| a.starts_with("--window-size")));
+/// 表示・ヘッドレスに共通する引数（この順で並ぶ）。
+/// - `--user-data-dir`: ログイン状態を保つ専用プロファイルを入力どおりに渡す
+/// - `--remote-debugging-port=0`: ポートは Chrome に自動で割り当てさせる（固定ポートの衝突を避ける）
+/// - `--no-first-run` / `--no-default-browser-check`: 初回案内や既定ブラウザ確認の画面を出さない
+/// - 描画の間引き抑止 3 つと `CalculateNativeWinOcclusion` の無効化: Chrome を前面に出さず、
+///   裏に回ったままでも描画とクリックが応答するようにする（2026-11-13 の実画面で確認）
+fn common_args() -> Vec<String> {
+    vec![
+        format!("--user-data-dir={PROFILE}"),
+        "--remote-debugging-port=0".to_string(),
+        "--no-first-run".to_string(),
+        "--no-default-browser-check".to_string(),
+        "--disable-backgrounding-occluded-windows".to_string(),
+        "--disable-renderer-backgrounding".to_string(),
+        "--disable-background-timer-throttling".to_string(),
+        "--disable-features=CalculateNativeWinOcclusion".to_string(),
+    ]
 }
 
 #[test]
-fn build_args_裏に回っても描画を止めないよう隠れたウィンドウの検出を止める() {
-    // 前面に出さずに操作するための前提（2026-11-13 の実画面で確認）
-    assert!(args(false).contains(&"--disable-features=CalculateNativeWinOcclusion".to_string()));
-    assert!(args(true).contains(&"--disable-features=CalculateNativeWinOcclusion".to_string()));
+fn build_args_表示時は最小限の引数だけを実装どおりの順で付ける() {
+    // 守る契約:
+    // - `--enable-automation` などの自動化フラグを付けない（navigator.webdriver が立ち、Google ログインを弾かれうる）
+    // - 画面外配置（--window-position）を付けない（login では利用者が画面で操作する）
+    // - 表示時は --headless / --window-size を付けない
+    // 完全一致なので、上のどれかが紛れ込めば必ず落ちる
+    let mut expected = common_args();
+    expected.push(START_URL.to_string());
+    assert_eq!(args(false), expected);
 }
 
 #[test]
-fn build_args_専用プロファイルとポート自動割り当てを指定する() {
-    let a = args(false);
-    assert!(a.contains(&r"--user-data-dir=C:\profiles\edictora".to_string()));
-    assert!(a.contains(&"--remote-debugging-port=0".to_string()));
-    assert!(a.contains(&"--no-first-run".to_string()));
-    assert!(a.contains(&"--no-default-browser-check".to_string()));
-}
-
-#[test]
-fn build_args_ログインを妨げる自動化フラグや画面外配置を付けない() {
-    let a = args(false);
-    assert!(!a.iter().any(|x| x.starts_with("--enable-automation")));
-    assert!(!a.iter().any(|x| x.starts_with("--headless")));
-    assert!(!a.iter().any(|x| x.starts_with("--window-position")));
-    assert!(!a.iter().any(|x| x.to_lowercase().contains("extension")));
-}
-
-#[test]
-fn build_args_許可した引数だけを付ける() {
-    let allowed = [
-        "--user-data-dir=",
-        "--remote-debugging-port=0",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-backgrounding-occluded-windows",
-        "--disable-renderer-backgrounding",
-        "--disable-background-timer-throttling",
-        "--disable-features=CalculateNativeWinOcclusion",
-        "--headless=new",
-        "--window-size=1280,900",
-        "about:blank",
-    ];
-    for arg in args(false).into_iter().chain(args(true)) {
-        assert!(
-            allowed.iter().any(|a| arg.starts_with(a)),
-            "想定外の起動引数: {arg}"
-        );
-    }
+fn build_args_ヘッドレス時だけheadlessと画面サイズを足す() {
+    // 守る契約:
+    // - ヘッドレスは `--headless=new`（同じプロファイルのログイン状態を使える方式）
+    // - 既定の 800x600 では狭いので、ダッシュボードの通常表示に近い 1280x900 にする
+    // - それ以外は表示時と同じで、自動化フラグなどは足さない
+    let mut expected = common_args();
+    expected.push("--headless=new".to_string());
+    expected.push("--window-size=1280,900".to_string());
+    expected.push(START_URL.to_string());
+    assert_eq!(args(true), expected);
 }
 
 // ───────── Rust 版で足したもの ─────────

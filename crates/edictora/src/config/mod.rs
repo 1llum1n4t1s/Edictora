@@ -14,7 +14,7 @@ pub mod section;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Deserialize;
@@ -290,9 +290,11 @@ pub fn normalize_locale_code(code: &str) -> String {
 
 /// ロケールコードの形式か（例: ja, en, pt-BR, es-419, zh-CN）
 pub fn is_valid_locale_code(value: &str) -> bool {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$").expect("固定の正規表現"))
-        .is_match(value)
+    // 固定の正規表現は初回参照時に 1 度だけコンパイルする
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$").expect("固定の正規表現")
+    });
+    RE.is_match(value)
 }
 
 fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<ItemConfig> {

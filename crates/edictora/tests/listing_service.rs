@@ -8,7 +8,10 @@ use edictora::listing::*;
 use edictora::services::{self, LocalePushOutcome};
 use edictora::util::eq_ic;
 
-const ITEM: &str = "abcdefghijklmnopabcdefghijklmnop";
+mod common;
+
+/// 架空のアイテム ID。他のテストと同じ値を使うよう、共通補助の定数を別名で使う
+use common::ITEM_A as ITEM;
 
 /// 画面の代わりにメモリ上の値で動く ListingPage
 struct FakeListingPage {
@@ -23,6 +26,10 @@ struct FakeListingPage {
     corrupt_writes: bool,
     /// 送信の確認で渡すダイアログ
     dialog: SubmitDialogInfo,
+    /// 編集画面を開くときに返す Dashboard エラー（アイテム単位の失敗の再現用）
+    open_error: Option<String>,
+    /// このロケールへ切り替えるときに返す Dashboard エラー（ロケール単位の失敗の再現用）
+    switch_error: Option<(String, String)>,
 }
 
 impl FakeListingPage {
@@ -42,6 +49,9 @@ impl FakeListingPage {
 impl ListingPage for FakeListingPage {
     fn open_item(&mut self, item_id: &str, _: &CancelToken) -> edictora::Result<()> {
         self.log.push(format!("open {item_id}"));
+        if let Some(m) = &self.open_error {
+            return Err(Error::Dashboard(m.clone()));
+        }
         self.editing = self.saved.clone();
         self.current_locale = self.saved.first().map(|(c, _)| c.clone());
         Ok(())
@@ -70,6 +80,11 @@ impl ListingPage for FakeListingPage {
 
     fn switch_locale(&mut self, code: &str, _: &CancelToken) -> edictora::Result<()> {
         self.log.push(format!("switch {code}"));
+        if let Some((c, m)) = &self.switch_error
+            && eq_ic(c, code)
+        {
+            return Err(Error::Dashboard(m.clone()));
+        }
         self.current_locale = Some(code.to_string());
         Ok(())
     }
@@ -187,6 +202,8 @@ fn page() -> FakeListingPage {
             text: "「テスト」を審査のために送信しますか？".to_string(),
             auto_publish: Some(true),
         },
+        open_error: None,
+        switch_error: None,
     }
 }
 
@@ -350,4 +367,50 @@ fn push_中断されたら次のロケールへ進まない() {
 
     assert!(matches!(r, Err(Error::Cancelled)));
     assert!(!wrote_or_saved(&page));
+}
+
+// ───────── 結果（標準出力）へ入るエラー文の伏せ字 ─────────
+
+/// 架空の publisherId（結果に残ってはいけない値）
+const PUBLISHER: &str = "0123456789abcdef-fake-publisher";
+
+fn error_with_publisher_url() -> String {
+    format!(
+        "画面を開けませんでした: https://chrome.google.com/webstore/devconsole/{PUBLISHER}/{ITEM}/edit"
+    )
+}
+
+#[test]
+fn pull_アイテム単位のエラー文はpublisher_idを伏せる() {
+    let mut page = page();
+    page.open_error = Some(error_with_publisher_url());
+
+    let snapshot =
+        services::pull(&mut page, &expected(), &no_progress, &CancelToken::new()).unwrap();
+
+    let error = snapshot.error.expect("アイテム単位のエラー");
+    assert!(!error.contains(PUBLISHER), "{error}");
+    assert_eq!(
+        error,
+        format!(
+            "画面を開けませんでした: https://chrome.google.com/webstore/devconsole/<publisher>/{ITEM}/edit"
+        )
+    );
+}
+
+#[test]
+fn pull_ロケール単位のエラー文はpublisher_idを伏せる() {
+    let mut page = page();
+    page.switch_error = Some(("ja".to_string(), error_with_publisher_url()));
+
+    let snapshot =
+        services::pull(&mut page, &expected(), &no_progress, &CancelToken::new()).unwrap();
+
+    assert_eq!(snapshot.error, None);
+    let ja = snapshot.find("ja").expect("ja の結果");
+    let error = ja.error.clone().expect("ロケール単位のエラー");
+    assert!(!error.contains(PUBLISHER), "{error}");
+    assert!(error.contains("devconsole/<publisher>/"), "{error}");
+    // 他のロケールは続けて読めている
+    assert_eq!(snapshot.find("en").and_then(|l| l.error.clone()), None);
 }

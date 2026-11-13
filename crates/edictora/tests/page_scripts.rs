@@ -53,14 +53,3 @@ fn 収集結果の変換() {
     assert!(parse_elements(&json!(null)).is_empty());
     assert_eq!(parse_strings(&json!(["a", 1, "b"])), vec!["a", "", "b"]);
 }
-
-#[test]
-fn 組み立てた式をファイルへ書き出す() {
-    // Bun などで構文と導入の 1 回性を確かめられるよう、実際に組み立てた式を target/tmp へ書き出す
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join("edictora-tests")
-        .join("page-scripts");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("collect-textarea.js"), collect(kinds::TEXTAREA)).unwrap();
-    std::fs::write(dir.join("value-textarea-0.js"), value(kinds::TEXTAREA, 0)).unwrap();
-}

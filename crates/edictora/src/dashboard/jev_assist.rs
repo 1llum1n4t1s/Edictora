@@ -22,14 +22,13 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 
 use crate::cancel::CancelToken;
 use crate::dashboard::selectors::{
-    self as sel, ElementInfo, contains_ignoring_space, is_field_with_label, is_language_combobox,
-    is_locale_option,
+    self as sel, ElementInfo, is_field_with_label, is_language_combobox, is_locale_option,
 };
 use crate::dashboard::text::{LANGUAGE_LABEL, field_label};
 use crate::error::{Error, Result};
@@ -108,10 +107,8 @@ impl Target {
     pub fn is_candidate(&self, e: &ElementInfo) -> bool {
         match self {
             // 「言語」を含まないコンボボックス（パブリッシャーの選択欄など）は送らない
-            Target::LanguageCombobox => {
-                contains_ignoring_space(Some(&e.label), LANGUAGE_LABEL)
-                    || contains_ignoring_space(Some(&e.text), LANGUAGE_LABEL)
-            }
+            // 条件は編集画面の待ち条件と共通（selectors::mentions_language_label）
+            Target::LanguageCombobox => sel::mentions_language_label(e),
             // 「言語名 – code」と解釈できない選択肢（常に表示されるパブリッシャー名など）は送らない
             Target::LocaleOption(_) => sel::parse_locale_option(Some(&e.text)).is_some(),
             Target::Field(ListingField::Description) => e.tag == "textarea",
@@ -271,14 +268,14 @@ fn safe_label_lines(raw: &str, text_lines: &[String], sensitive: &[String]) -> V
 /// 表示上の「1,234/16,000」に加え、読み上げ用ラベルの「16000文字中1492文字入力しました」
 /// （2026-11-13 の実画面で aria のラベル行に現れた）も対象にする。
 fn is_counter_line(line: &str) -> bool {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
+    // 固定の正規表現は初回参照時に 1 度だけコンパイルする
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"^(?:[0-9][0-9,]*\s*/\s*[0-9][0-9,]*|[0-9][0-9,]*\s*文字中\s*[0-9][0-9,]*\s*文字.*)$",
         )
         .expect("固定の正規表現")
-    })
-    .is_match(line)
+    });
+    RE.is_match(line)
 }
 
 /// 1 行が秘匿したい文字列に当たるか。

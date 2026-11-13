@@ -107,19 +107,9 @@ impl DashboardBrowser {
         }
     }
 
-    /// ログインを確認済みか
-    pub fn is_logged_in(&self) -> bool {
-        self.publisher_id.is_some()
-    }
-
     /// Chrome との接続が生きているか（利用者が Chrome を閉じると false）
     pub fn is_connected(&self) -> bool {
         !self.disposed && self.client.is_connected()
-    }
-
-    /// このツールが起動した Chrome か（false なら既存のウィンドウに接続した）
-    pub fn owns_chrome(&self) -> bool {
-        self.chrome.owned_by_tool()
     }
 
     /// ダッシュボードの入口を開き、ログイン済みか確かめる。未ログインなら `LoginRequired`
@@ -230,12 +220,12 @@ impl DashboardBrowser {
     }
 
     fn target_infos(&self, cancel: &CancelToken) -> Result<Vec<Value>> {
-        let targets = self.browser_send("Target.getTargets", None, cancel)?;
-        Ok(targets
-            .get("targetInfos")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default())
+        let mut targets = self.browser_send("Target.getTargets", None, cancel)?;
+        // 配列を所有権ごと取り出す（clone しない）。配列でなければ（欠落・別の型）空として扱う
+        Ok(match targets.get_mut("targetInfos").map(Value::take) {
+            Some(Value::Array(a)) => a,
+            _ => Vec::new(),
+        })
     }
 
     /// ブラウザ全体の接続から、全タブの URL を見る（タブには接続しない）

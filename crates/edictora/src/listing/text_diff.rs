@@ -131,3 +131,13 @@ pub fn first_difference_index(a: &str, b: &str) -> i64 {
     }
     if a.len() == b.len() { -1 } else { n as i64 }
 }
+
+/// 利用者に見せる「何文字目から違うか」（1 始まり、UTF-16 単位）。一致していれば None。
+/// [`first_difference_index`] は 0 始まりなので、画面・CLI の「○ 文字目」には必ずこちらを使う
+/// （0 始まりのまま出すと、先頭の相違が「0 文字目」と表示されてしまう）。
+pub fn first_difference_position(a: &str, b: &str) -> Option<i64> {
+    match first_difference_index(a, b) {
+        -1 => None,
+        i => Some(i + 1),
+    }
+}

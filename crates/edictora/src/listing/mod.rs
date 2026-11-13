@@ -64,11 +64,6 @@ impl ListingField {
             ListingField::SupportUrl => "SupportUrl",
         }
     }
-
-    /// URL 欄かどうか
-    pub fn is_url(self) -> bool {
-        self != ListingField::Description
-    }
 }
 
 /// 欄 → 値（並びは欄の表示順）

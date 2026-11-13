@@ -421,7 +421,8 @@ fn io_loop(mut ws: WebSocket<TcpStream>, outgoing: Receiver<Outgoing>, shared: A
 
 /// 受信メッセージ 1 件を応答（id あり）またはイベント（method あり）として処理する
 fn handle_message(text: &str, shared: &Shared) {
-    let Ok(root) = serde_json::from_str::<Value>(text) else {
+    // 応答の result・イベントの params は所有権ごと取り出す（大きな応答を深いコピーしないため）ので mut にする
+    let Ok(mut root) = serde_json::from_str::<Value>(text) else {
         log(
             "CDP から解釈できないメッセージを受け取りました",
             LogLevel::Warning,
@@ -438,17 +439,27 @@ fn handle_message(text: &str, shared: &Shared) {
                     .map(str::to_string)
                     .unwrap_or_else(|| err.to_string()),
             )),
-            None => Ok(root.get("result").cloned().unwrap_or(Value::Null)),
+            // root はこの後使わないので、result を取り出して渡す（clone しない。無ければ Null）
+            None => Ok(root
+                .get_mut("result")
+                .map(Value::take)
+                .unwrap_or(Value::Null)),
         };
         let _ = tx.send(result);
     } else if let Some(method) = root.get("method").and_then(Value::as_str) {
+        // method・sessionId を先に文字列にしてから params を取り出す（root の借用を先に終わらせるため）
+        let method = method.to_string();
+        let session_id = root
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let event = CdpEvent {
-            method: method.to_string(),
-            params: root.get("params").cloned().unwrap_or(Value::Null),
-            session_id: root
-                .get("sessionId")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            method,
+            params: root
+                .get_mut("params")
+                .map(Value::take)
+                .unwrap_or(Value::Null),
+            session_id,
         };
         if let Ok(mut subs) = shared.subscribers.lock() {
             // 受け手が居なくなった購読は片付ける

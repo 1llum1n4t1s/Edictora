@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::fixture;
+use common::{config_err, fixture};
 use edictora::Error;
 use edictora::config::TextSource;
 use edictora::config::section::{extract, extract_source, is_js_whitespace, validate_pattern};
@@ -25,13 +25,6 @@ fn source(name: &str, start: &str, end: &str) -> TextSource {
         file_path: fixture(name),
         section_start: Some(start.to_string()),
         section_end: Some(end.to_string()),
-    }
-}
-
-fn config_err(r: edictora::Result<String>) -> String {
-    match r {
-        Err(Error::Config(m)) => m,
-        other => panic!("Config エラーを期待しました: {other:?}"),
     }
 }
 

@@ -6,12 +6,16 @@
 //! 曖昧なときに「最初の 1 つ」を選ぶと、別の欄を書き換える事故につながる。
 //! そのため、候補がちょうど 1 つに絞れないときは必ず止める（`Dashboard` エラー）。
 
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::Value;
 
-use crate::dashboard::text::{GUIDE_NOTICE_MARKER, LANGUAGE_LABEL, field_label};
+use crate::dashboard::text::{
+    AUTO_PUBLISH_MARKER, DEFAULT_LOCALE_MARKER, GUIDE_NOTICE_MARKER, LANGUAGE_LABEL,
+    SAVE_DRAFT_BUTTON, STATUS_LABEL, field_label,
+};
+use crate::dashboard::write_gate::ItemPageState;
 use crate::error::{Error, Result};
 use crate::listing::ListingField;
 use crate::util::eq_ic;
@@ -105,18 +109,32 @@ pub fn pick_language_combobox(comboboxes: &[ElementInfo]) -> Result<&ElementInfo
     // 部分一致ではなく「ラベルの 1 行が完全一致」で選ぶ。
     // 実画面ではカテゴリ欄の親要素に「すべての言語用」という説明があり、部分一致だと
     // カテゴリ欄まで「言語」に当たって 2 件になった（2026-11-13 の実ダッシュボードで確認）。
-    let matches: Vec<&ElementInfo> = comboboxes
-        .iter()
-        .filter(|c| is_language_combobox(c))
-        .collect();
+    exactly_one(
+        comboboxes.iter().filter(|c| is_language_combobox(c)),
+        || {
+            format!(
+                "「{LANGUAGE_LABEL}」のコンボボックスが見つかりません（ダッシュボードが日本語表示か確認してください）"
+            )
+        },
+        |n| format!("「{LANGUAGE_LABEL}」のコンボボックスが {n} 個あり、特定できません"),
+    )
+}
+
+/// 候補がちょうど 1 つならそれを返し、0 個・複数なら `Dashboard` エラーにする（`pick_*` 共通の判断）。
+///
+/// 曖昧なときに「最初の 1 つ」を選ばないという安全策（モジュール先頭のコメント参照）を 1 か所にまとめたもの。
+/// エラー文言は呼び出し側ごとに違うので、0 個のとき・n 個のときの文言を作る関数を受け取る。
+/// 0 個の文言は、ある言語の一覧を作るなど計算が要ることがあるため、失敗したときだけ呼ぶ（遅延評価）。
+fn exactly_one<'a, T: 'a>(
+    candidates: impl IntoIterator<Item = &'a T>,
+    none_message: impl FnOnce() -> String,
+    many_message: impl FnOnce(usize) -> String,
+) -> Result<&'a T> {
+    let matches: Vec<&'a T> = candidates.into_iter().collect();
     match matches.len() {
         1 => Ok(matches[0]),
-        0 => Err(Error::Dashboard(format!(
-            "「{LANGUAGE_LABEL}」のコンボボックスが見つかりません（ダッシュボードが日本語表示か確認してください）"
-        ))),
-        n => Err(Error::Dashboard(format!(
-            "「{LANGUAGE_LABEL}」のコンボボックスが {n} 個あり、特定できません"
-        ))),
+        0 => Err(Error::Dashboard(none_message())),
+        n => Err(Error::Dashboard(many_message(n))),
     }
 }
 
@@ -136,18 +154,19 @@ pub fn parse_locale_option(text: Option<&str>) -> Option<LocaleOption> {
             .rev()
             .find_map(|line| parse_locale_option(Some(line)));
     }
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
+    // 固定の正規表現は初回だけコンパイルする（LazyLock は初回参照時に 1 度だけ初期化され、スレッド安全）
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^(?P<name>.+?)\s*[–—-]\s*(?P<code>[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*)(?P<rest>(?:\s|（|\().*)?$")
             .expect("固定の正規表現")
     });
-    let caps = re.captures(text.trim())?;
+    let caps = RE.captures(text.trim())?;
     let code = caps["code"].replace('_', "-");
     let rest = caps.name("rest").map(|m| m.as_str()).unwrap_or("");
     Some(LocaleOption {
         name: caps["name"].trim().to_string(),
         code,
-        is_default: rest.contains("デフォルト"),
+        // 「（デフォルト）」表記の判定。文言は text.rs に集めている
+        is_default: rest.contains(DEFAULT_LOCALE_MARKER),
     })
 }
 
@@ -182,34 +201,25 @@ pub fn is_locale_option(option: &ElementInfo, code: &str) -> bool {
 
 /// コードが完全一致する選択肢を 1 つ選ぶ
 pub fn pick_locale_option<'a>(options: &'a [ElementInfo], code: &str) -> Result<&'a ElementInfo> {
-    let matches: Vec<&ElementInfo> = options
-        .iter()
-        .filter(|o| is_locale_option(o, code))
-        .collect();
-    match matches.len() {
-        1 => Ok(matches[0]),
-        0 => Err(Error::Dashboard(format!(
-            "言語の選択肢にロケール {code} がありません（ある言語: {}）",
-            locale_codes(options).join(", ")
-        ))),
-        n => Err(Error::Dashboard(format!(
-            "言語の選択肢にロケール {code} が {n} 個あり、特定できません"
-        ))),
-    }
+    exactly_one(
+        options.iter().filter(|o| is_locale_option(o, code)),
+        || {
+            format!(
+                "言語の選択肢にロケール {code} がありません（ある言語: {}）",
+                locale_codes(options).join(", ")
+            )
+        },
+        |n| format!("言語の選択肢にロケール {code} が {n} 個あり、特定できません"),
+    )
 }
 
 /// 文言が完全一致するボタンを 1 つ選ぶ（前後の空白は無視）
 pub fn pick_button<'a>(buttons: &'a [ElementInfo], text: &str) -> Result<&'a ElementInfo> {
-    let matches: Vec<&ElementInfo> = buttons.iter().filter(|b| b.text.trim() == text).collect();
-    match matches.len() {
-        1 => Ok(matches[0]),
-        0 => Err(Error::Dashboard(format!(
-            "「{text}」ボタンが見つかりません"
-        ))),
-        n => Err(Error::Dashboard(format!(
-            "「{text}」ボタンが {n} 個あり、特定できません"
-        ))),
-    }
+    exactly_one(
+        buttons.iter().filter(|b| b.text.trim() == text),
+        || format!("「{text}」ボタンが見つかりません"),
+        |n| format!("「{text}」ボタンが {n} 個あり、特定できません"),
+    )
 }
 
 /// URL 欄の条件（ルール）。ラベルの 1 行が `label` と完全一致する（空白の有無は無視）
@@ -225,19 +235,11 @@ pub fn pick_field_by_label(inputs: &[ElementInfo], field: ListingField) -> Resul
         ));
     };
     // 言語欄と同じ理由で、ラベルの 1 行が完全一致するものだけを選ぶ（親要素の説明文に別の欄名が含まれても当たらない）。
-    let matches: Vec<&ElementInfo> = inputs
-        .iter()
-        .filter(|i| is_field_with_label(i, label))
-        .collect();
-    match matches.len() {
-        1 => Ok(matches[0]),
-        0 => Err(Error::Dashboard(format!(
-            "「{label}」の入力欄が見つかりません"
-        ))),
-        n => Err(Error::Dashboard(format!(
-            "「{label}」の入力欄が {n} 個あり、特定できません"
-        ))),
-    }
+    exactly_one(
+        inputs.iter().filter(|i| is_field_with_label(i, label)),
+        || format!("「{label}」の入力欄が見つかりません"),
+        |n| format!("「{label}」の入力欄が {n} 個あり、特定できません"),
+    )
 }
 
 /// 説明欄（textarea）を 1 つ選ぶ
@@ -296,11 +298,76 @@ pub fn has_message<S: AsRef<str>>(messages: &[S], keyword: &str) -> bool {
 /// ページ本文から「ステータス: …」の値を取り出す。見つからなければ None
 pub fn parse_status(body_text: Option<&str>) -> Option<String> {
     let body = body_text.filter(|b| !b.is_empty())?;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"ステータス\s*[:：]\s*(?P<status>[^\n]+)").expect("固定の正規表現")
+    // ラベルの文言は text.rs の定数から組み立てる（正規表現の特殊文字を含んでも壊れないよう escape する）。
+    // 区切りは半角の「:」と全角の「：」の両方を受け付ける（実画面の表記ゆれに備える）。
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!(
+            r"{}\s*[:：]\s*(?P<status>[^\n]+)",
+            regex::escape(STATUS_LABEL)
+        ))
+        .expect("固定の正規表現")
     });
-    re.captures(body).map(|c| c["status"].trim().to_string())
+    RE.captures(body).map(|c| c["status"].trim().to_string())
+}
+
+/// コンボボックスが「言語」に触れているか（ラベルか表示テキストに、空白を無視して「言語」を含む）。
+///
+/// [`is_language_combobox`]（行単位の完全一致）より緩い、部分一致の条件。次の 2 用途で同じ条件を使うため 1 か所にまとめている。
+/// 1. 編集画面の待ち条件（`item_page` の `wait_for_editor_ready`）: 言語の選択欄が描画されたかの目安。
+///    ここでは特定（1 つに絞る）は要らないので、緩い条件で足りる。
+/// 2. Jev へ送らない文字列の境界（`jev_assist::non_language_combobox_texts` と `Target::LanguageCombobox` の事前絞り込み）:
+///    この条件に当たらないコンボボックス（パブリッシャー選択など）の表示テキストは Jev へ送らない。
+///    完全一致に寄せると送らない範囲が変わるため、部分一致のまま保つ。
+pub fn mentions_language_label(c: &ElementInfo) -> bool {
+    contains_ignoring_space(Some(&c.label), LANGUAGE_LABEL)
+        || contains_ignoring_space(Some(&c.text), LANGUAGE_LABEL)
+}
+
+/// 編集画面から集めた要素で、書き込み可否の判断材料（[`ItemPageState`]）を組み立てる。
+///
+/// CDP での収集（本文 → textarea → ボタンの順）は `item_page` 側に残し、ここは導出だけを行う（ブラウザなしでテストするため）。
+/// - 説明欄: textarea がちょうど 1 つのときだけ「見つかった」とし、その 1 つが disabled / readOnly でなければ編集可
+/// - 保存ボタン: 文言が「下書きとして保存する」と完全一致（前後空白は無視）するものがちょうど 1 つのときだけ「見つかった」とし、
+///   その 1 つが disabled でなければ押せる
+///
+/// `textareas[0]` / `saves[0]` は `len() == 1 &&` の短絡評価で、要素があるときだけ読む。
+pub fn item_page_state(
+    status: Option<String>,
+    textareas: &[ElementInfo],
+    buttons: &[ElementInfo],
+) -> ItemPageState {
+    let saves: Vec<&ElementInfo> = buttons
+        .iter()
+        .filter(|b| b.text.trim() == SAVE_DRAFT_BUTTON)
+        .collect();
+    ItemPageState {
+        status_text: status,
+        description_found: textareas.len() == 1,
+        description_editable: textareas.len() == 1
+            && !textareas[0].disabled
+            && !textareas[0].read_only,
+        save_button_found: saves.len() == 1,
+        save_button_enabled: saves.len() == 1 && !saves[0].disabled,
+    }
+}
+
+/// 審査送信の確認ダイアログにある「自動的に公開する」チェックの状態を読む（読むだけで変えない）。
+///
+/// - ラベルに「自動的に公開する」を含む（空白は無視）チェックボックスがあれば、その状態（先頭のもの）
+/// - 無ければ、チェックボックスがちょうど 1 つのときだけその状態
+/// - それ以外は不明（None）
+///
+/// ラベルが一致した要素の状態が分からない（`checked` が None）ときは、チェックボックスが 1 つでも None を返す
+/// （ラベルで見つけた要素を優先し、別の判断に切り替えない）。
+pub fn auto_publish_state(checks: &[ElementInfo]) -> Option<bool> {
+    match checks
+        .iter()
+        .find(|c| contains_ignoring_space(Some(&c.label), AUTO_PUBLISH_MARKER))
+    {
+        Some(c) => c.checked,
+        None if checks.len() == 1 => checks[0].checked,
+        None => None,
+    }
 }
 
 /// 改行区切りのラベル文字列のどれか 1 行が、`label` と完全一致するか（空白の有無は無視）。

@@ -27,6 +27,8 @@ jobs:
     name: Build & Unit Test
     # 配布対象は Windows (x86_64-pc-windows-msvc) だけなので、Windows ランナーで検証する。
     runs-on: windows-2022
+    # ハングしたときに既定の 6 時間ランナーを占有しないよう上限を付ける（通常は数分で終わる）
+    timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: always
       # CI ではインクリメンタルビルドの中間物が無駄になるだけなので切る (キャッシュも小さくなる)。

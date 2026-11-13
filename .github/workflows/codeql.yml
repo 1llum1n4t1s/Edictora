@@ -21,6 +21,8 @@ jobs:
   analyze:
     name: CodeQL (${{ matrix.language }})
     runs-on: windows-2022
+    # CodeQL の解析は Rust の抽出を含めて時間がかかるので、ci より長めの上限にする
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

@@ -1,9 +1,12 @@
 //! C# の ListingComparer.test.cs の移植
 
-use edictora::listing::text_diff::{compute, first_difference_index, format};
-use edictora::listing::*;
+mod common;
 
-const ITEM: &str = "abcdefghijklmnopabcdefghijklmnop";
+use common::ITEM_A as ITEM;
+use edictora::listing::text_diff::{
+    compute, first_difference_index, first_difference_position, format,
+};
+use edictora::listing::*;
 
 fn values(pairs: &[(ListingField, &str)]) -> FieldValues {
     pairs.iter().map(|(f, v)| (*f, v.to_string())).collect()
@@ -136,4 +139,38 @@ fn text_diff_最初の相違位置を返す() {
     assert_eq!(first_difference_index("abc", "abc"), -1);
     assert_eq!(first_difference_index("abc", "abX"), 2);
     assert_eq!(first_difference_index("abc", "abc "), 3);
+}
+
+#[test]
+fn text_diff_表示用の相違位置は1始まり() {
+    // 先頭の相違は「1 文字目」。0 始まりのまま表示すると「0 文字目」になっていた。
+    assert_eq!(first_difference_position("abc", "Xbc"), Some(1));
+    assert_eq!(first_difference_position("abc", "abX"), Some(3));
+    assert_eq!(first_difference_position("abc", "abc "), Some(4));
+    assert_eq!(first_difference_position("abc", "abc"), None);
+}
+
+#[test]
+fn diff_formatter_行単位で同じなら見えない違いの位置を1始まりで示す() {
+    // 先頭の改行が CRLF か LF かだけの違い。行差分は改行を揃えて比べるので同じに見える。
+    // 相違は先頭（0 始まりで 0）なので、表示は「1 文字目」になる。
+    let row = LocaleComparison {
+        item_id: ITEM.to_string(),
+        item_name: String::new(),
+        locale: "ja".to_string(),
+        fields: vec![FieldComparison {
+            field: ListingField::Description,
+            expected: "\n説明".to_string(),
+            current: Some("\r\n説明".to_string()),
+            status: ComparisonStatus::Different,
+        }],
+        error: None,
+    };
+
+    let text = edictora::cli::diff_formatter::format(&row);
+
+    assert!(
+        text.contains("（行単位では同じです。1 文字目に見えない違いがあります）"),
+        "{text}"
+    );
 }

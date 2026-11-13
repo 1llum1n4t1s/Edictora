@@ -361,10 +361,52 @@ impl LocalTime {
         format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
 
+    /// ログ行の時刻 `yyyy-MM-dd HH:mm:ss.ffff`（C# 版のログと同じ書式）。
+    ///
+    /// 小数部は 4 桁（1/10000 秒）だが、取得できるのはミリ秒までなので、ミリ秒 × 10 を 4 桁で出す
+    /// （末尾の 1 桁は常に 0）。ログを読む側の書式を変えないため、この形を保つ。
+    pub fn log_timestamp(&self) -> String {
+        format!(
+            "{} {:02}:{:02}:{:02}.{:04}",
+            self.date_string(),
+            self.hour,
+            self.minute,
+            self.second,
+            self.millis * 10
+        )
+    }
+
+    /// ファイル名用の時刻 `yyyyMMdd-HHmmss`（区切りにファイル名で使えない「:」を含めない）
+    pub fn compact_timestamp(&self) -> String {
+        format!(
+            "{:04}{:02}{:02}-{:02}{:02}{:02}",
+            self.year, self.month, self.day, self.hour, self.minute, self.second
+        )
+    }
+
     /// 1970-01-01 からの日数
     pub fn days(&self) -> i64 {
         days_from_civil(self.year, self.month, self.day)
     }
+}
+
+/// 失敗時の画面保存（診断用 PNG）のファイル名 `yyyyMMdd-HHmmss-<label>.png` を作る。
+///
+/// ラベルには `push-<itemId>` などが入る。ファイル名として安全にするため、
+/// ASCII の英数字・`-`・`_` 以外は 1 文字ずつ `_` に置き換える（パス区切りや日本語・空白を含めない）。
+/// 時刻を引数で受ける純粋関数にしているのは、現在時刻に依らずテストで規則を固めるため。
+pub fn diagnostics_file_name(time: &LocalTime, label: &str) -> String {
+    let safe: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("{}-{safe}.png", time.compact_timestamp())
 }
 
 /// 年月日 → 1970-01-01 からの日数（Howard Hinnant のアルゴリズム）
@@ -533,6 +575,60 @@ mod tests {
     fn base64復号() {
         assert_eq!(base64_decode("aGVsbG8=").unwrap(), b"hello");
         assert_eq!(base64_decode("").unwrap(), b"");
+    }
+
+    /// 書式の確認用の固定時刻（各欄が 1 桁のものと 2 桁のものを混ぜ、0 埋めを確かめる）
+    fn sample_time() -> LocalTime {
+        LocalTime {
+            year: 2026,
+            month: 1,
+            day: 5,
+            hour: 9,
+            minute: 7,
+            second: 3,
+            millis: 42,
+        }
+    }
+
+    #[test]
+    fn ログ行の時刻書式() {
+        // ミリ秒 42 → 小数 4 桁の「0420」
+        assert_eq!(sample_time().log_timestamp(), "2026-01-05 09:07:03.0420");
+        let t = LocalTime {
+            year: 2026,
+            month: 11,
+            day: 13,
+            hour: 23,
+            minute: 59,
+            second: 58,
+            millis: 999,
+        };
+        assert_eq!(t.log_timestamp(), "2026-11-13 23:59:58.9990");
+        assert_eq!(
+            LocalTime { millis: 0, ..t }.log_timestamp(),
+            "2026-11-13 23:59:58.0000"
+        );
+    }
+
+    #[test]
+    fn ファイル名用の時刻書式() {
+        assert_eq!(sample_time().compact_timestamp(), "20260105-090703");
+    }
+
+    #[test]
+    fn 診断ファイル名の規則() {
+        let t = sample_time();
+        assert_eq!(
+            diagnostics_file_name(&t, "push-abcdefghijklmnopabcdefghijklmnop"),
+            "20260105-090703-push-abcdefghijklmnopabcdefghijklmnop.png"
+        );
+        // 英数字・-・_ 以外（パス区切り・空白・日本語・ドット・コロン）は 1 文字ずつ _ にする
+        // （「:」「日」「本」の 3 文字が _ になり、元からある _ と合わせて 4 つ並ぶ）
+        assert_eq!(
+            diagnostics_file_name(&t, "a/b\\c d.e:日本_x-Y"),
+            "20260105-090703-a_b_c_d_e____x-Y.png"
+        );
+        assert_eq!(diagnostics_file_name(&t, ""), "20260105-090703-.png");
     }
 
     #[test]
