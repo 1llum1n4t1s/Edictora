@@ -87,7 +87,7 @@ cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
 
 ## リリース
 
-詳細は [docs/release.md](docs/release.md)。通常の公開は、`/vava` で版を上げて push した後に CI の `release.yml`（手動起動・Environment `release` の承認）で行い、手元から重ねて配信しない。`edictora.exe` を Sigilune（`scripts/Sigilune.Common.ps1`、Certum SimplySign のクラウド鍵）で署名し、Portable ZIP にまとめる。CI は `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` / `CLOUDFLARE_API_TOKEN` を Environment の Secrets から受け取る。配布先が決まるまでは `skip_upload=true` での確認だけが通る。
+詳細は [docs/release.md](docs/release.md)。通常の公開は、`/vava` で版を上げて push した後に CI の `release.yml`（手動起動・Environment `release`、承認待ちなし）で行い、手元から重ねて配信しない。`edictora.exe` を Sigilune（`scripts/Sigilune.Common.ps1`、Certum SimplySign のクラウド鍵）で署名し、Portable ZIP にまとめる。CI は `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` / `CLOUDFLARE_API_TOKEN` を Environment の Secrets から受け取る。配布先が決まるまでは `skip_upload=true` での確認だけが通る。
 
 ```powershell
 gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref main

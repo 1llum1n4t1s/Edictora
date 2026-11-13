@@ -27,11 +27,11 @@ EdictoraのWindows配布物は、Rust版CLI `edictora.exe` を `LICENSE`・`READ
 1. R2 bucketを作成する。
 2. bucketのCustom Domainに公開ドメインを接続する（DNS解決できること）。
 3. リリース用の `cloudflare.api_token`（ローカル）と Environment `release` の `CLOUDFLARE_API_TOKEN`（CI）へR2編集、zone参照、キャッシュパージに必要な最小権限を付与する。
-4. Environment `release` に署名用の `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` を登録する（承認者とブランチ制限を付ける）。
+4. Environment `release` に署名用の `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` を登録する（ブランチ制限だけを付け、承認者は付けない。`/vava` を離席中も最後まで進めるため）。
 
 ## アプリのリリース
 
-通常のリリースは、`/vava` で版を上げて push した後に GitHub Actions の Release ワークフローを手動起動し、Environment `release` の承認後に `scripts/release-local.ps1` が実行されます。
+通常のリリースは、`/vava` で版を上げて push した後に GitHub Actions の Release ワークフローを手動起動すると、承認待ちなしで `scripts/release-local.ps1` が実行されます（Secrets は Environment `release` から渡します）。
 
 ```powershell
 gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref main
