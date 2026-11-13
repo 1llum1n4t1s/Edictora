@@ -7,8 +7,7 @@
 //! - [`cdp`] — Chrome DevTools Protocol クライアント（localhost の WebSocket のみ）
 //! - [`chrome`] — Chrome の検出と起動（プロファイルは削除しない）
 //! - [`dashboard`] — ダッシュボード操作（要素の特定・書き込み可否・1 操作ずつの実装）
-//! - [`jev`] — `--jev` モード: 操作対象の選択を TypeSafe Jev にも確かめさせる（WinHTTP で直接呼ぶ）
-//! - [`net`] — WinHTTP を FFI で直接使う HTTP クライアント（`--jev` と自動更新が共用）
+//! - [`net`] — WinHTTP を FFI で直接使う HTTP クライアント（自動更新が使う）
 //! - [`update`] — Velopack でインストールされたときの更新の確認・ダウンロード・適用の起動（`edictora update` と `edictora-updater.exe`）
 //! - [`install`] — Velopack のフック（`--veloapp-*`）と、ログオン時の自動更新・PATH の登録
 //! - [`services`] — pull / diff / push / submit の手順と中止判断
@@ -25,7 +24,6 @@ pub mod config;
 pub mod dashboard;
 pub mod error;
 pub mod install;
-pub mod jev;
 pub mod listing;
 pub mod logging;
 pub mod net;

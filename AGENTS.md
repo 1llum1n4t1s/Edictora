@@ -19,11 +19,8 @@ crates/edictora/
 │  ├─ listing/        … 欄・正本と現在値のモデル・完全一致の比較 / text_diff.rs（行差分）
 │  ├─ dashboard/      … urls.rs / text.rs（画面の文言）/ page_scripts.rs（埋め込み JS の呼び出し）/ selectors.rs（要素の選択）
 │  │                    write_gate.rs（書き込み可否）/ item_page.rs（1 操作ずつの実装）/ browser.rs（接続とログイン確認）
-│  │                    jev_assist.rs（`--jev` の候補作りとルール × Jev の突き合わせ）
 │                    mod.rs の trait `ListingPage`（手順と画面操作の境目）
-│  ├─ jev/            … `--jev`: mod.rs（ElementChooser・送る型）/ protocol.rs（送信本文・応答の検証）/ decision.rs（判断表）
-│  │                    client.rs（JevClient・JevToken）/ winhttp.rs（共用の WinHTTP を Jev 向けに包む）
-│  ├─ net/winhttp.rs  … WinHTTP の FFI（GET / POST、メモリかファイルへ受ける）。`--jev` と自動更新が共用
+│  ├─ net/winhttp.rs  … WinHTTP の FFI（GET だけ、メモリかファイルへ受ける）。自動更新が使う
 │  ├─ update/         … 自動更新: locate.rs / manifest.rs（sq.version）/ feed.rs / version.rs（SemVer）/ source.rs（配信元）
 │  │                    download.rs（ダウンロードと検証）/ hash.rs（CNG）/ lock.rs / apply.rs（Update.exe の起動）
 │  ├─ install/        … Velopack のフック（hooks.rs）と HKCU の Run・PATH（registry.rs）
@@ -46,9 +43,8 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **Chrome の起動引数は最小限**（`--user-data-dir`・`--remote-debugging-port=0`・`--no-first-run`・`--no-default-browser-check` と描画の間引き抑止 3 つ・`--disable-features=CalculateNativeWinOcclusion`、ヘッドレス時だけ `--headless=new --window-size=1280,900`）。`--enable-automation` などの自動化フラグや画面外配置は付けない（Google ログインを弾かれる恐れ）。変える場合は実画面でログインを再検証する。Chrome の stdout/stderr は捨てる。
 - **プロファイルは秘密情報で、ツールは絶対に削除しない。** 終了は `Browser.close`、応答しないときだけプロセスを止める。ログイン待ちの間はタブに接続しない。
 - **publisherId はログイン後の URL から実行時に取り出し、コード・設定・ログに書かない。** ログと CLI のエラー出力は伏せ字処理を通す。
-- **要素はラベル・役割・文言で探し、クラス名に頼らない。** 文言は `dashboard/text.rs` に集める。ラベルは 1 行単位の完全一致、言語一覧の開閉は `aria-expanded`、0×0 の一覧は数えない。候補がちょうど 1 つに絞れなければ止める（最初の 1 つを選ばない）。**例外は `--jev`（opt-in）だけ**: 入力欄・言語の選択欄・言語の選択肢に限り、ルールで 0 個・複数のとき Jev の選択を確信度 0.8 以上で採用する（判断表は `jev/decision.rs`、複数のときはルールの候補の中からだけ）。ルールで 1 つに決まって Jev と食い違えば止める。確定ボタン・送信ダイアログ・`write_gate` は `--jev` でもルールだけ。ダッシュボードは日本語表示が前提。
+- **要素はラベル・役割・文言で探し、クラス名に頼らない。** 文言は `dashboard/text.rs` に集める。ラベルは 1 行単位の完全一致、言語一覧の開閉は `aria-expanded`、0×0 の一覧は数えない。候補がちょうど 1 つに絞れなければ止める（最初の 1 つを選ばない）。外部のサービスに選ばせる経路は持たない（判断は `dashboard/selectors.rs` の純粋関数だけ）。ダッシュボードは日本語表示が前提。
 - **Chrome を前面に出さない。** `login` 以外はヘッドレス（`--show-browser` で表示）、UA の HeadlessChrome は Chrome に置き換え、操作の前に毎回 `Emulation.setFocusEmulationEnabled`。`Page.bringToFront` は使わない。クリックは scrollIntoView 後に矩形中心へ実際のマウス入力（`clickCount: 1`）、覆われていたら押さない。書き換えはフォーカス → 全選択 → `Input.insertText`。DOM の `value` 直接代入はしない。待ちは固定 sleep でなく上限つきの条件確認。
-- **`--jev` で外へ送るのは要素の情報だけ。** トークンは環境変数 `EDICTORA_JEV_API_TOKEN` からだけ読み（`main` が読んで `CliApp::with_jev_token` で渡す）、ログ・エラー・Debug 表示に出さない。送るのは操作の目的と候補ごとの役割・タグ・ラベル行・短い表示テキストだけで、欄の値・書き込む値・publisherId・URL・Cookie・パブリッシャー名・スクリーンショットは送らない（`dashboard/jev_assist.rs`）。ポーリング中の再特定では Jev を呼ばない。テストで本物の API を呼ばない（偽の `ElementChooser` と 127.0.0.1 の偽サーバーを使う）。
 - **ページ内スクリプトに利用者の入力値を埋め込まない。** 書き込む文字列は CDP の `Input.insertText` で渡す。
 - **書き込みの安全策**: `write_gate.rs` は確認済みの状態（許可リスト）以外を止める。審査の取り消しはしない。言語ごとに「切替 → 書換 → 全欄照合 → 保存 → 再読込 → 照合」、最後に全言語を読み直す。途中で失敗したら、そのアイテムの残りは行わない。beforeunload が出たら「留まる」を選び、変更を捨てずに中止する。
 - **審査送信は 1 件ずつ明示**（`submit --item <id> --yes`）。「自動的に公開する」チェックは変えずに報告する。
@@ -73,7 +69,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 ## コーディング規約
 
 - 利用者向けの文言・コメント・コミットメッセージは **日本語**。コメントは目的・設計意図・制約を多めに書く
-- 依存は最小限（`serde` / `serde_json` / `regex` / `tungstenite`（同期・TLS なし・`handshake` のみ）、テスト専用に `sha2`）。HTTP/TLS crate は使わない（DevTools の確認は localhost への素の HTTP/1.1）。**外部への HTTPS（`--jev` の `api.typesafe.ai` と自動更新の `edictora.kagayoi.com`）は、crate を足さず WinHTTP を FFI で直接使い、`net/winhttp.rs` を共用する**（リダイレクト無効・操作ごとのタイムアウトと全体の期限・ワーカースレッドで実行し Ctrl+C で抜ける・応答の上限・平文は 127.0.0.1 のテストだけ）。Ctrl+C・レジストリ・ローカル時刻・環境変数展開・ハッシュ（CNG）・WM_SETTINGCHANGE は Windows API を直接宣言して使う
+- 依存は最小限（`serde` / `serde_json` / `regex` / `tungstenite`（同期・TLS なし・`handshake` のみ）、テスト専用に `sha2`）。HTTP/TLS crate は使わない（DevTools の確認は localhost への素の HTTP/1.1）。**外部への HTTPS（自動更新の `edictora.kagayoi.com`）は、crate を足さず WinHTTP を FFI で直接使い、`net/winhttp.rs` に集める**（リダイレクト無効・操作ごとのタイムアウトと全体の期限・ワーカースレッドで実行し Ctrl+C で抜ける・応答の上限・平文は 127.0.0.1 のテストだけ）。Ctrl+C・レジストリ・ローカル時刻・環境変数展開・ハッシュ（CNG）・WM_SETTINGCHANGE は Windows API を直接宣言して使う
 - CDP は入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答待ちの間もイベントを配る
 - `AppPaths` は値として注入する。テストは `target/tmp` 配下を根にし、実プロファイル・実設定を解決しない。CLI のテストはブラウザを開く関数に「呼ばれたら panic」を渡す
 - Bun 側のパッケージ管理は Bun（`packageManager: bun@1.4.4`、`bunfig.toml` の `minimumReleaseAge`）。依存は `typescript` だけ

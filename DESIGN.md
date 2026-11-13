@@ -15,7 +15,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 
 2 本立てで、画面操作の「判断」は Rust、ページ内での「情報収集」だけを TypeScript に分ける。
 
-- `crates/edictora`（Rust、lib + bin `edictora.exe`・`edictora-updater.exe`）: 設定・比較・Chrome 起動・CDP・ダッシュボード操作・手順・CLI・自動更新。外部の引数パーサ・CDP ライブラリ・HTTP/TLS crate は使わない（`--jev` と自動更新の HTTPS は WinHTTP を FFI で直接使う）。
+- `crates/edictora`（Rust、lib + bin `edictora.exe`・`edictora-updater.exe`）: 設定・比較・Chrome 起動・CDP・ダッシュボード操作・手順・CLI・自動更新。外部の引数パーサ・CDP ライブラリ・HTTP/TLS crate は使わない（自動更新の HTTPS は WinHTTP を FFI で直接使う）。
 - `page-scripts`（Bun + TypeScript）: ページ内で評価するスクリプトだけ。生成物 `page-scripts/dist/edictora.js` をコミットし、`include_str!` で exe に埋め込む。`cargo build` と配布 exe に Bun は要らない。
 
 ### 本体の内訳（`crates/edictora/src/`）
@@ -27,8 +27,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 | `config/` | 設定ファイルの読込と検証（未知のキーはエラー）、正本の区間切り出し |
 | `listing/` | 欄の定義、正本と現在値の完全一致の比較、行単位の差分表示 |
 | `dashboard/` | ダッシュボード操作。`urls.rs`（publisherId の取り出し）/ `text.rs`（画面の文言）/ `page_scripts.rs`（埋め込み JS の呼び出し）/ `selectors.rs`（要素の選択）/ `write_gate.rs`（書き込み可否）/ `item_page.rs`（1 操作ずつの実装）/ `browser.rs`（接続とログイン確認）。trait `ListingPage` が手順と画面操作の境目 |
-| `jev/` | `--jev` モード。`protocol.rs`（送信本文・応答の検証）/ `decision.rs`（ルール × Jev の判断表）/ `client.rs`（API クライアント・トークン）/ `winhttp.rs`（共用の WinHTTP を Jev 向けに包む）。trait `ElementChooser` が Jev 呼び出しの境目 |
-| `net/` | `winhttp.rs`: WinHTTP を FFI で直接使う HTTP クライアント（GET / POST、メモリかファイルへ受ける）。`--jev` と自動更新が共用 |
+| `net/` | `winhttp.rs`: WinHTTP を FFI で直接使う HTTP クライアント（GET だけ、メモリかファイルへ受ける）。自動更新が使う |
 | `update/` | 自動更新。`locate.rs`（インストールの判定）/ `manifest.rs`（`sq.version`）/ `feed.rs`（フィードと更新先の選択）/ `version.rs`（SemVer）/ `source.rs`（配信元）/ `download.rs`（ダウンロードと検証）/ `hash.rs`（CNG）/ `lock.rs` / `apply.rs`（Update.exe の起動。trait `ApplyLauncher` が境目） |
 | `install/` | Velopack のフック（`hooks.rs`）と HKCU の Run・PATH の読み書き（`registry.rs`） |
 | `services.rs` | pull・diff・push・submit の手順と中止判断 |
@@ -42,7 +41,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 - **CDP**: 入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答は id ごと、イベントは購読ごとのチャネルへ配る。応答待ちの間も `Page.loadEventFired` と beforeunload の `Page.javascriptDialogOpening` を受け取れる。切断時は応答待ちと購読をすべて失敗させる。
 - **中断**: Ctrl+C は `SetConsoleCtrlHandler` で受け、待ちの各所が合図を見て抜ける（終了コード 130）。その後の `Browser.close` と終了待ちは合図を見ないので、Chrome は正常終了する。
 - **保存先の注入**: `AppPaths` を値として持ち回し、`main` だけが環境（`EDICTORA_LOCAL_ROOT` / `EDICTORA_ROAMING_ROOT` による上書きを含む）から決める。テストは `target/tmp` 配下を根にする。
-- **環境変数は入口だけが読む**: `EDICTORA_JEV_API_TOKEN`・`EDICTORA_UPDATE_URL` は `main`（と更新用 exe の入口）が読み、値で渡す。
+- **環境変数は入口だけが読む**: `EDICTORA_UPDATE_URL` は `main`（と更新用 exe の入口）が読み、値で渡す。
 - **正規表現**: 設定の `sectionStart` / `sectionEnd` は Rust の `regex` で解釈する。先読み・後読み・後方参照は使えない（読み込み時にエラー）。どのパターンも線形時間で終わるので、時間による打ち切りは持たない。ログの publisherId 伏せ字も `regex` で行う。
 
 ## データフロー
@@ -68,7 +67,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 - **既定は読み取りのみ。** 書き換えは `push --yes`、審査送信は `submit --item <id> --yes` を明示したときだけ。下書き保存と審査送信は別の操作で、審査送信は 1 件ずつ。「審査の合格後に自動的に公開する」の状態は変えずに報告する。
 - **書き込み可否は許可リスト方式**（`write_gate.rs`）。確認済みの状態（公開済み・下書き）以外、審査待ち・ロック中・判定不能なアイテムには書き込まない。審査の取り消しはしない。
 - **保存前と保存後に正本と照合する。** 一致しなければ保存しない・エラーで止める。途中で失敗したら、そのアイテムの残りは行わない。再読込・遷移で beforeunload が出たら、「留まる」を選んで未保存の変更を捨てずに中止する。
-- **要素の特定が曖昧なら止める。** 候補がちょうど 1 つに絞れなければ、最初の 1 つを選ばず止める（別の欄を書き換える事故を防ぐ）。例外は `--jev` の補い（下の「Jev モード」）だけ。
+- **要素の特定が曖昧なら止める。** 候補がちょうど 1 つに絞れなければ、最初の 1 つを選ばず止める（別の欄を書き換える事故を防ぐ）。
 - **Chrome を前面に出さない。** `Page.bringToFront` は使わず、操作の前に毎回 `Emulation.setFocusEmulationEnabled` を行う。
 - **引数と設定の誤りは Chrome を開く前に終了コード 2 で止める。**
 - **失敗時の画面保存はリポジトリの外**（`%LOCALAPPDATA%\Edictora.Data\diagnostics`）に置く。
@@ -100,34 +99,6 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 - 「審査のため送信」を押すと確認ダイアログ（`[role=dialog]`）が出る。文面は「「<名前>」を審査のために送信しますか？」、チェックボックス「審査の合格後に「<名前>」を自動的に公開する」（既定 ON）、ボタン「キャンセル」「審査のため送信」。確定すると「アイテムを送信しました。」が出てステータスが「審査待ち」になる。
 - 「ガイドやヒントが必要な場合は…」という常設の通知が `[aria-live]` 領域にあるので、結果メッセージの判定では除外する。
 
-### Jev モード（`--jev`、opt-in）
-
-TypeSafe の分類 API「Jev」（`POST https://api.typesafe.ai/v1/systemone`、choice 質問）に、操作の対象を選ぶたびに「どれが目的の要素か」を聞き、ルールの結果と突き合わせる。Jev は答えるだけで、クリック・入力は Edictora が行う。
-
-- **対象**: 入力欄（説明 textarea・URL 欄）、言語のコンボボックス、言語の選択肢（`submit` はこれらを選ばないので、`submit --jev` では問い合わせが起きない。`get_state` は textarea がちょうど 1 つであることを前提にするので、説明欄が複数なら `--jev` でも `push` は `write_gate` で止まる）。**対象外（ルールだけ）**: `write_gate` のステータス判定と判断材料（`get_state`）、「下書きとして保存する」「審査のため送信」、送信ダイアログのボタン、「自動的に公開する」チェック。取り消せない判断は Jev に任せない。
-- **判断表**（`jev/decision.rs`、純粋関数でテスト）:
-
-| ルール | Jev の答え | 結果 |
-|---|---|---|
-| ちょうど 1 つ | 同じ候補 | 進める（確信度は問わない） |
-| ちょうど 1 つ | 別の候補・該当なし | 止める |
-| 0 個 | 候補、確信度 ≥ 0.8 | Jev の選択を採用 |
-| 複数 | ルールの候補の中、確信度 ≥ 0.8 | Jev の選択を採用 |
-| 複数 | ルールの候補の外 | 止める |
-| 0 個・複数 | 確信度 < 0.8、または該当なし | 止める |
-
-  しきい値 0.8（`CONFIDENCE_THRESHOLD`）は、ルールの裏付けがないときに迷った答えで別の欄を書き換えないための値。採用・中止とも、Jev の選択と確信度を進捗（標準エラー）とログに出す。
-- **選択肢の作り方**: criteria のキーは不透明な `c0`、`c1`… と明示的な `none`（該当なし）。Rust 側で位置へ戻し、送っていないキーが返ったら拒否する。事前絞り込み（コンボボックスは「言語」を含むもの、選択肢は「言語名 – code」と解釈できるもの、入力欄は textarea / input）で 254 個以下にし、超えたら止める。
-- **ポーリング中は聞かない**: 一覧が閉じたか・切り替わったか・説明欄が落ち着いたかの確認では Jev を呼ばない。ルールで 1 つに決まればそれ、決まらなければ直前に採用した要素（事前絞り込み後の位置・候補数・タグ）と同じものを使い、確かめられなければ止める。同じ質問（候補の情報が同じ）の答えは、同じ実行の中で再利用する。
-- **通信**: WinHTTP を FFI で直接使う（HTTP/TLS crate は使わない）。リダイレクトは無効（Authorization を別ホストへ運ばない）、各段階と全体に 30 秒のタイムアウト、応答は 1 MiB まで。同期呼び出しはワーカースレッドで行い、呼び出し側が Ctrl+C（終了コード 130）と期限を見る。失敗（接続不可・タイムアウト・4xx/5xx・応答の形の誤り）は `Error::Jev`（dashboard 系ではないので手順全体を止め、終了コード 1）。推測で先へ進めない。
-- **トークン**: 環境変数 `EDICTORA_JEV_API_TOKEN` からだけ読む（config.json には持たせない）。`--jev` で無ければ Chrome を開く前に終了コード 2。`JevToken` は Debug・エラー・ログに値を出さない。
-- **送る情報の範囲**（`dashboard/jev_assist.rs`）:
-  - 送る: 操作の目的の文、候補ごとの役割（combobox / option / textbox）・タグ名・input の type・ラベル行・短い表示テキスト。
-  - 入力欄は表示テキストを送らない（textarea の innerText は説明文そのものの恐れがある）。コンボボックスの表示テキストは「言語」の行とロケール形式の行だけ。選択肢はロケール形式の行だけで、ラベル行は送らない。
-  - ラベル行は 80 文字以下・8 行まで。`://` を含む行、文字数カウンタ（「n/16,000」）の行、欄の現在値・書き込む値・パブリッシャーの選択欄の表示に当たる行は落とす。
-  - 送らない: 欄の値・書き込む値、publisherId、ページの URL、Cookie、パブリッシャー（アカウント）名の選択欄と選択肢、スクリーンショット（box 質問・画像は使わない）。
-  - 送った本文（トークンなし）はログ（Info）に残す。
-
 ### 区間切り出し
 
 - 切り出し結果は検証スクリプト（push.mjs）と同じにする。`crates/edictora/tests/fixtures/ReplaceTranslator` の SHA-256・文字数（ja=1492 / en=3172）のテストで固める。
@@ -135,7 +106,7 @@ TypeSafe の分類 API「Jev」（`POST https://api.typesafe.ai/v1/systemone`、
 ### 配布・インストール・自動更新（Velopack）
 
 - **配布物**: Velopack（vpk 1.2.161、packId `Edictora`、チャンネル `win`）のパッケージ。主 exe は `edictora.exe`、同じパッケージに更新用の `edictora-updater.exe` を入れる。Setup で `%LOCALAPPDATA%\Edictora`（以下「根」）に入る（`Update.exe`・`current\`・`packages\`）。配信元は Cloudflare R2 の `https://edictora.kagayoi.com`。署名・パッケージ作成・配信の手順は [docs/release.md](docs/release.md)。
-- **役割の分け方**: インストール・アンインストール・`current` の差し替えは Velopack の Setup.exe / Update.exe に任せる。Edictora は**更新の確認とダウンロードだけ**を自前で行う（`update/`）。velopack crate は ureq / rustls を引き込むので使わない。通信は `--jev` と共用の `net/winhttp.rs`。
+- **役割の分け方**: インストール・アンインストール・`current` の差し替えは Velopack の Setup.exe / Update.exe に任せる。Edictora は**更新の確認とダウンロードだけ**を自前で行う（`update/`）。velopack crate は ureq / rustls を引き込むので使わない。通信は `net/winhttp.rs`。
 - **約束は vendored の Velopack 1.2.161 Rust SDK に合わせる**（Petarin の `desktop/src-tauri/vendor/velopack-1.2.161`）:
   - インストールの判定（`locator.rs`）: exe の親か、パスの最後の `\current\` より前に `Update.exe` があればそこが根。`<根>\Update.exe` と `<根>\current\sq.version` が無ければ「インストールされていない」。現在の版・id・チャンネル・mainExe は `sq.version`（nuspec XML）から読む。チャンネルが空なら `win`。
   - フィード（`sources/http.rs`・`manager.rs`）: `<配信元>/releases.{channel}.json`。`{"Assets":[{PackageId, Version, Type, FileName, SHA1, SHA256, Size, …}]}` でキーは大文字小文字を区別しない。Type が `Full` の最大の版が現在より新しければ更新（ダウングレードしない・差分パッケージは使わない）。問い合わせ文字列は `localVersion` と `id` だけ（SDK が付ける端末固有の `stagingId` は送らない）。
@@ -161,4 +132,3 @@ TypeSafe の分類 API「Jev」（`POST https://api.typesafe.ai/v1/systemone`、
   - 15 件の全アイテムでの読み出し。
 - 単体テストは 127.0.0.1 の偽配信元・専用ハイブ・偽の Update.exe 起動で行う。自動更新の結合は、検証用 packId `EdictoraTest` で実機確認済み: Install フックで Run（`EdictoraTest Updater`）と PATH（REG_EXPAND_SZ のまま）を登録、`edictora update` で 1.0.5 → 1.0.6（Obsolete / Updated フック）、`edictora-updater.exe` で 1.0.6 → 1.0.7、`Update.exe uninstall` で Uninstall フックが Run と PATH から自分の分だけを消し `Edictora.Data` は残る。未確認: 実署名での一連、R2 への実配信、本番の HTTPS（edictora.kagayoi.com）、本番 packId `Edictora` での Setup、Portable 版の一連、Setup 直後の初回起動の見え方（`--silent` の Setup は主 exe を起動しないらしい）、実行中ロックで適用を後に回す動作の実機確認。
 - ダッシュボードの英語表示は未対応（文言で要素を探すため）。
-- `--jev` は実画面・本物の API ではまだ確かめていない（送信本文の中身、確信度の分布、しきい値 0.8 の妥当性）。

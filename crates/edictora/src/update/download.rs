@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cancel::CancelToken;
 use crate::error::Result;
-use crate::net::winhttp::{self as net, HttpRequest, Method, ResponseSink};
+use crate::net::winhttp::{self as net, HttpRequest, ResponseSink};
 
 use super::feed::{FeedAsset, is_safe_file_name};
 use super::hash::file_digests;
@@ -190,10 +190,8 @@ fn download_to(
 ) -> Result<()> {
     let response = net::send(
         HttpRequest {
-            method: Method::Get,
             target: source.package_target(&asset.file_name),
             headers: Vec::new(),
-            body: Vec::new(),
             timeout: DOWNLOAD_OP_TIMEOUT,
             total_timeout: DOWNLOAD_TOTAL_TIMEOUT,
             service: SERVICE,

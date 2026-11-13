@@ -1,7 +1,7 @@
 //! WinHTTP を FFI で直接使う、最小限の HTTP クライアント（HTTP/TLS crate は使わない。AGENTS.md の規約）。
 //!
-//! `--jev` の POST（`jev::winhttp` が薄く包む）と、自動更新のフィード取得・パッケージのダウンロード
-//! （`update`）が共用する。守る性質:
+//! 自動更新のフィード取得・パッケージのダウンロード（`update`）が使う。要求は GET だけ
+//! （本文を送る要求は持たない）。守る性質:
 //! - 平文（http）は 127.0.0.1 だけに限る（テスト用の偽サーバー向け）。本番の接続先は各利用側の固定値。
 //! - リダイレクトは無効にする（Authorization などのヘッダーを別のホストへ運ばない・配信元を勝手に変えない）。
 //!   3xx はそのままステータスとして返し、利用側が失敗として扱う。
@@ -9,10 +9,10 @@
 //!   ファイルへ受けるときは [`ResponseSink::File`] の `max_bytes`）。
 //! - WinHTTP の同期呼び出しはブロックするので、ワーカースレッドで実行する。呼び出し側は短い間隔で
 //!   中断（Ctrl+C）と全体の期限を確かめ、中断なら [`HttpError::Cancelled`]、期限切れなら [`HttpError::TimedOut`] で抜ける
-//!   （何秒待ったと伝えるかは利用側が決める。Jev は操作ごとの秒数、更新は全体の秒数）。
+//!   （何秒待ったと伝えるかは利用側が決める）。
 //!   抜けた後のワーカーは、読み取りの合間に中止の合図を見て止まるか、WinHTTP 側のタイムアウトで自然に終わる
 //!   （プロセス終了でも止まる）。
-//! - ヘッダー（API トークンを含みうる）は、エラー文・ログ・Debug 表示に出さない。そのため [`HttpRequest`] は Debug を導出しない。
+//! - ヘッダー（秘密を含みうる）は、エラー文・ログ・Debug 表示に出さない。そのため [`HttpRequest`] は Debug を導出しない。
 //! - エラー文は「{service} への通信で…」の形にし、どの相手との通信かを利用者に示す（service は呼び出し側が渡す）。
 
 use std::path::PathBuf;
@@ -36,39 +36,17 @@ pub struct HttpTarget {
     pub path: String,
 }
 
-/// HTTP メソッド（使うものだけ）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Method {
-    /// GET（フィード・パッケージの取得）
-    Get,
-    /// POST（Jev への問い合わせ）
-    Post,
-}
-
-impl Method {
-    fn verb(self) -> &'static str {
-        match self {
-            Method::Get => "GET",
-            Method::Post => "POST",
-        }
-    }
-}
-
-/// 要求 1 回分。ヘッダーに秘密を含みうるので Debug は導出しない
+/// GET 要求 1 回分（フィード・パッケージの取得）。ヘッダーに秘密を含みうるので Debug は導出しない
 pub struct HttpRequest {
-    /// メソッド
-    pub method: Method,
     /// 接続先
     pub target: HttpTarget,
     /// 追加ヘッダー（`名前: 値`）。CR・LF・NUL を含めてはならない
     pub headers: Vec<String>,
-    /// 本文（GET では空）
-    pub body: Vec<u8>,
     /// 名前解決・接続・送信・受信それぞれのタイムアウト（WinHTTP の操作ごと）
     pub timeout: Duration,
     /// 呼び出し全体の期限（これを過ぎたら待つのをやめる）
     pub total_timeout: Duration,
-    /// エラー文に出す相手の名前（例 `Jev`・`更新の配信元`）
+    /// エラー文に出す相手の名前（例 `更新の配信元`）
     pub service: &'static str,
 }
 
@@ -337,8 +315,6 @@ mod sys {
         let service = request.service;
         let target = &request.target;
         let timeout_ms = i32::try_from(request.timeout.as_millis()).unwrap_or(i32::MAX);
-        let body_len = u32::try_from(request.body.len())
-            .map_err(|_| format!("{service} へ送る本文が大きすぎます"))?;
 
         let agent = wide(concat!("Edictora/", env!("CARGO_PKG_VERSION")));
         // 127.0.0.1（テスト）はプロキシを通さない。本番は OS のプロキシ設定に従う
@@ -369,7 +345,7 @@ mod sys {
                 "WinHttpConnect",
             )?;
 
-            let verb = wide(request.method.verb());
+            let verb = wide("GET");
             let path = wide(&target.path);
             let flags = if target.secure {
                 WINHTTP_FLAG_SECURE
@@ -409,21 +385,9 @@ mod sys {
             } else {
                 (headers.as_ptr(), NUL_TERMINATED)
             };
-            let body_ptr: *const c_void = if request.body.is_empty() {
-                null()
-            } else {
-                request.body.as_ptr().cast()
-            };
+            // GET なので送る本文は無い
             ok(
-                WinHttpSendRequest(
-                    req.0,
-                    headers_ptr,
-                    headers_len,
-                    body_ptr,
-                    body_len,
-                    body_len,
-                    0,
-                ),
+                WinHttpSendRequest(req.0, headers_ptr, headers_len, null(), 0, 0, 0),
                 service,
                 "WinHttpSendRequest",
             )?;

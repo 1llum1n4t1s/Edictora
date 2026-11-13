@@ -244,6 +244,25 @@ fn current_locale_code_表示の最後の言語行を読む() {
 }
 
 #[test]
+fn single_locale_code_言語が1つだけのアイテムは言語名からコードを決める() {
+    // 2026-11-14 の実画面: 言語が 1 つだけのアイテムの選択欄はコードなしの言語名だけ
+    assert_eq!(
+        single_locale_code(&el(0).text("言語\n言語\n言語\n日本語")).as_deref(),
+        Some("ja")
+    );
+    assert_eq!(
+        single_locale_code(&el(0).text("言語\n英語 ")).as_deref(),
+        Some("en")
+    );
+    // コード付き（複数言語のアイテム）は対象外。切り替えの手順を使う
+    assert!(single_locale_code(&el(0).text("言語\n日本語 – ja")).is_none());
+    // 対応表に無い言語名は推測しない
+    assert!(single_locale_code(&el(0).text("言語\nフランス語")).is_none());
+    // 値が無い（ラベルだけ）も推測しない
+    assert!(single_locale_code(&el(0).text("言語")).is_none());
+}
+
+#[test]
 fn pick_button_文言の完全一致で1つだけ選ぶ() {
     let buttons = [
         el(0).text("公開"),
@@ -443,13 +462,11 @@ fn auto_publish_state_ラベル一致の状態が不明なら1個でも不明() 
 fn mentions_language_label_ラベルか表示テキストに言語を含めば当たる() {
     assert!(mentions_language_label(&el(0).label("言語")));
     assert!(mentions_language_label(&el(0).text("言 語\n英語 – en")));
-    // 部分一致（説明文中の「すべての言語用」にも当たる。is_language_combobox より緩い）
+    // 部分一致（説明文中の「すべての言語用」にも当たる。pick_language_combobox の完全一致より緩い）
     assert!(mentions_language_label(
         &el(0).label("カテゴリ\nすべての言語用")
     ));
-    assert!(!is_language_combobox(
-        &el(0).label("カテゴリ\nすべての言語用")
-    ));
+    assert!(pick_language_combobox(&[el(0).label("カテゴリ\nすべての言語用")]).is_err());
     assert!(!mentions_language_label(&el(0).text("Kagayoi")));
 }
 

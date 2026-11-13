@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::dashboard::text::{
     AUTO_PUBLISH_MARKER, DEFAULT_LOCALE_MARKER, GUIDE_NOTICE_MARKER, LANGUAGE_LABEL,
-    SAVE_DRAFT_BUTTON, STATUS_LABEL, field_label,
+    SAVE_DRAFT_BUTTON, SINGLE_LOCALE_NAMES, STATUS_LABEL, field_label,
 };
 use crate::dashboard::write_gate::ItemPageState;
 use crate::error::{Error, Result};
@@ -97,20 +97,16 @@ fn str_of(e: &Value, name: &str) -> String {
         .to_string()
 }
 
-/// 言語切替のコンボボックスの条件（ルール）。ラベルか表示テキストの 1 行が「言語」と完全一致する。
-///
-/// `pick_*` と `--jev` の判断（`dashboard::jev_assist`）が同じ条件を使うよう、述語として切り出している。
-pub fn is_language_combobox(c: &ElementInfo) -> bool {
-    has_label_line(Some(&c.label), LANGUAGE_LABEL) || has_label_line(Some(&c.text), LANGUAGE_LABEL)
-}
-
 /// 言語切替のコンボボックスを選ぶ。最初の combobox はパブリッシャー選択なので、ラベル「言語」で絞り込む
 pub fn pick_language_combobox(comboboxes: &[ElementInfo]) -> Result<&ElementInfo> {
     // 部分一致ではなく「ラベルの 1 行が完全一致」で選ぶ。
     // 実画面ではカテゴリ欄の親要素に「すべての言語用」という説明があり、部分一致だと
     // カテゴリ欄まで「言語」に当たって 2 件になった（2026-11-13 の実ダッシュボードで確認）。
     exactly_one(
-        comboboxes.iter().filter(|c| is_language_combobox(c)),
+        comboboxes.iter().filter(|c| {
+            has_label_line(Some(&c.label), LANGUAGE_LABEL)
+                || has_label_line(Some(&c.text), LANGUAGE_LABEL)
+        }),
         || {
             format!(
                 "「{LANGUAGE_LABEL}」のコンボボックスが見つかりません（ダッシュボードが日本語表示か確認してください）"
@@ -181,6 +177,27 @@ pub fn current_locale_code(combobox: &ElementInfo) -> Option<String> {
         .map(|p| p.code)
 }
 
+/// 言語が 1 つだけのアイテムの言語コード。
+///
+/// 選択欄の表示がコード付き（「日本語 – ja」）なら複数言語のアイテムなので None。
+/// コードなしの言語名（「日本語」）だけなら、[`SINGLE_LOCALE_NAMES`] で対応するコードを返す。
+/// 表示の最後の行（ラベル「言語」の繰り返しの後にある現在値）を、前後の空白を除いて完全一致で比べる。
+/// 対応表に無い言語名も None（呼び出し側が「解釈できない」として止める）
+pub fn single_locale_code(combobox: &ElementInfo) -> Option<String> {
+    if current_locale_code(combobox).is_some() {
+        return None;
+    }
+    let shown = combobox
+        .text
+        .split('\n')
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())?;
+    SINGLE_LOCALE_NAMES
+        .iter()
+        .find(|(name, _)| *name == shown)
+        .map(|(_, code)| (*code).to_string())
+}
+
 /// 選択肢一覧からロケールコードの一覧を作る（解釈できない行は無視、重複は除く）
 pub fn locale_codes(options: &[ElementInfo]) -> Vec<String> {
     let mut codes: Vec<String> = Vec::new();
@@ -194,15 +211,12 @@ pub fn locale_codes(options: &[ElementInfo]) -> Vec<String> {
     codes
 }
 
-/// 言語の選択肢の条件（ルール）。「言語名 – code」と解釈でき、コードが完全一致する（大文字小文字は無視）
-pub fn is_locale_option(option: &ElementInfo, code: &str) -> bool {
-    parse_locale_option(Some(&option.text)).is_some_and(|p| eq_ic(&p.code, code))
-}
-
 /// コードが完全一致する選択肢を 1 つ選ぶ
 pub fn pick_locale_option<'a>(options: &'a [ElementInfo], code: &str) -> Result<&'a ElementInfo> {
     exactly_one(
-        options.iter().filter(|o| is_locale_option(o, code)),
+        options
+            .iter()
+            .filter(|o| parse_locale_option(Some(&o.text)).is_some_and(|p| eq_ic(&p.code, code))),
         || {
             format!(
                 "言語の選択肢にロケール {code} がありません（ある言語: {}）",
@@ -222,11 +236,6 @@ pub fn pick_button<'a>(buttons: &'a [ElementInfo], text: &str) -> Result<&'a Ele
     )
 }
 
-/// URL 欄の条件（ルール）。ラベルの 1 行が `label` と完全一致する（空白の有無は無視）
-pub fn is_field_with_label(input: &ElementInfo, label: &str) -> bool {
-    has_label_line(Some(&input.label), label)
-}
-
 /// ラベルで URL 欄を 1 つ選ぶ。空白の有無（「公式 URL」と「公式URL」）は区別しない
 pub fn pick_field_by_label(inputs: &[ElementInfo], field: ListingField) -> Result<&ElementInfo> {
     let Some(label) = field_label(field) else {
@@ -236,7 +245,9 @@ pub fn pick_field_by_label(inputs: &[ElementInfo], field: ListingField) -> Resul
     };
     // 言語欄と同じ理由で、ラベルの 1 行が完全一致するものだけを選ぶ（親要素の説明文に別の欄名が含まれても当たらない）。
     exactly_one(
-        inputs.iter().filter(|i| is_field_with_label(i, label)),
+        inputs
+            .iter()
+            .filter(|i| has_label_line(Some(&i.label), label)),
         || format!("「{label}」の入力欄が見つかりません"),
         |n| format!("「{label}」の入力欄が {n} 個あり、特定できません"),
     )
@@ -312,12 +323,9 @@ pub fn parse_status(body_text: Option<&str>) -> Option<String> {
 
 /// コンボボックスが「言語」に触れているか（ラベルか表示テキストに、空白を無視して「言語」を含む）。
 ///
-/// [`is_language_combobox`]（行単位の完全一致）より緩い、部分一致の条件。次の 2 用途で同じ条件を使うため 1 か所にまとめている。
-/// 1. 編集画面の待ち条件（`item_page` の `wait_for_editor_ready`）: 言語の選択欄が描画されたかの目安。
-///    ここでは特定（1 つに絞る）は要らないので、緩い条件で足りる。
-/// 2. Jev へ送らない文字列の境界（`jev_assist::non_language_combobox_texts` と `Target::LanguageCombobox` の事前絞り込み）:
-///    この条件に当たらないコンボボックス（パブリッシャー選択など）の表示テキストは Jev へ送らない。
-///    完全一致に寄せると送らない範囲が変わるため、部分一致のまま保つ。
+/// [`pick_language_combobox`]（行単位の完全一致）より緩い、部分一致の条件。
+/// 編集画面の待ち条件（`item_page` の `wait_for_editor_ready`）で、言語の選択欄が描画されたかの目安として使う。
+/// ここでは特定（1 つに絞る）は要らないので、緩い条件で足りる。
 pub fn mentions_language_label(c: &ElementInfo) -> bool {
     contains_ignoring_space(Some(&c.label), LANGUAGE_LABEL)
         || contains_ignoring_space(Some(&c.text), LANGUAGE_LABEL)

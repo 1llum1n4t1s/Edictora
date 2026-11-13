@@ -1,6 +1,6 @@
 # Edictora プライバシーポリシー
 
-Edictora（以下「本アプリ」）は、Chrome Web Store の掲載情報を、利用者のリポジトリにある正本ファイルから読み出し・比較・更新する Windows アプリです。本アプリは、扱うデータを原則として利用者の PC 内だけで処理します。例外は、利用者が `--jev` オプションを指定したときに、画面の要素情報を第三者（TypeSafe）へ送ることと、インストール版が更新を確かめるときに配信元（edictora.kagayoi.com）へ接続することです（2 節）。
+Edictora（以下「本アプリ」）は、Chrome Web Store の掲載情報を、利用者のリポジトリにある正本ファイルから読み出し・比較・更新する Windows アプリです。本アプリは、扱うデータを原則として利用者の PC 内だけで処理します。例外は、インストール版が更新を確かめるときに配信元（edictora.kagayoi.com）へ接続することです（2 節）。
 
 ## 1. アプリが扱うデータ
 
@@ -14,10 +14,6 @@ Edictora（以下「本アプリ」）は、Chrome Web Store の掲載情報を�
 本アプリが通信する相手は次のとおりです。
 
 - **Google**: 利用者が操作を指示したときに開く Chrome Web Store デベロッパー ダッシュボード。下書き保存や審査送信をしたときは、その内容が通常のブラウザ操作と同じく Google に送られます。Google での取り扱いは、Google のプライバシーポリシーに従います。
-- **TypeSafe（`--jev` を指定したときだけ）**: 操作する画面の要素を選ぶたびに、`https://api.typesafe.ai/v1/systemone` へ次の情報を送ります。`--jev` を指定しなければ送りません。
-  - 送るもの: 操作の目的（例「説明の入力欄」「ロケール en の言語の選択肢」）と、候補となる画面要素ごとの役割・タグ名・入力欄の種類・ラベルの行（短い行だけ）・言語名とロケールコードの表記、選択するモデル名、利用者が環境変数 `EDICTORA_JEV_API_TOKEN` に設定した API トークン（認証用）
-  - 送らないもの: 説明文や URL などの掲載情報の値と正本ファイルの内容、パブリッシャー ID、ページの URL、Cookie・ログイン情報、スクリーンショット、パブリッシャー（アカウント）名
-  - TypeSafe での取り扱いは、TypeSafe の規約とプライバシーポリシーに従います。API トークンは利用者自身が TypeSafe から取得して管理し、本アプリは設定ファイル・ログに保存しません。
 - **更新の配信元 `https://edictora.kagayoi.com`（Setup でインストールした版と Portable 版だけ）**: Windows へのログオン時（更新用の `edictora-updater.exe`。インストールした版だけで、Portable 版ではログオン時の確認を登録しません）と、利用者が `edictora update` を実行したときに、新しい版があるかを確かめ、あればダウンロードします。配信元は制作者が Cloudflare R2 に置いた静的なファイルです。
   - 送るもの: 更新情報のファイル（`releases.win.json`）を取りに行くときの問い合わせに含める、現在の版（例 `1.0.5`）とアプリの ID（`Edictora`）。ほかに、通信の性質上、接続元の IP アドレスと `Edictora/<版>` という User-Agent が配信元（Cloudflare）に届きます。
   - 送らないもの: 設定ファイルや正本ファイルの内容、掲載情報、パブリッシャー ID、Cookie・ログイン情報、端末を識別する ID（Velopack の段階配信用の ID は送りません）
@@ -31,7 +27,7 @@ Google へのログインは、本アプリが開いた Chrome の画面で利�
 ## 4. 保存場所と削除
 
 - 設定: `%APPDATA%\Edictora`
-- ログ: `%LOCALAPPDATA%\Edictora.Data\logs`（パブリッシャー ID は伏せて記録します。`--jev` のときは TypeSafe へ送った本文も記録しますが、API トークンは記録しません。更新の確認・ダウンロードの結果も記録します）
+- ログ: `%LOCALAPPDATA%\Edictora.Data\logs`（パブリッシャー ID は伏せて記録します。更新の確認・ダウンロードの結果も記録します）
 - 失敗時の画面: `%LOCALAPPDATA%\Edictora.Data\diagnostics`（ダッシュボードの画面が写ります）
 - Chrome プロファイル: 既定は `%LOCALAPPDATA%\Edictora.Data\chrome-profile`
 - アプリ本体（Setup でインストールしたとき）: `%LOCALAPPDATA%\Edictora`。ログオン時の自動更新のため、HKCU の `Run` に `Edictora Updater` を、ユーザー環境変数 `Path` に `%LOCALAPPDATA%\Edictora\current` を登録します。アンインストールすると、このフォルダーと両方の登録が取り除かれます（`Edictora.Data` と設定は残ります）

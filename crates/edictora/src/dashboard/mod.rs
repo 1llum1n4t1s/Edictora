@@ -4,13 +4,11 @@
 //! - [`page_scripts`] — ページ内で要素を集めるだけのスクリプト（page-scripts/ の TypeScript から生成）
 //! - [`selectors`] — 集めた要素から目的の 1 つを選ぶ純粋関数。ちょうど 1 つに絞れなければ止める
 //! - [`write_gate`] — 書き込み可否の判定。確認済みの状態以外はすべて止める（許可リスト方式）
-//! - [`jev_assist`] — `--jev` のとき、ルールの結果と Jev の答えを突き合わせて操作対象を選ぶ（CDP に触らない）
 //! - [`item_page`] — 1 操作ずつの実装（開く・言語切替・読む・書く・保存・送信）
 //! - [`browser`] — 専用プロファイルの Chrome と 1 タブへの接続
 
 pub mod browser;
 pub mod item_page;
-pub mod jev_assist;
 pub mod page_scripts;
 pub mod selectors;
 pub mod text;

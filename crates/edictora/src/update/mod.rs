@@ -2,7 +2,7 @@
 //!
 //! インストール・アンインストール・ファイルの差し替えは Velopack の Setup.exe / Update.exe に任せ、
 //! Edictora は「更新の確認とダウンロード」だけを自前で行う（velopack crate は ureq / rustls を引き込むため
-//! 使わない。通信は `--jev` と共用の [`crate::net::winhttp`]）。約束は vendored の Velopack 1.2.161 の
+//! 使わない。通信は [`crate::net::winhttp`]）。約束は vendored の Velopack 1.2.161 の
 //! Rust SDK に合わせる（各モジュールの説明に対応箇所を書いた）。
 //!
 //! 流れ（[`run_update`]）:
@@ -42,7 +42,7 @@ use std::time::Duration;
 
 use crate::cancel::CancelToken;
 use crate::error::{Error, Result};
-use crate::net::winhttp::{self as net, HttpError, HttpRequest, Method, ResponseSink};
+use crate::net::winhttp::{self as net, HttpError, HttpRequest, ResponseSink};
 
 use apply::{ApplyLauncher, ProcessApplyLauncher, apply_args};
 use feed::{FeedAsset, UpdateCheck, check_for_updates, parse_feed};
@@ -132,14 +132,12 @@ pub fn fetch_feed(
     }
     let response = net::send(
         HttpRequest {
-            method: Method::Get,
             target: source.feed_target(
                 &manifest.channel,
                 &manifest.version.to_string(),
                 &manifest.id,
             ),
             headers: vec!["Accept: application/json".to_string()],
-            body: Vec::new(),
             timeout: FEED_TIMEOUT,
             total_timeout: FEED_TIMEOUT + Duration::from_secs(2),
             service: SERVICE,
