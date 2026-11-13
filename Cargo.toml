@@ -7,9 +7,9 @@ members = ["crates/edictora"]
 resolver = "3"
 
 [workspace.package]
-version = "1.0.5"
+version = "1.0.6"
 edition = "2024"
-rust-version = "1.99.1"
+rust-version = "1.100.0"
 license = "MIT"
 authors = ["Kagayoi"]
 publish = false

@@ -4,25 +4,28 @@ Edictoraの利用者に影響する変更を記録します。1.0.5 以前は、
 
 ## Unreleased
 
+## 1.0.6 - 2026-11-14
+
 ### 変更
 
 - ExtWeigh を Edictora に作り替え。Chrome Web Store の掲載情報（説明・公式 URL・ホームページ URL・サポート URL）を、各リポジトリの正本ファイルから一括で読み出し・比較・更新するツールになりました
-- 名前・保存先を Edictora に統一（設定 `%APPDATA%\Edictora`、ログ・Chrome プロファイル・診断情報 `%LOCALAPPDATA%\Edictora`）
+- 名前・保存先を Edictora に統一（設定 `%APPDATA%\Edictora`、ログ・Chrome プロファイル・診断情報 `%LOCALAPPDATA%\Edictora.Data`）。`%LOCALAPPDATA%\Edictora` はインストール先で、アンインストール時にフォルダーごと消えるため、データとは分けました（以前の場所からの自動移行はしません）
 
 ### 追加
 
-- コマンドライン ツール `edictora.exe`（`login` / `pull` / `diff` / `push` / `submit`、終了コードで成否を区別）。Rust 製の単体の exe で、ランタイムは不要です
+- コマンドライン ツール `edictora.exe`（`login` / `pull` / `diff` / `push` / `submit`、終了コードで成否を区別）。Rust 製で、ランタイムは不要です
 - ログイン以外の操作は Chrome をウィンドウなし（ヘッドレス）で動かし、作業中に前面へ出てこないようにしました。`--show-browser` でウィンドウを表示できます
 - 設定ファイル（`config.json`）で、アイテム ID・ロケール・正本ファイル（全体または見出しで区切った区間）・URL を対応づけ
 - 安全策: 書き換え後と保存後の照合、審査待ちなど確認できない状態での書き込み停止、失敗時の画面保存、ログからのパブリッシャー ID の除去
 - `sectionStart` / `sectionEnd` の正規表現では、先読み・後読み・後方参照は使えません（設定の読み込み時にエラーになります）
 - `--jev` オプション（`pull` / `diff` / `push` / `submit`、既定はオフ）: 入力欄・言語の選択欄・言語の選択肢を選ぶたびに TypeSafe の Jev にも確かめさせ、ルールと食い違えば止めます。ルールで特定できないときは確信度 0.8 以上の Jev の選択で補います。API トークンは環境変数 `EDICTORA_JEV_API_TOKEN` で渡し、モデルは `--jev-model`（既定 `jev-latest`）で変えられます。指定時だけ、画面の要素情報（役割・ラベル行など。欄の値・URL・パブリッシャー ID は含まない）を api.typesafe.ai へ送ります
+- インストーラー（Velopack の Setup）と自動更新: Windows へのログオン時に `edictora-updater.exe`（ウィンドウなし）が `https://edictora.kagayoi.com` から新しい版を確かめ、サイズとハッシュを検証してから Update.exe で差し替えます。`edictora update` で手動でも行えます。インストールすると `edictora` が PATH から使えるようになります。ソースからビルドした exe では更新しません
 
 ### 削除
 
 - 計測機能一式（ON/OFF 差分計測、CPU プロファイル解析、HTML レポート、シナリオ生成）と Microsoft Store 申請用の下書き
 - 旧ログの移行処理（ExtWeigh 固有）
-- 画面版（Edictora.UI）と自動更新（Velopack）。コマンドライン ツールだけになり、配布物は署名済み exe の ZIP になります
+- 画面版（Edictora.UI）。コマンドライン ツールだけになりました（自動更新は Velopack の Setup とコマンドライン向けの更新処理で作り直しました）
 
 ## 1.0.5 - 2026-08-08
 
