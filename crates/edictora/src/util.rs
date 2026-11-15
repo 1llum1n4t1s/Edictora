@@ -421,7 +421,6 @@ pub fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
 }
 
 /// 1970-01-01 からの日数 → 年月日
-#[allow(dead_code)]
 pub fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);

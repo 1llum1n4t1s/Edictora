@@ -397,7 +397,7 @@ impl<'a> CliApp<'a> {
                 header_done = true;
                 failed |= self.print_pulled_text(expected, &snapshot);
             }
-            if expected.images.as_ref().is_some_and(|i| !i.is_empty()) {
+            if expected.has_images() {
                 let snapshot =
                     services::pull_images(&mut page, &fetcher, expected, &progress, cancel)?;
                 if !header_done {
@@ -526,7 +526,7 @@ impl<'a> CliApp<'a> {
                     );
                 }
             }
-            if expected.images.as_ref().is_some_and(|i| !i.is_empty()) {
+            if expected.has_images() {
                 let (snapshot, rows) =
                     services::diff_images(&mut page, &fetcher, expected, &progress, cancel)?;
                 if !header_done {
@@ -581,7 +581,7 @@ impl<'a> CliApp<'a> {
         for expected in targets {
             if !expected.locales.is_empty() {
                 let result = services::push(&mut page, expected, &progress, cancel)?;
-                self.outln(&format!("== {} ({})", result.item_name, result.item_id));
+                self.outln(&item_title(&result.item_name, &result.item_id));
                 for locale in &result.locales {
                     let line = if locale.outcome == LocalePushOutcome::Saved {
                         let names: Vec<&str> = locale
@@ -604,11 +604,11 @@ impl<'a> CliApp<'a> {
                 }
             }
             // 画像は、テキストの保存・照合が終わってから（同じアイテムの別の保存として行う）
-            if expected.images.as_ref().is_some_and(|i| !i.is_empty()) {
+            if expected.has_images() {
                 let result =
                     services::push_images(&mut page, &fetcher, expected, &progress, cancel)?;
                 if expected.locales.is_empty() {
-                    self.outln(&format!("== {} ({})", result.item_name, result.item_id));
+                    self.outln(&item_title(&result.item_name, &result.item_id));
                 }
                 for label in &result.saved {
                     self.outln(&tr!(
@@ -647,7 +647,7 @@ impl<'a> CliApp<'a> {
         };
         let result = services::submit(&mut page, &target.item_id, &mut confirm, &progress, cancel)?;
 
-        self.outln(&format!("== {} ({})", target.display_name, target.item_id));
+        self.outln(&item_title(&target.display_name, &target.item_id));
         self.outln(&tr!(
             "cli.result",
             message = result.message.as_deref().unwrap_or(trs!("cli.no_message"))
@@ -757,8 +757,7 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
             expected.images = build_expected_images(item, command.image_scope, codes)?;
         }
 
-        let has_work =
-            !expected.locales.is_empty() || expected.images.as_ref().is_some_and(|i| !i.is_empty());
+        let has_work = !expected.locales.is_empty() || expected.has_images();
         if !has_work {
             if explicit {
                 return Err(Error::Config(tr!(
@@ -794,9 +793,14 @@ fn item_header(item: &ExpectedItem, status: Option<&str>, locales: &[String]) ->
         tr!("cli.languages", locales = locales.join(", "))
     };
     format!(
-        "== {} ({}){status}{locales}",
-        item.display_name, item.item_id
+        "{}{status}{locales}",
+        item_title(&item.display_name, &item.item_id)
     )
+}
+
+/// アイテムの見出し行（`== 名前 (ID)`）。出力の書式を 1 か所に固定する
+fn item_title(name: &str, id: &str) -> String {
+    format!("== {name} ({id})")
 }
 
 /// 自動公開の表示

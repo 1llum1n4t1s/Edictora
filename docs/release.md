@@ -54,7 +54,7 @@ if ($LASTEXITCODE -eq 0) { pwsh -NoProfile -File scripts/release-local.ps1 -Skip
 
 1. 配布先の設定を確認（空に戻した場合、配信を伴う実行は何も作らず・何も送らずに止まる）
 2. `cargo metadata` で版と、bin `edictora` / `edictora-updater` を持つcrateを確認（どちらかが無ければ止まる）。`rustc` の host が `x86_64-pc-windows-msvc` であること、同梱文書の有無、vpk 1.2.161 を確認
-3. Sigilune のクラウドログイン、R2 bucket、zone、DNS、認証権限をプリフライト確認
+3. Sigilune のクラウドログイン、R2 bucket の取得、zone の検索、配信ドメインの DNS 解決をプリフライト確認（API トークンで bucket と zone の取得が通ることまでで、アップロードやキャッシュ purge の権限そのものは確かめない）
 4. `local-release/` を作り直し、`cargo build --release --locked` で両方のexeをビルドして `local-release/payload-win-x64/` に文書と一緒に集める
 5. `vpk pack` でパッケージを作る。署名は `--signTemplate`（`sigilune sign --replace {{file}}`）で1ファイルずつ行い、vpk の一時物は `local-release/temp/` に閉じる（`--signParallel 1` も付けるが、単一ファイル用テンプレートでは vpk が無視し、もともと1ファイルずつ呼ぶ）
 6. 固定名の Setup.exe と Portable.zip の版付きコピーを作り、`releases.win.json` が今回の版の full nupkg を指すことを確認

@@ -8,7 +8,7 @@
 //!   フィードの形の誤り・ダウンロードの検証失敗・Update.exe を起動できない）。終了コード 1
 //! - `Cancelled` … Ctrl+C による中断（終了コード 130）
 //!
-//! 手順側（`ListingService`）は「DashboardException 系か」で扱いを変えるため、
+//! 手順側（`services.rs`）は「DashboardException 系か」で扱いを変えるため、
 //! [`Error::is_dashboard`] で C# の `catch (DashboardException)` と同じ範囲を判定する。
 
 use std::fmt;

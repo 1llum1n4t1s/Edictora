@@ -682,11 +682,7 @@ fn pull_images_core(
     for code in images.localized_locales() {
         cancel.check()?;
         page.switch_locale(code, cancel)?;
-        for slot in images
-            .slots
-            .iter()
-            .filter(|s| s.locale.as_deref().is_some_and(|l| eq_ic(l, code)))
-        {
+        for slot in images.localized_slots(code) {
             slots.push(read_slot(
                 page,
                 fetcher,
@@ -898,11 +894,7 @@ fn push_images_core(
     for code in images.localized_locales() {
         cancel.check()?;
         page.switch_locale(code, cancel)?;
-        for slot in images
-            .slots
-            .iter()
-            .filter(|s| s.locale.as_deref().is_some_and(|l| eq_ic(l, code)))
-        {
+        for slot in images.localized_slots(code) {
             progress(&tr!(
                 "services.checking_images",
                 name = name,

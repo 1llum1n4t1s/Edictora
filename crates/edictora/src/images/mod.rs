@@ -108,15 +108,6 @@ impl ImageScope {
         }
     }
 
-    /// 引数での名前
-    pub fn name(self) -> &'static str {
-        match self {
-            ImageScope::All => "all",
-            ImageScope::Global => "global",
-            ImageScope::Localized => "localized",
-        }
-    }
-
     /// このスロットを含むか
     pub fn includes(self, slot: ImageSlot) -> bool {
         match self {
@@ -150,11 +141,6 @@ impl ExpectedSlot {
     pub fn label(&self) -> String {
         slot_label(self.slot, self.locale.as_deref())
     }
-
-    /// 正本のハッシュ列
-    pub fn hashes(&self) -> Vec<&str> {
-        self.files.iter().map(|f| f.pixel_sha256.as_str()).collect()
-    }
 }
 
 /// スロットの表示用の名前
@@ -172,23 +158,6 @@ pub struct ExpectedImages {
 }
 
 impl ExpectedImages {
-    /// 範囲とロケールで絞る。`locales` が空ならロケールでは絞らない。
-    /// ロケールの指定は、ローカライズ版スクリーンショットだけに効く（全言語向けはロケールを持たない）
-    pub fn filtered(&self, scope: ImageScope, locales: &[String]) -> ExpectedImages {
-        ExpectedImages {
-            slots: self
-                .slots
-                .iter()
-                .filter(|s| scope.includes(s.slot))
-                .filter(|s| match (&s.locale, locales.is_empty()) {
-                    (Some(code), false) => locales.iter().any(|l| crate::util::eq_ic(l, code)),
-                    _ => true,
-                })
-                .cloned()
-                .collect(),
-        }
-    }
-
     /// 対象のスロットが無いか
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
@@ -197,6 +166,16 @@ impl ExpectedImages {
     /// 全言語向けのスロット（処理順）
     pub fn global_slots(&self) -> Vec<&ExpectedSlot> {
         self.slots.iter().filter(|s| s.locale.is_none()).collect()
+    }
+
+    /// 指定ロケール（大文字小文字を区別しない）のローカライズ版スロット（処理順）。
+    /// 言語を切り替えたあと、その言語のスロットだけを取り出す手順が使う
+    pub fn localized_slots<'a>(&'a self, code: &'a str) -> impl Iterator<Item = &'a ExpectedSlot> {
+        self.slots.iter().filter(move |s| {
+            s.locale
+                .as_deref()
+                .is_some_and(|l| crate::util::eq_ic(l, code))
+        })
     }
 
     /// ローカライズ版のロケール（設定に書いた順・重複なし）
@@ -215,9 +194,6 @@ impl ExpectedImages {
 
 // ───────── 正本の検証 ─────────
 
-/// PNG のシグネチャ
-const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-
 /// PNG のヘッダーから読み取った情報
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PngInfo {
@@ -232,7 +208,7 @@ pub struct PngInfo {
 /// バイト列の先頭から PNG のヘッダー（IHDR）を読む。PNG でなければ None
 pub fn parse_png_header(bytes: &[u8]) -> Option<PngInfo> {
     // シグネチャ 8 + チャンク長 4 + "IHDR" 4 + 幅 4 + 高さ 4 + 深さ 1 + 色種別 1 + 圧縮 1 + フィルター 1 + インターレース 1
-    if bytes.len() < 29 || bytes[..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
+    if bytes.len() < 29 || bytes[..8] != png::SIGNATURE || &bytes[12..16] != b"IHDR" {
         return None;
     }
     if u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) != 13 {

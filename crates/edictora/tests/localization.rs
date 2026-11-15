@@ -228,27 +228,3 @@ fn 辞書に無いキーは英語_英語にも無ければキーそのもの() {
         );
     }
 }
-
-#[test]
-fn 言語タグの照合は仕様どおり() {
-    for (value, expected) in [
-        ("zh-Hans", Language::ChineseSimplified),
-        ("zh-CN", Language::ChineseSimplified),
-        ("zh-SG", Language::ChineseSimplified),
-        ("zh-Hant", Language::ChineseTraditional),
-        ("zh-TW", Language::ChineseTraditional),
-        ("zh-HK", Language::ChineseTraditional),
-        ("zh-MO", Language::ChineseTraditional),
-        ("pt", Language::PortugueseBrazil),
-        ("pt-PT", Language::PortugueseBrazil),
-        ("pt-BR", Language::PortugueseBrazil),
-        ("ja-JP", Language::Japanese),
-        ("en-GB", Language::English),
-        ("ko-KR", Language::Korean),
-        ("es-419", Language::Spanish),
-        ("fr-CA", Language::French),
-        ("de-CH", Language::German),
-    ] {
-        assert_eq!(i18n::parse(value), Some(expected), "{value}");
-    }
-}

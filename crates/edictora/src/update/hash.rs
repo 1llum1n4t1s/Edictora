@@ -39,7 +39,8 @@ pub fn file_digests(path: &Path) -> std::io::Result<Digests> {
     digests_of_reader(&mut file)
 }
 
-/// バイト列の両方のハッシュを計算する（テスト・偽サーバー用）
+/// バイト列の両方のハッシュを計算する（テスト・偽サーバー用。
+/// 本体でも `images/png.rs` が画像の画素ダイジェストの計算に使う）
 pub fn bytes_digests(bytes: &[u8]) -> std::io::Result<Digests> {
     digests_of_reader(&mut &bytes[..])
 }

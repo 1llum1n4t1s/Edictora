@@ -266,11 +266,6 @@ pub fn fill(template: &str, values: &[(&str, String)]) -> String {
     out
 }
 
-/// 指定した言語でキーの文言を返し、プレースホルダーを置き換える
-pub fn tr_with_in(language: Language, key: &'static str, values: &[(&str, String)]) -> String {
-    fill(tr_in(language, key), values)
-}
-
 /// 現在の表示言語でキーの文言を返し、プレースホルダーを置き換える
 pub fn tr_with(key: &'static str, values: &[(&str, String)]) -> String {
     fill(tr(key), values)
@@ -357,15 +352,19 @@ mod tests {
             ("ko", Language::Korean),
             ("ko_KR.UTF-8", Language::Korean),
             ("Korean_Korea.949", Language::Korean),
+            ("ko-KR", Language::Korean),
             ("es", Language::Spanish),
+            ("es-419", Language::Spanish),
             ("es-MX", Language::Spanish),
             ("es_ES@euro", Language::Spanish),
             ("fr_FR@euro", Language::French),
             ("fr-CA", Language::French),
             ("de_DE", Language::German),
             ("de-AT", Language::German),
+            ("de-CH", Language::German),
             ("pt", Language::PortugueseBrazil),
             ("pt-BR", Language::PortugueseBrazil),
+            ("pt-PT", Language::PortugueseBrazil),
             ("pt_PT.UTF-8", Language::PortugueseBrazil),
             ("Portuguese_Brazil.1252", Language::PortugueseBrazil),
         ] {
@@ -407,8 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_keys_return_the_key_and_fill_replaces_names() {
-        assert_eq!(tr_in(Language::French, "no.such.key"), "no.such.key");
+    fn fill_replaces_names() {
         assert_eq!(
             fill(
                 "a {x} b {x} {y} {z}",

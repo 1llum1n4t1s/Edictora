@@ -58,7 +58,7 @@ impl ListingField {
         }
     }
 
-    /// C# の enum 名（ログ・テストの表記用）
+    /// C# の enum 名（ログ・テストの表記用。MCP の `edictora_list_items` の本文にある欄名にも使う）
     pub fn name(self) -> &'static str {
         match self {
             ListingField::Description => "Description",
@@ -116,6 +116,11 @@ pub struct ExpectedItem {
 }
 
 impl ExpectedItem {
+    /// 掲載画像の対象スロットが 1 つ以上あるか
+    pub fn has_images(&self) -> bool {
+        self.images.as_ref().is_some_and(|i| !i.is_empty())
+    }
+
     /// ロケールで絞り込む（空なら全ロケール）。未設定のロケールを指定したら `Config` エラー
     pub fn filter_locales(&self, codes: &[String]) -> Result<ExpectedItem> {
         if codes.is_empty() {

@@ -128,8 +128,9 @@ fn tool(
 }
 
 /// 公開するツールの一覧（`tools/list` の結果）。
-/// 説明は表示言語に合わせる。どちらの言語でも検索で見つかる語（Chrome Web Store・store listing・description、
-/// 日本語では掲載情報・説明文も）を入れる。ツール名・引数名・スキーマは言語によらず同じ
+/// 説明は表示言語によらず英語に固定する（ASCII だけ。AI が読む文言は英語に統一する方針）。
+/// 検索で見つかる語（Chrome Web Store・store listing・description）を入れる。
+/// ツール名・引数名・スキーマも言語によらず同じ
 pub fn tool_definitions() -> Vec<Value> {
     let mut push_props = target_properties();
     push_props.insert(

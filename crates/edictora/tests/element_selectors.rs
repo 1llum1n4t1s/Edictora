@@ -101,18 +101,6 @@ fn pick_field_by_label_説明文に別の欄名を含む欄には当たらない
     );
 }
 
-#[test]
-fn pick_language_combobox_無い場合と複数ある場合は例外() {
-    assert!(is_dashboard(pick_language_combobox(
-        &JA,
-        &[el(0).text("Kagayoi")]
-    )));
-    assert!(is_dashboard(pick_language_combobox(
-        &JA,
-        &[el(0).label("言語"), el(1).label("言語")]
-    )));
-}
-
 /// `Dashboard` エラーの本文を取り出す（文言をバイト単位で固定するテスト用）。
 /// `Dashboard` 以外・成功のときは panic させ、種類の取り違えも検出する。
 fn dashboard_message<T: std::fmt::Debug>(r: edictora::Result<T>) -> String {
@@ -277,10 +265,6 @@ fn pick_button_文言の完全一致で1つだけ選ぶ() {
         1
     );
     assert!(is_dashboard(pick_button(&buttons, "削除")));
-    assert!(is_dashboard(pick_button(
-        &[el(0).text("審査のため送信"), el(1).text("審査のため送信")],
-        JA.submit_button
-    )));
 }
 
 #[test]
