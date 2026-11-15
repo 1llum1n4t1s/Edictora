@@ -75,8 +75,11 @@ fn find_root(exe: &Path) -> Option<PathBuf> {
 pub fn locate_from_exe(exe: &Path) -> Result<Installation, LocateError> {
     let root = find_root(exe).ok_or_else(|| {
         LocateError::NotInstalled(
-            "Velopack でインストールされた場所から起動されていません（Update.exe が見つかりません）"
-                .to_string(),
+            crate::trs!(
+                "Velopack でインストールされた場所から起動されていません（Update.exe が見つかりません）",
+                "Not started from a Velopack installation (Update.exe was not found)"
+            )
+            .to_string(),
         )
     })?;
     locate_from_root(&root)
@@ -86,20 +89,23 @@ pub fn locate_from_exe(exe: &Path) -> Result<Installation, LocateError> {
 pub fn locate_from_root(root: &Path) -> Result<Installation, LocateError> {
     let (update_exe, packages_dir, manifest_path, current_dir) = layout(root);
     if !update_exe.exists() {
-        return Err(LocateError::NotInstalled(format!(
+        return Err(LocateError::NotInstalled(crate::tr!(
             "Update.exe がありません（{}）",
+            "Update.exe is missing ({})",
             update_exe.display()
         )));
     }
     if !manifest_path.exists() {
-        return Err(LocateError::NotInstalled(format!(
+        return Err(LocateError::NotInstalled(crate::tr!(
             "マニフェストがありません（{}）",
+            "The manifest is missing ({})",
             manifest_path.display()
         )));
     }
     let text = std::fs::read_to_string(&manifest_path).map_err(|e| {
-        LocateError::InvalidManifest(format!(
+        LocateError::InvalidManifest(crate::tr!(
             "マニフェストを読めません（{}）: {e}",
+            "Cannot read the manifest ({}): {e}",
             manifest_path.display()
         ))
     })?;
@@ -116,7 +122,10 @@ pub fn locate_from_root(root: &Path) -> Result<Installation, LocateError> {
 /// 自分自身（実行中の exe）からインストール先を決める
 pub fn locate_current() -> Result<Installation, LocateError> {
     let exe = std::env::current_exe().map_err(|e| {
-        LocateError::NotInstalled(format!("実行中の exe の場所を取得できません: {e}"))
+        LocateError::NotInstalled(crate::tr!(
+            "実行中の exe の場所を取得できません: {e}",
+            "Cannot determine the location of the running exe: {e}"
+        ))
     })?;
     locate_from_exe(&exe)
 }

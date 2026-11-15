@@ -8,6 +8,7 @@ use crate::config::section::extract_source;
 use crate::config::{ItemConfig, normalize_locale_code};
 use crate::error::{Error, Result};
 use crate::util::{eq_ic, format_n0, utf16_len};
+use crate::{tr, trs};
 
 /// Edictora が読み書きする掲載情報の欄。
 ///
@@ -35,13 +36,14 @@ impl ListingField {
         ListingField::SupportUrl,
     ];
 
-    /// 画面・CLI に出す日本語名
+    /// 画面・CLI に出す欄の名前（表示言語に合わせる。文中に埋め込めるよう名詞句にする）。
+    /// ダッシュボードの要素を探す文言ではない（そちらは `dashboard::text`）
     pub fn display_name(self) -> &'static str {
         match self {
-            ListingField::Description => "説明",
-            ListingField::OfficialUrl => "公式 URL",
-            ListingField::HomepageUrl => "ホームページ URL",
-            ListingField::SupportUrl => "サポート URL",
+            ListingField::Description => trs!("説明", "Description"),
+            ListingField::OfficialUrl => trs!("公式 URL", "Official URL"),
+            ListingField::HomepageUrl => trs!("ホームページ URL", "Homepage URL"),
+            ListingField::SupportUrl => trs!("サポート URL", "Support URL"),
         }
     }
 
@@ -124,9 +126,12 @@ impl ExpectedItem {
                 .iter()
                 .find(|l| eq_ic(&l.code, &normalized))
                 .ok_or_else(|| {
-                    Error::Config(format!(
+                    Error::Config(tr!(
                         "{} ({}) の設定にロケール {} がありません",
-                        self.display_name, self.item_id, code
+                        "{} ({}) has no locale {} in the config file",
+                        self.display_name,
+                        self.item_id,
+                        code
                     ))
                 })?;
             if !selected.contains(found) {
@@ -149,8 +154,9 @@ pub fn build_expected(item: &ItemConfig) -> Result<ExpectedItem> {
             let text = extract_source(description)?;
             let len = utf16_len(&text);
             if len > DESCRIPTION_MAX_LENGTH {
-                return Err(Error::Config(format!(
+                return Err(Error::Config(tr!(
                     "{} ({}) [{}] の説明が {} 文字あり、上限 {} 文字を超えています",
+                    "{} ({}) [{}] description is {} characters, over the limit of {}",
                     item.display_name,
                     item.item_id,
                     locale.code,
@@ -239,13 +245,13 @@ pub enum ComparisonStatus {
 }
 
 impl ComparisonStatus {
-    /// 画面・CLI に出す日本語名
+    /// 画面・CLI に出す状態の名前（表示言語に合わせる）
     pub fn display_name(self) -> &'static str {
         match self {
-            ComparisonStatus::NotFetched => "未取得",
-            ComparisonStatus::Match => "一致",
-            ComparisonStatus::Different => "差分あり",
-            ComparisonStatus::Error => "エラー",
+            ComparisonStatus::NotFetched => trs!("未取得", "not fetched"),
+            ComparisonStatus::Match => trs!("一致", "match"),
+            ComparisonStatus::Different => trs!("差分あり", "different"),
+            ComparisonStatus::Error => trs!("エラー", "error"),
         }
     }
 }
@@ -339,8 +345,9 @@ pub fn compare(expected: &ExpectedItem, snapshot: Option<&ItemSnapshot>) -> Vec<
                     .iter()
                     .any(|c| eq_ic(c, &locale.code)))
             .then(|| {
-                format!(
+                tr!(
                     "ダッシュボードにロケール {} がありません（ある言語: {}）",
+                    "Locale {} is not on the dashboard (available: {})",
                     locale.code,
                     snapshot.available_locales.join(", ")
                 )

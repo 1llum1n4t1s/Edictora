@@ -19,6 +19,8 @@ use edictora::update::lock::{LockFile, is_held_by_another};
 use edictora::update::source::SOURCE_URL_ENV;
 
 fn main() {
+    // 表示言語を最初に決める（フック・引数の誤りより前。失敗しない。EDICTORA_LANG → OS の表示言語）
+    edictora::i18n::init(edictora::i18n::detect());
     let args: Vec<String> = std::env::args().skip(1).collect();
     let paths = AppPaths::from_environment();
 
@@ -45,7 +47,11 @@ fn main() {
         );
         logging::shutdown();
         eprintln!(
-            "Edictora をインストールしました。コマンドプロンプトで edictora --help を実行すると使い方を表示します。"
+            "{}",
+            edictora::trs!(
+                "Edictora をインストールしました。コマンドプロンプトで edictora --help を実行すると使い方を表示します。",
+                "Edictora is installed. Run edictora --help in a command prompt to see how to use it."
+            )
         );
         std::process::exit(0);
     }
@@ -69,9 +75,18 @@ fn main() {
         let _running = match LockFile::try_acquire_shared(&paths.running_lock_path()) {
             Ok(lock) => Some(lock),
             Err(e) if is_held_by_another(&e) => {
-                let message = "edictora の更新を適用している最中のため、MCP サーバーを起動しません。少し待ってからクライアントでサーバーを起動し直してください。";
-                log(message, LogLevel::Warning);
-                eprintln!("エラー: {message}");
+                // ログは作者の調査用に日本語のまま、標準エラーは表示言語に合わせる
+                log(
+                    "edictora の更新を適用している最中のため、MCP サーバーを起動しません。少し待ってからクライアントでサーバーを起動し直してください。",
+                    LogLevel::Warning,
+                );
+                eprintln!(
+                    "{}",
+                    edictora::trs!(
+                        "エラー: edictora の更新を適用している最中のため、MCP サーバーを起動しません。少し待ってからクライアントでサーバーを起動し直してください。",
+                        "Error: an edictora update is being applied, so the MCP server will not start. Wait a moment, then restart the server from your client."
+                    )
+                );
                 logging::shutdown();
                 std::process::exit(1);
             }

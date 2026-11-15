@@ -49,7 +49,7 @@
       return parts.join(`
 `);
     };
-    const allDialogs = () => [...document.querySelectorAll("[role=dialog], [role=alertdialog]")].filter((d) => visible(d) && text(d) && !text(d).includes(GUIDE));
+    const allDialogs = () => [...document.querySelectorAll("[role=dialog], [role=alertdialog]")].filter((d) => visible(d) && text(d) && !(GUIDE !== null && text(d).includes(GUIDE)));
     const inDialog = (el) => !!el.closest("[role=dialog], [role=alertdialog]");
     const sources = {
       combobox: () => [...document.querySelectorAll("[role=combobox]")].filter(visible),
@@ -92,7 +92,7 @@
     const get = (kind, i) => {
       const el = (store[kind] || [])[i];
       if (!el || !el.isConnected)
-        throw new Error("要素が画面から消えました: " + kind);
+        throw new Error("EDICTORA_ELEMENT_GONE:" + kind);
       return el;
     };
     return {
@@ -114,7 +114,7 @@
         const ok = !!hit && (hit === el || el.contains(hit));
         const describe = (n) => {
           if (!n)
-            return "（要素なし: 中心が画面の外）";
+            return "__EDICTORA_OFFSCREEN__";
           const role = n.getAttribute("role");
           const kind = role ? `${n.tagName.toLowerCase()}[role=${role}]` : n.tagName.toLowerCase();
           const words = (n.getAttribute("aria-label") || text(n)).replace(/\s+/g, " ").trim().slice(0, 40);

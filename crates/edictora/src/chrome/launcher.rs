@@ -147,8 +147,9 @@ pub fn launch_or_attach(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| {
-            Error::Io(format!(
+            Error::Io(crate::tr!(
                 "Chrome の起動に失敗しました: {}（{e}）",
+                "Failed to start Chrome: {} ({e})",
                 options.chrome_path.display()
             ))
         })?;
@@ -305,8 +306,11 @@ fn wait_for_devtools(
         cancel.check()?;
         if matches!(process.try_wait(), Ok(Some(_))) {
             return Err(Error::Io(
-                "Chrome が起動直後に終了しました。同じプロファイルの Chrome がデバッグポートなしで開いている可能性があります。そのウィンドウを閉じてから再実行してください。"
-                    .to_string(),
+                crate::trs!(
+                    "Chrome が起動直後に終了しました。同じプロファイルの Chrome がデバッグポートなしで開いている可能性があります。そのウィンドウを閉じてから再実行してください。",
+                    "Chrome exited right after starting. A Chrome using the same profile may already be open without a debugging port. Close that window and run the command again."
+                )
+                .to_string(),
             ));
         }
         let fresh = std::fs::metadata(port_file)
@@ -321,7 +325,11 @@ fn wait_for_devtools(
         cancel.sleep(Duration::from_millis(250))?;
     }
     Err(Error::Timeout(
-        "Chrome の DevTools が 30 秒以内に応答しませんでした（Chrome の起動失敗）".to_string(),
+        crate::trs!(
+            "Chrome の DevTools が 30 秒以内に応答しませんでした（Chrome の起動失敗）",
+            "Chrome DevTools did not respond within 30 seconds (Chrome failed to start)"
+        )
+        .to_string(),
     ))
 }
 

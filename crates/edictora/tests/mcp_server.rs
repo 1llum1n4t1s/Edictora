@@ -395,3 +395,83 @@ fn is_mcp_command_mcpだけを受け付ける() {
     assert!(!mcp::is_mcp_command::<&str>(&[]));
     assert!(!mcp::is_mcp_command(&["diff"]));
 }
+
+/// 本物の exe を `mcp` で起動し、表示言語を固定してメッセージを送る（入力を閉じると受け付け済みを返して終わる）。
+/// テスト内で i18n::init を呼ぶとこのテストバイナリ全体の言語が変わるため、英語は exe の起動で確かめる
+fn exchange_exe(dir_name: &str, lang: &str, messages: &[Value]) -> Vec<Value> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let dir = work_dir(dir_name);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_edictora"))
+        .arg("mcp")
+        .env(edictora::i18n::LANG_ENV, lang)
+        .env(edictora::app_paths::LOCAL_ROOT_ENV, dir.join("local"))
+        .env(edictora::app_paths::ROAMING_ROOT_ENV, dir.join("roaming"))
+        .env_remove("VELOPACK_FIRSTRUN")
+        .env_remove("VELOPACK_RESTART")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("edictora mcp を起動できません");
+    {
+        let mut stdin = child.stdin.take().expect("標準入力");
+        for m in messages {
+            writeln!(stdin, "{m}").expect("書き込み");
+        }
+        // drop で入力を閉じる（クライアントの通常の止め方）
+    }
+    let output = child.wait_with_output().expect("終了の待機");
+    assert_eq!(output.status.code(), Some(0));
+    String::from_utf8(output.stdout)
+        .expect("UTF-8")
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|_| panic!("JSON でない行: {l}")))
+        .collect()
+}
+
+#[test]
+fn exe_英語表示でも説明に検索で見つかる語を含める() {
+    let replies = exchange_exe(
+        "mcp-exe-en",
+        "en",
+        &[
+            request(
+                1,
+                "initialize",
+                json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "t", "version": "0" } }),
+            ),
+            request(2, "tools/list", json!({})),
+        ],
+    );
+    let instructions = by_id(&replies, 1)["result"]["instructions"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(instructions.contains("Chrome Web Store"), "{instructions}");
+    assert!(!instructions.contains("掲載情報"), "{instructions}");
+
+    let tools = by_id(&replies, 2)["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(tools.len(), 5);
+    for t in &tools {
+        let d = t["description"].as_str().unwrap();
+        assert!(d.contains("Chrome Web Store"), "{}", t["name"]);
+        assert!(d.contains("store listing"), "{}", t["name"]);
+        assert!(d.contains("description"), "{}", t["name"]);
+        // 英語表示では日本語を混ぜない
+        assert!(d.is_ascii(), "{}: {d}", t["name"]);
+        // スキーマは言語によらず同じ
+        assert_eq!(t["inputSchema"]["additionalProperties"], false);
+    }
+}
+
+#[test]
+fn exe_日本語表示の説明はライブラリと同じ() {
+    // CI（英語の OS）でも EDICTORA_LANG=ja なら日本語の説明を返す
+    let replies = exchange_exe("mcp-exe-ja", "ja", &[request(1, "tools/list", json!({}))]);
+    let tools = by_id(&replies, 1)["result"]["tools"].clone();
+    assert_eq!(tools, Value::Array(tool_definitions()));
+}

@@ -105,8 +105,9 @@ mod sys {
         if status >= 0 {
             Ok(())
         } else {
-            Err(std::io::Error::other(format!(
+            Err(std::io::Error::other(crate::tr!(
                 "ハッシュの計算に失敗しました（{api}、NTSTATUS 0x{:08X}）",
+                "Hash computation failed ({api}, NTSTATUS 0x{:08X})",
                 status as u32
             )))
         }
@@ -201,9 +202,10 @@ mod sys {
 
     impl Hasher {
         pub fn new(_kind: Algorithm) -> std::io::Result<Hasher> {
-            Err(std::io::Error::other(
+            Err(std::io::Error::other(crate::trs!(
                 "ハッシュの計算は Windows でだけ使えます",
-            ))
+                "Hash computation is available only on Windows"
+            )))
         }
         pub fn update(&mut self, _data: &[u8]) -> std::io::Result<()> {
             Ok(())

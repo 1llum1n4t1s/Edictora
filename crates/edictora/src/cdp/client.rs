@@ -69,14 +69,24 @@ pub struct CdpClient {
     disposed: AtomicBool,
 }
 
+/// 接続が閉じられたときのエラー（応答待ち・送信・イベント待ちで共通）
+fn connection_closed() -> Error {
+    Error::Cdp(crate::trs!("CDP 接続が閉じられました", "The CDP connection was closed").to_string())
+}
+
 impl CdpClient {
     /// ブラウザレベルの WebSocket エンドポイント（`ws://127.0.0.1:<port>/devtools/browser/<id>`）に接続する
     pub fn connect(ws_url: &str) -> Result<Arc<CdpClient>> {
-        let parsed = parse_absolute_url(ws_url)
-            .ok_or_else(|| Error::Cdp(format!("WebSocket の URL が正しくありません: {ws_url}")))?;
+        let parsed = parse_absolute_url(ws_url).ok_or_else(|| {
+            Error::Cdp(crate::tr!(
+                "WebSocket の URL が正しくありません: {ws_url}",
+                "Invalid WebSocket URL: {ws_url}"
+            ))
+        })?;
         if parsed.scheme != "ws" {
-            return Err(Error::Cdp(format!(
-                "ws:// 以外の接続先には接続しません: {ws_url}"
+            return Err(Error::Cdp(crate::tr!(
+                "ws:// 以外の接続先には接続しません: {ws_url}",
+                "Refusing to connect to anything other than ws://: {ws_url}"
             )));
         }
         let authority = ws_url
@@ -87,16 +97,34 @@ impl CdpClient {
             .to_string();
         let addr = authority
             .to_socket_addrs()
-            .map_err(|e| Error::Cdp(format!("接続先を解決できません: {e}")))?
+            .map_err(|e| {
+                Error::Cdp(crate::tr!(
+                    "接続先を解決できません: {e}",
+                    "Cannot resolve the destination: {e}"
+                ))
+            })?
             .next()
-            .ok_or_else(|| Error::Cdp("接続先を解決できません".to_string()))?;
-        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
-            .map_err(|e| Error::Cdp(format!("CDP に接続できません: {e}")))?;
+            .ok_or_else(|| {
+                Error::Cdp(
+                    crate::trs!("接続先を解決できません", "Cannot resolve the destination")
+                        .to_string(),
+                )
+            })?;
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| {
+            Error::Cdp(crate::tr!(
+                "CDP に接続できません: {e}",
+                "Cannot connect to CDP: {e}"
+            ))
+        })?;
         let _ = stream.set_nodelay(true);
         // ハンドシェイクは同期で済ませ、その後で非ブロッキングに切り替える
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-        let (ws, _response) = tungstenite::client(ws_url, stream)
-            .map_err(|e| Error::Cdp(format!("CDP の WebSocket 接続に失敗しました: {e}")))?;
+        let (ws, _response) = tungstenite::client(ws_url, stream).map_err(|e| {
+            Error::Cdp(crate::tr!(
+                "CDP の WebSocket 接続に失敗しました: {e}",
+                "The CDP WebSocket connection failed: {e}"
+            ))
+        })?;
         ws.get_ref().set_read_timeout(None).map_err(Error::from)?;
         ws.get_ref().set_nonblocking(true).map_err(Error::from)?;
 
@@ -148,7 +176,7 @@ impl CdpClient {
         cancel: Option<&CancelToken>,
     ) -> Result<Value> {
         if !self.is_connected() {
-            return Err(Error::Cdp("CDP 接続が閉じられました".to_string()));
+            return Err(connection_closed());
         }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let (tx, rx) = mpsc::channel();
@@ -171,14 +199,15 @@ impl CdpClient {
             .unwrap_or(false);
         let result = if sent {
             wait_channel(&rx, timeout, cancel).unwrap_or_else(|e| match e {
-                WaitError::Timeout => Err(Error::Timeout(format!(
-                    "CDP コマンド {method} の応答待ちがタイムアウトまたはキャンセルされました"
+                WaitError::Timeout => Err(Error::Timeout(crate::tr!(
+                    "CDP コマンド {method} の応答待ちがタイムアウトまたはキャンセルされました",
+                    "Waiting for the response to CDP command {method} timed out or was cancelled"
                 ))),
                 WaitError::Cancelled => Err(Error::Cancelled),
-                WaitError::Closed => Err(Error::Cdp("CDP 接続が閉じられました".to_string())),
+                WaitError::Closed => Err(connection_closed()),
             })
         } else {
-            Err(Error::Cdp("CDP 接続が閉じられました".to_string()))
+            Err(connection_closed())
         };
         self.shared.pending.lock().expect("pending").remove(&id);
         result
@@ -250,7 +279,7 @@ impl Subscription {
             Ok(e) => Ok(Some(e)),
             Err(WaitError::Timeout) => Ok(None),
             Err(WaitError::Cancelled) => Err(Error::Cancelled),
-            Err(WaitError::Closed) => Err(Error::Cdp("CDP 接続が閉じられました".to_string())),
+            Err(WaitError::Closed) => Err(connection_closed()),
         }
     }
 }
@@ -412,7 +441,7 @@ fn io_loop(mut ws: WebSocket<TcpStream>, outgoing: Receiver<Outgoing>, shared: A
         .map(|mut p| p.drain().collect())
         .unwrap_or_default();
     for (_, tx) in pending {
-        let _ = tx.send(Err(Error::Cdp("CDP 接続が閉じられました".to_string())));
+        let _ = tx.send(Err(connection_closed()));
     }
     if let Ok(mut subs) = shared.subscribers.lock() {
         subs.clear();

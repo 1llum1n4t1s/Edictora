@@ -52,7 +52,11 @@ use source::{UpdateSource, is_safe_channel};
 use version::Version;
 
 /// エラー文に出す相手の名前
-pub(crate) const SERVICE: &str = "更新の配信元";
+///
+/// 定数ではなく関数にしているのは、表示言語が起動後に決まるため
+pub(crate) fn service() -> &'static str {
+    crate::trs!("更新の配信元", "the update server")
+}
 
 /// フィードの操作ごとのタイムアウト
 const FEED_TIMEOUT: Duration = Duration::from_secs(30);
@@ -68,8 +72,10 @@ pub(crate) fn update_err(message: impl Into<String>) -> Error {
 pub(crate) fn http_error(e: HttpError, total: Duration) -> Error {
     match e {
         HttpError::Cancelled => Error::Cancelled,
-        HttpError::TimedOut => update_err(format!(
-            "{SERVICE} の応答を {} 秒待ちましたが返りませんでした（タイムアウト）",
+        HttpError::TimedOut => update_err(crate::tr!(
+            "{} の応答を {} 秒待ちましたが返りませんでした（タイムアウト）",
+            "No response from {} within {} seconds (timed out)",
+            service(),
             total.as_secs()
         )),
         HttpError::Failed(m) => update_err(m),
@@ -101,17 +107,29 @@ impl UpdateOutcome {
     pub fn message(&self) -> String {
         match self {
             UpdateOutcome::RemoteIsEmpty { current } => {
-                format!("配信元に更新がありません（現在 {current}）。")
+                crate::tr!(
+                    "配信元に更新がありません（現在 {current}）。",
+                    "The update server has no release (current: {current})."
+                )
             }
             UpdateOutcome::UpToDate { current, latest } => {
-                format!("最新です（現在 {current}、配信元の最新 {latest}）。")
+                crate::tr!(
+                    "最新です（現在 {current}、配信元の最新 {latest}）。",
+                    "Already up to date (current: {current}, latest on the server: {latest})."
+                )
             }
-            UpdateOutcome::ApplyStarted { from, to, .. } => format!(
-                "{from} → {to} の更新をダウンロードしました。このプロセスの終了後に Update.exe が差し替えます。"
+            UpdateOutcome::ApplyStarted { from, to, .. } => crate::tr!(
+                "{from} → {to} の更新をダウンロードしました。このプロセスの終了後に Update.exe が差し替えます。",
+                "Downloaded the update {from} → {to}. Update.exe will replace the files after this process exits."
             ),
-            UpdateOutcome::Busy => "別の更新処理が動いているため、何もしませんでした。".to_string(),
-            UpdateOutcome::AppInUse { from, to } => format!(
-                "{from} → {to} の更新はダウンロード済みですが、実行中の edictora（login / pull / diff / push / submit、または AI クライアントが起動した MCP サーバーの edictora mcp）があるため適用を後に回しました。終わってから（MCP はクライアントを閉じてから）edictora update を実行するか、次のログオンを待ってください。"
+            UpdateOutcome::Busy => crate::trs!(
+                "別の更新処理が動いているため、何もしませんでした。",
+                "Another update is already running, so nothing was done."
+            )
+            .to_string(),
+            UpdateOutcome::AppInUse { from, to } => crate::tr!(
+                "{from} → {to} の更新はダウンロード済みですが、実行中の edictora（login / pull / diff / push / submit、または AI クライアントが起動した MCP サーバーの edictora mcp）があるため適用を後に回しました。終わってから（MCP はクライアントを閉じてから）edictora update を実行するか、次のログオンを待ってください。",
+                "The update {from} → {to} has been downloaded, but applying it was postponed because edictora is running (login / pull / diff / push / submit, or the MCP server `edictora mcp` started by an AI client). Run `edictora update` after it finishes (for MCP, after closing the client), or wait for the next logon."
             ),
         }
     }
@@ -125,8 +143,9 @@ pub fn fetch_feed(
 ) -> Result<Vec<FeedAsset>> {
     let manifest = &installation.manifest;
     if !is_safe_channel(&manifest.channel) {
-        return Err(update_err(format!(
+        return Err(update_err(crate::tr!(
             "マニフェストのチャンネル名が正しくありません: {}",
+            "Invalid channel name in the manifest: {}",
             manifest.channel
         )));
     }
@@ -140,7 +159,7 @@ pub fn fetch_feed(
             headers: vec!["Accept: application/json".to_string()],
             timeout: FEED_TIMEOUT,
             total_timeout: FEED_TIMEOUT + Duration::from_secs(2),
-            service: SERVICE,
+            service: service(),
         },
         ResponseSink::Memory {
             max_bytes: MAX_FEED_BYTES,
@@ -149,14 +168,19 @@ pub fn fetch_feed(
     )
     .map_err(|e| http_error(e, FEED_TIMEOUT + Duration::from_secs(2)))?;
     if response.status != 200 {
-        return Err(update_err(format!(
+        return Err(update_err(crate::tr!(
             "フィード（{}）を取得できませんでした（HTTP {}）",
+            "Could not fetch the feed ({}) (HTTP {})",
             source::feed_file_name(&manifest.channel),
             response.status
         )));
     }
-    let text = String::from_utf8(response.body)
-        .map_err(|_| update_err("フィードが UTF-8 ではありません"))?;
+    let text = String::from_utf8(response.body).map_err(|_| {
+        update_err(crate::trs!(
+            "フィードが UTF-8 ではありません",
+            "The feed is not valid UTF-8"
+        ))
+    })?;
     parse_feed(&text).map_err(update_err)
 }
 
@@ -182,16 +206,18 @@ pub fn run_update(
         // 書き込めないなど）は恒常的な失敗なので、Busy に紛らわせず理由つきで失敗にする
         Err(e) if lock::is_held_by_another(&e) => return Ok(UpdateOutcome::Busy),
         Err(e) => {
-            return Err(update_err(format!(
+            return Err(update_err(crate::tr!(
                 "更新用のロックファイルを開けません（{}）: {e}",
+                "Cannot open the update lock file ({}): {e}",
                 lock_path.display()
             )));
         }
     };
 
     let current = installation.manifest.version.clone();
-    progress(&format!(
+    progress(&crate::tr!(
         "更新を確認しています（現在 {current}、配信元 {}、チャンネル {}）",
+        "Checking for updates (current: {current}, server: {}, channel: {})",
         source.display_url(),
         installation.manifest.channel
     ));
@@ -203,7 +229,10 @@ pub fn run_update(
         }
         UpdateCheck::UpdateAvailable { asset, version } => (asset, version),
     };
-    progress(&format!("新しい版があります: {current} → {target}"));
+    progress(&crate::tr!(
+        "新しい版があります: {current} → {target}",
+        "A new version is available: {current} → {target}"
+    ));
 
     let package =
         download::ensure_package(&installation.packages_dir, source, &asset, progress, cancel)?;
@@ -219,8 +248,9 @@ pub fn run_update(
             });
         }
         Err(e) => {
-            return Err(update_err(format!(
+            return Err(update_err(crate::tr!(
                 "実行中の edictora を確かめるロックファイルを開けません（{}）: {e}",
+                "Cannot open the lock file that detects a running edictora ({}): {e}",
                 running_lock.display()
             )));
         }
@@ -261,11 +291,13 @@ pub fn run_installed_update(
 /// インストール先を決められなかったときの利用者向けのエラー
 pub fn not_installed_error(e: LocateError) -> Error {
     match e {
-        LocateError::NotInstalled(m) => update_err(format!(
-            "Velopack でインストールされた Edictora ではないため更新できません（Setup で入れたものだけが自動更新の対象です）: {m}"
+        LocateError::NotInstalled(m) => update_err(crate::tr!(
+            "Velopack でインストールされた Edictora ではないため更新できません（Setup で入れたものだけが自動更新の対象です）: {m}",
+            "Cannot update because this Edictora was not installed by Velopack (only the Setup installation is updated automatically): {m}"
         )),
-        LocateError::InvalidManifest(m) => {
-            update_err(format!("インストール先のマニフェストを読めません: {m}"))
-        }
+        LocateError::InvalidManifest(m) => update_err(crate::tr!(
+            "インストール先のマニフェストを読めません: {m}",
+            "Cannot read the manifest of the installation: {m}"
+        )),
     }
 }

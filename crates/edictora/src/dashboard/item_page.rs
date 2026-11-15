@@ -5,6 +5,8 @@
 //! - クリックは scrollIntoView → 矩形の中心へ実際のマウス入力（他要素に覆われていたら止める）
 //! - 書き換えはフォーカス → 全選択 → Input.insertText。DOM の value への直接代入はしない
 //! - 待ちは固定時間の sleep ではなく、条件を一定間隔で確かめる（上限時間つき）
+//! - 画面の表示言語（日本語 / 英語）は、編集画面を開く・読み込み直すたびに `<html lang>` から 1 回だけ判定し、
+//!   以降はその言語の文言セットだけで要素を探す（`text.rs`）。日本語・英語以外なら止める
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -15,7 +17,7 @@ use crate::cancel::CancelToken;
 use crate::cdp::CdpPage;
 use crate::dashboard::page_scripts::{self as scripts, kinds};
 use crate::dashboard::selectors::{self as sel, ElementInfo};
-use crate::dashboard::text::*;
+use crate::dashboard::text::{DashboardLang, DashboardText};
 use crate::dashboard::urls;
 use crate::dashboard::write_gate::ItemPageState;
 use crate::dashboard::{ListingPage, SubmitConfirm, SubmitDialogInfo, SubmitResult};
@@ -23,6 +25,7 @@ use crate::error::{Error, Result};
 use crate::listing::text_diff::first_difference_position;
 use crate::listing::{FieldValues, ListingField};
 use crate::logging::{LogLevel, log};
+use crate::tr;
 use crate::util::{LocalTime, diagnostics_file_name, eq_ic, utf16_len};
 
 /// 条件確認の間隔
@@ -34,6 +37,8 @@ pub struct DashboardItemPage<'a> {
     publisher_id: String,
     item_id: Option<String>,
     diagnostics_dir: PathBuf,
+    /// 今の画面の表示言語の文言セット（open_item / reload で判定する。判定前は None）
+    text: Option<&'static DashboardText>,
 }
 
 impl<'a> DashboardItemPage<'a> {
@@ -48,7 +53,47 @@ impl<'a> DashboardItemPage<'a> {
             publisher_id,
             item_id: None,
             diagnostics_dir,
+            text: None,
         }
+    }
+
+    /// 判定済みの文言セット（判定前に要素を探そうとしたらエラー。推測で日本語を使わない）
+    fn t(&self) -> Result<&'static DashboardText> {
+        self.text.ok_or_else(|| {
+            Error::Dashboard(tr!(
+                "ダッシュボードの表示言語をまだ判定していません（先に編集画面を開いてください）",
+                "The dashboard display language has not been determined yet (open the edit page first)"
+            ))
+        })
+    }
+
+    /// 画面の表示言語を `<html lang>` から判定し、文言セットを決める（ページごとに 1 回）。
+    ///
+    /// 導入部（`window.__edictora`）を含む式を評価する前に呼ぶ。導入部は最初の評価で作られ、
+    /// 案内通知の語はそのときの言語のもので固定されるため。
+    /// 読み込み直後は lang がまだ空のことがあるので、空でなくなるまで上限つきで待つ。
+    /// 空でない値が日本語・英語以外なら、待たずに止める（推測しない）。
+    fn detect_language(&mut self, cancel: &CancelToken) -> Result<()> {
+        self.text = None;
+        let mut last = String::new();
+        // 空のままなら、下の判定が日本語の文言セットにする（英語対応の前と同じ）。
+        // 日本語の経路で lang が無い場合の待ちを短くするため、上限は 5 秒にする
+        try_poll(
+            || {
+                let v = self.evaluate(scripts::DOCUMENT_LANG, cancel)?;
+                last = v.as_str().unwrap_or("").trim().to_string();
+                Ok((!last.is_empty()).then_some(()))
+            },
+            Duration::from_secs(5),
+            cancel,
+        )?;
+        let text = sel::dashboard_text_for_lang(Some(&last))?;
+        log(
+            &format!("ダッシュボードの表示言語: {last} → {:?}", text.lang),
+            LogLevel::Info,
+        );
+        self.text = Some(text);
+        Ok(())
     }
 
     fn item_label(&self) -> String {
@@ -57,16 +102,18 @@ impl<'a> DashboardItemPage<'a> {
 
     /// SPA なので load 後も中身が遅れて出る。言語コンボボックスと説明欄が揃うまで待つ
     fn wait_for_editor_ready(&self, cancel: &CancelToken) -> Result<()> {
-        let what = format!(
-            "アイテム {} の編集画面（言語の選択欄と説明欄）の表示",
-            self.item_label()
+        let t = self.t()?;
+        let item = self.item_label();
+        let what = tr!(
+            "アイテム {item} の編集画面（言語の選択欄と説明欄）の表示",
+            "the edit page of item {item} (language selector and description field) to appear"
         );
         poll(
             || {
                 let combos = self.collect(kinds::COMBOBOX, cancel)?;
                 let textareas = self.collect(kinds::TEXTAREA, cancel)?;
                 // 待ち条件なので緩い部分一致で足りる
-                let has_language = combos.iter().any(sel::mentions_language_label);
+                let has_language = combos.iter().any(|c| sel::mentions_language_label(t, c));
                 Ok((has_language && !textareas.is_empty()).then_some(()))
             },
             Duration::from_secs(45),
@@ -78,16 +125,17 @@ impl<'a> DashboardItemPage<'a> {
     /// 言語の一覧が開くまで待ち、表示中の選択肢を返す。
     /// パブリッシャー名の選択肢は常に表示されているので、「言語 – code」形式の選択肢が現れるまで待つ
     fn wait_for_options(&self, cancel: &CancelToken) -> Result<Vec<ElementInfo>> {
+        let t = self.t()?;
         poll(
             || {
                 let options = self.collect(kinds::OPTION, cancel)?;
                 let any = options
                     .iter()
-                    .any(|o| sel::parse_locale_option(Some(&o.text)).is_some());
+                    .any(|o| sel::parse_locale_option(t, Some(&o.text)).is_some());
                 Ok(any.then_some(options))
             },
             Duration::from_secs(10),
-            "言語の選択肢の表示",
+            &tr!("言語の選択肢の表示", "the language options to appear"),
             cancel,
         )
     }
@@ -95,7 +143,7 @@ impl<'a> DashboardItemPage<'a> {
     /// 言語欄の aria-expanded が "false" か（一覧が閉じているか）
     fn is_language_list_closed(&self, cancel: &CancelToken) -> Result<bool> {
         let combos = self.collect(kinds::COMBOBOX, cancel)?;
-        let combo = sel::pick_language_combobox(&combos)?;
+        let combo = sel::pick_language_combobox(self.t()?, &combos)?;
         Ok(combo.expanded.as_deref() == Some("false"))
     }
 
@@ -112,12 +160,13 @@ impl<'a> DashboardItemPage<'a> {
         let inputs = self.collect(kinds::TEXT_INPUT, cancel)?;
         Ok((
             kinds::TEXT_INPUT,
-            sel::pick_field_by_label(&inputs, field)?.clone(),
+            sel::pick_field_by_label(self.t()?, &inputs, field)?.clone(),
         ))
     }
 
     /// 要素を画面内へスクロールし、中心を実際のマウス入力でクリックする
     fn click(&self, kind: &str, index: i32, what: &str, cancel: &CancelToken) -> Result<()> {
+        let t = self.t()?;
         self.page.prepare_for_input(cancel)?;
 
         // スクロール後の矩形を読み直す。中心が別の要素に覆われていたら押さない。
@@ -127,12 +176,13 @@ impl<'a> DashboardItemPage<'a> {
         const ATTEMPTS: u32 = 8;
         let mut point = Value::Null;
         for attempt in 0..ATTEMPTS {
-            self.evaluate(&scripts::scroll_to(kind, index), cancel)?;
+            self.evaluate(&scripts::scroll_to(t, kind, index), cancel)?;
             cancel.sleep(Duration::from_millis(if attempt == 0 { 150 } else { 250 }))?;
-            point = self.evaluate(&scripts::point(kind, index), cancel)?;
+            point = self.evaluate(&scripts::point(t, kind, index), cancel)?;
             if !point.is_object() {
-                return Err(Error::Dashboard(format!(
-                    "{what}の位置を取得できませんでした"
+                return Err(Error::Dashboard(tr!(
+                    "{what}の位置を取得できませんでした",
+                    "Could not get the position of {what}"
                 )));
             }
             if point.get("hit").and_then(Value::as_bool) == Some(true) {
@@ -150,36 +200,37 @@ impl<'a> DashboardItemPage<'a> {
 
     fn collect(&self, kind: &str, cancel: &CancelToken) -> Result<Vec<ElementInfo>> {
         Ok(sel::parse_elements(
-            &self.evaluate(&scripts::collect(kind), cancel)?,
+            &self.evaluate(&scripts::collect(self.t()?, kind), cancel)?,
         ))
     }
 
     fn value(&self, kind: &str, index: i32, cancel: &CancelToken) -> Result<String> {
-        let v = self.evaluate(&scripts::value(kind, index), cancel)?;
+        let v = self.evaluate(&scripts::value(self.t()?, kind, index), cancel)?;
         Ok(v.as_str().unwrap_or("").to_string())
     }
 
     fn messages(&self, cancel: &CancelToken) -> Result<Vec<String>> {
         Ok(sel::parse_strings(
-            &self.evaluate(&scripts::messages(), cancel)?,
+            &self.evaluate(&scripts::messages(self.t()?), cancel)?,
         ))
     }
 
     fn dialogs(&self, cancel: &CancelToken) -> Result<Vec<String>> {
         Ok(sel::parse_strings(
-            &self.evaluate(&scripts::dialogs(), cancel)?,
+            &self.evaluate(&scripts::dialogs(self.t()?), cancel)?,
         ))
     }
 
     fn body_text(&self, cancel: &CancelToken) -> Result<String> {
-        let v = self.evaluate(&scripts::body_text(), cancel)?;
+        let v = self.evaluate(&scripts::body_text(self.t()?), cancel)?;
         Ok(v.as_str().unwrap_or("").to_string())
     }
 
-    /// ページ側の例外はダッシュボード操作の失敗として扱う
+    /// ページ側の例外はダッシュボード操作の失敗として扱う。
+    /// ページ内スクリプトが固定の印で投げた例外（要素が消えた）は、ここで利用者向けの文に直す
     fn evaluate(&self, expression: &str, cancel: &CancelToken) -> Result<Value> {
         self.page.evaluate(expression, cancel).map_err(|e| match e {
-            Error::JavaScript(m) => Error::Dashboard(m),
+            Error::JavaScript(m) => Error::Dashboard(sel::page_script_error_message(&m)),
             other => other,
         })
     }
@@ -192,8 +243,9 @@ impl ListingPage for DashboardItemPage<'_> {
         self.page
             .navigate(&urls::edit_url(&self.publisher_id, item_id), cancel)
             .map_err(|e| match e {
-                Error::Cdp(m) => Error::Dashboard(format!(
-                    "アイテム {item_id} の編集画面を開けませんでした: {m}"
+                Error::Cdp(m) => Error::Dashboard(tr!(
+                    "アイテム {item_id} の編集画面を開けませんでした: {m}",
+                    "Could not open the edit page of item {item_id}: {m}"
                 )),
                 other => other,
             })?;
@@ -202,13 +254,16 @@ impl ListingPage for DashboardItemPage<'_> {
         if urls::is_login_page(url.as_deref()) {
             return Err(Error::LoginRequired);
         }
+        // 新しいページなので表示言語を判定し直す（導入部を含む式より前に）
+        self.detect_language(cancel)?;
         self.wait_for_editor_ready(cancel)?;
 
         // 読み込み後に別画面（一覧など）へ移されていないか確認する。アイテム ID の誤りで起きる
         let url = self.page.get_url(cancel)?;
         if !urls::is_edit_page_of(url.as_deref(), item_id) {
-            return Err(Error::Dashboard(format!(
-                "アイテム {item_id} の編集画面を開けませんでした（別の画面へ移りました）。アイテム ID とパブリッシャーを確認してください"
+            return Err(Error::Dashboard(tr!(
+                "アイテム {item_id} の編集画面を開けませんでした（別の画面へ移りました）。アイテム ID とパブリッシャーを確認してください",
+                "Could not open the edit page of item {item_id} (the dashboard moved to another page). Check the item ID and the publisher"
             )));
         }
         Ok(())
@@ -217,39 +272,48 @@ impl ListingPage for DashboardItemPage<'_> {
     fn reload(&mut self, cancel: &CancelToken) -> Result<()> {
         self.page.prepare_for_input(cancel)?;
         self.page.reload(cancel).map_err(|e| match e {
-            Error::Cdp(m) => Error::Dashboard(format!("編集画面を読み込み直せませんでした: {m}")),
+            Error::Cdp(m) => Error::Dashboard(tr!(
+                "編集画面を読み込み直せませんでした: {m}",
+                "Could not reload the edit page: {m}"
+            )),
             other => other,
         })?;
+        // 読み込み直しで window は作り直されるので、表示言語も判定し直す
+        self.detect_language(cancel)?;
         self.wait_for_editor_ready(cancel)
     }
 
     fn get_state(&mut self, cancel: &CancelToken) -> Result<ItemPageState> {
         // CDP での収集はこの順（本文 → textarea → ボタン）のまま。判断は selectors の純粋関数で行う
-        let status = sel::parse_status(Some(&self.body_text(cancel)?));
+        let t = self.t()?;
+        let status = sel::parse_status(t, Some(&self.body_text(cancel)?));
         let textareas = self.collect(kinds::TEXTAREA, cancel)?;
         let buttons = self.collect(kinds::BUTTON, cancel)?;
-        Ok(sel::item_page_state(status, &textareas, &buttons))
+        Ok(sel::item_page_state(t, status, &textareas, &buttons))
     }
 
     fn get_locales(&mut self, cancel: &CancelToken) -> Result<Vec<String>> {
+        let t = self.t()?;
         self.page.prepare_for_input(cancel)?;
         let combos = self.collect(kinds::COMBOBOX, cancel)?;
-        let combo = sel::pick_language_combobox(&combos)?;
-        let current = sel::current_locale_code(combo);
+        let combo = sel::pick_language_combobox(t, &combos)?;
+        let current = sel::current_locale_code(t, combo);
         if current.is_none() {
             // 言語が 1 つだけのアイテム。選択欄はコードなしの言語名だけで、開くと既定の言語を選ぶ
             // 全言語の一覧になるので開かない（誤って既定の言語を変えないため）。表示中の言語名から決める
-            return match sel::single_locale_code(combo) {
+            return match sel::single_locale_code(t, combo) {
                 Some(code) => Ok(vec![code]),
-                None => Err(Error::Dashboard(
-                    "言語の選択欄の表示から言語を読み取れませんでした（言語が 1 つだけのアイテムで、対応していない言語名の可能性があります）".to_string(),
-                )),
+                None => Err(Error::Dashboard(tr!(
+                    "言語の選択欄の表示から言語を読み取れませんでした（言語が 1 つだけのアイテムで、対応していない言語名の可能性があります）",
+                    "Could not read the language from the language selector (the item may have a single language whose name is not supported)"
+                ))),
             };
         }
-        self.click(kinds::COMBOBOX, combo.index, "言語の選択欄", cancel)?;
+        let selector_name = tr!("言語の選択欄", "the language selector");
+        self.click(kinds::COMBOBOX, combo.index, &selector_name, cancel)?;
 
         let options = self.wait_for_options(cancel)?;
-        let codes = sel::locale_codes(&options);
+        let codes = sel::locale_codes(t, &options);
 
         // 一覧を閉じる。Escape で閉じなければ、今の言語の選択肢を押し直して閉じる（言語は変わらない）。
         // 開閉は言語欄の aria-expanded で判定する。選択肢の要素は閉じてもページに残り、
@@ -262,49 +326,58 @@ impl ListingPage for DashboardItemPage<'_> {
         )?;
         if !closed && let Some(current) = current {
             let again = self.collect(kinds::OPTION, cancel)?;
-            let option = sel::pick_locale_option(&again, &current)?;
-            self.click(kinds::OPTION, option.index, "言語の選択肢", cancel)?;
+            let option = sel::pick_locale_option(t, &again, &current)?;
+            self.click(
+                kinds::OPTION,
+                option.index,
+                &tr!("言語の選択肢", "the language option"),
+                cancel,
+            )?;
         }
         poll(
             || Ok(self.is_language_list_closed(cancel)?.then_some(())),
             Duration::from_secs(5),
-            "言語の選択肢を閉じる",
+            &tr!("言語の選択肢を閉じる", "the language options to close"),
             cancel,
         )?;
 
         if codes.is_empty() {
-            return Err(Error::Dashboard(
-                "言語の選択肢からロケールを読み取れませんでした".to_string(),
-            ));
+            return Err(Error::Dashboard(tr!(
+                "言語の選択肢からロケールを読み取れませんでした",
+                "Could not read any locale from the language options"
+            )));
         }
         Ok(codes)
     }
 
     fn switch_locale(&mut self, code: &str, cancel: &CancelToken) -> Result<()> {
+        let t = self.t()?;
         self.page.prepare_for_input(cancel)?;
         let combos = self.collect(kinds::COMBOBOX, cancel)?;
-        let combo = sel::pick_language_combobox(&combos)?;
-        if sel::current_locale_code(combo).is_some_and(|c| eq_ic(&c, code)) {
+        let combo = sel::pick_language_combobox(t, &combos)?;
+        if sel::current_locale_code(t, combo).is_some_and(|c| eq_ic(&c, code)) {
             return Ok(());
         }
         // 言語が 1 つだけのアイテムは切り替えない（選択欄を開くと既定の言語の一覧になるため触らない）
-        if let Some(single) = sel::single_locale_code(combo) {
+        if let Some(single) = sel::single_locale_code(t, combo) {
             return if eq_ic(&single, code) {
                 Ok(())
             } else {
-                Err(Error::Dashboard(format!(
-                    "このアイテムの言語は {single} だけで、{code} はありません"
+                Err(Error::Dashboard(tr!(
+                    "このアイテムの言語は {single} だけで、{code} はありません",
+                    "This item has only the language {single}; there is no {code}"
                 )))
             };
         }
 
-        self.click(kinds::COMBOBOX, combo.index, "言語の選択欄", cancel)?;
+        let selector_name = tr!("言語の選択欄", "the language selector");
+        self.click(kinds::COMBOBOX, combo.index, &selector_name, cancel)?;
         let options = self.wait_for_options(cancel)?;
-        let option = sel::pick_locale_option(&options, code)?;
+        let option = sel::pick_locale_option(t, &options, code)?;
         self.click(
             kinds::OPTION,
             option.index,
-            &format!("言語の選択肢（{code}）"),
+            &tr!("言語の選択肢（{code}）", "the language option ({code})"),
             cancel,
         )?;
 
@@ -312,13 +385,13 @@ impl ListingPage for DashboardItemPage<'_> {
         poll(
             || {
                 let combos = self.collect(kinds::COMBOBOX, cancel)?;
-                let c = sel::pick_language_combobox(&combos)?;
-                Ok(sel::current_locale_code(c)
+                let c = sel::pick_language_combobox(t, &combos)?;
+                Ok(sel::current_locale_code(t, c)
                     .is_some_and(|c| eq_ic(&c, code))
                     .then_some(()))
             },
             Duration::from_secs(15),
-            &format!("言語 {code} への切り替え"),
+            &tr!("言語 {code} への切り替え", "the switch to language {code}"),
             cancel,
         )?;
 
@@ -335,7 +408,10 @@ impl ListingPage for DashboardItemPage<'_> {
                 Ok(stable.then_some(()))
             },
             Duration::from_secs(15),
-            &format!("言語 {code} の内容の表示"),
+            &tr!(
+                "言語 {code} の内容の表示",
+                "the content of language {code} to appear"
+            ),
             cancel,
         )
     }
@@ -363,12 +439,14 @@ impl ListingPage for DashboardItemPage<'_> {
         let (kind, element) = self.locate(field, cancel)?;
         sel::ensure_writable(&element, field)?;
 
-        self.evaluate(&scripts::scroll_to(kind, element.index), cancel)?;
-        let selected = self.evaluate(&scripts::focus_select_all(kind, element.index), cancel)?;
+        let t = self.t()?;
+        self.evaluate(&scripts::scroll_to(t, kind, element.index), cancel)?;
+        let selected = self.evaluate(&scripts::focus_select_all(t, kind, element.index), cancel)?;
+        let name = field.display_name();
         if selected != Value::Bool(true) {
-            return Err(Error::Dashboard(format!(
-                "{}の欄にフォーカスして全選択できませんでした",
-                field.display_name()
+            return Err(Error::Dashboard(tr!(
+                "{name}の欄にフォーカスして全選択できませんでした",
+                "Could not focus the {name} field and select all of its text"
             )));
         }
 
@@ -396,43 +474,45 @@ impl ListingPage for DashboardItemPage<'_> {
             // 表示は 1 始まり。一致しなかった経路なので位置は必ずあるが、無ければ 0 を出さず「?」にする。
             let at = first_difference_position(&last, value)
                 .map_or_else(|| "?".to_string(), |p| p.to_string());
-            return Err(Error::Dashboard(format!(
-                "{}を書き換えましたが、値が正本と一致しません（{at} 文字目から相違、現在 {} 文字 / 正本 {} 文字）。保存せずに止めます",
-                field.display_name(),
-                utf16_len(&last),
-                utf16_len(value)
+            let (now, want) = (utf16_len(&last), utf16_len(value));
+            return Err(Error::Dashboard(tr!(
+                "{name}を書き換えましたが、値が正本と一致しません（{at} 文字目から相違、現在 {now} 文字 / 正本 {want} 文字）。保存せずに止めます",
+                "Rewrote {name}, but the value does not match the source (differs from character {at}; now {now} characters / source {want} characters). Stopping without saving"
             )));
         }
         Ok(())
     }
 
     fn save_draft(&mut self, cancel: &CancelToken) -> Result<()> {
+        let t = self.t()?;
+        let (save, saved_message) = (t.save_draft_button, t.saved_message);
         self.page.prepare_for_input(cancel)?;
 
         // 前回の「保存されました」が残っていると成功を誤認するので、消えるまで待つ
         let clean = try_poll(
-            || Ok((!sel::has_message(&self.messages(cancel)?, SAVED_MESSAGE)).then_some(())),
+            || Ok((!sel::has_message(t, &self.messages(cancel)?, saved_message)).then_some(())),
             Duration::from_secs(10),
             cancel,
         )?;
         if !clean {
-            return Err(Error::Dashboard(
-                "前回の保存メッセージが消えないため、保存結果を確かめられません。保存を止めます"
-                    .to_string(),
-            ));
+            return Err(Error::Dashboard(tr!(
+                "前回の保存メッセージが消えないため、保存結果を確かめられません。保存を止めます",
+                "The previous save message does not go away, so the save result cannot be verified. Not saving"
+            )));
         }
 
         let buttons = self.collect(kinds::BUTTON, cancel)?;
-        let button = sel::pick_button(&buttons, SAVE_DRAFT_BUTTON)?;
+        let button = sel::pick_button(&buttons, save)?;
         if button.disabled {
-            return Err(Error::WriteBlocked(format!(
-                "「{SAVE_DRAFT_BUTTON}」ボタンが押せない状態です"
+            return Err(Error::WriteBlocked(tr!(
+                "「{save}」ボタンが押せない状態です",
+                "The \"{save}\" button cannot be clicked"
             )));
         }
         self.click(
             kinds::BUTTON,
             button.index,
-            &format!("「{SAVE_DRAFT_BUTTON}」ボタン"),
+            &tr!("「{save}」ボタン", "the \"{save}\" button"),
             cancel,
         )?;
 
@@ -440,20 +520,22 @@ impl ListingPage for DashboardItemPage<'_> {
         let saved = try_poll(
             || {
                 messages = self.messages(cancel)?;
-                Ok(sel::has_message(&messages, SAVED_MESSAGE).then_some(()))
+                Ok(sel::has_message(t, &messages, saved_message).then_some(()))
             },
             Duration::from_secs(30),
             cancel,
         )?;
         if !saved {
-            let shown = sel::result_messages(&messages);
+            let shown = sel::result_messages(t, &messages);
             let tail = if shown.is_empty() {
                 String::new()
             } else {
-                format!("。表示: {}", shown.join(" / "))
+                let joined = shown.join(" / ");
+                tr!("。表示: {joined}", ". Shown: {joined}")
             };
-            return Err(Error::Dashboard(format!(
-                "下書き保存の完了メッセージ（{SAVED_MESSAGE}）を確認できませんでした{tail}"
+            return Err(Error::Dashboard(tr!(
+                "下書き保存の完了メッセージ（{saved_message}）を確認できませんでした{tail}",
+                "Could not confirm the draft-saved message ({saved_message}){tail}"
             )));
         }
         log(
@@ -468,24 +550,39 @@ impl ListingPage for DashboardItemPage<'_> {
         confirm: &mut SubmitConfirm<'_>,
         cancel: &CancelToken,
     ) -> Result<SubmitResult> {
+        let t = self.t()?;
+        let (submit, submitted_message) = (t.submit_button, t.submitted_message);
         self.page.prepare_for_input(cancel)?;
         if !self.dialogs(cancel)?.is_empty() {
-            return Err(Error::Dashboard(
-                "別のダイアログが開いているため、審査送信を始めません".to_string(),
-            ));
+            return Err(Error::Dashboard(tr!(
+                "別のダイアログが開いているため、審査送信を始めません",
+                "Not starting the review submission because another dialog is open"
+            )));
+        }
+        // 送信前から送信完了の語を含むメッセージが出ていると、送信後の成功を確かめられない。
+        // 英語の暫定の語（"submitted"）は短く、常設の通知に含まれる恐れもあるので、押す前に確かめて止める
+        // 日本語の画面は 2026-11-15 に実画面で確認した送信の流れを変えないため、英語の画面だけで確かめる
+        if t.lang == DashboardLang::En
+            && sel::has_message(t, &self.messages(cancel)?, submitted_message)
+        {
+            return Err(Error::Dashboard(tr!(
+                "送信前から送信完了のメッセージ（{submitted_message}）が表示されているため、送信結果を確かめられません。審査送信を始めません",
+                "A submission message ({submitted_message}) is already shown before submitting, so the result cannot be verified. Not starting the review submission"
+            )));
         }
 
         let buttons = self.collect(kinds::BUTTON, cancel)?;
-        let button = sel::pick_button(&buttons, SUBMIT_BUTTON)?;
+        let button = sel::pick_button(&buttons, submit)?;
         if button.disabled {
-            return Err(Error::WriteBlocked(format!(
-                "「{SUBMIT_BUTTON}」ボタンが押せない状態です"
+            return Err(Error::WriteBlocked(tr!(
+                "「{submit}」ボタンが押せない状態です",
+                "The \"{submit}\" button cannot be clicked"
             )));
         }
         self.click(
             kinds::BUTTON,
             button.index,
-            &format!("「{SUBMIT_BUTTON}」ボタン"),
+            &tr!("「{submit}」ボタン", "the \"{submit}\" button"),
             cancel,
         )?;
 
@@ -494,21 +591,25 @@ impl ListingPage for DashboardItemPage<'_> {
             || {
                 let dialogs = self.dialogs(cancel)?;
                 if dialogs.len() > 1 {
-                    return Err(Error::Dashboard(format!(
-                        "ダイアログが {} 個開いており、確認ダイアログを特定できません",
-                        dialogs.len()
+                    let n = dialogs.len();
+                    return Err(Error::Dashboard(tr!(
+                        "ダイアログが {n} 個開いており、確認ダイアログを特定できません",
+                        "{n} dialogs are open; cannot identify the confirmation dialog"
                     )));
                 }
                 Ok(dialogs.into_iter().next())
             },
             Duration::from_secs(15),
-            "審査送信の確認ダイアログの表示",
+            &tr!(
+                "審査送信の確認ダイアログの表示",
+                "the review submission confirmation dialog to appear"
+            ),
             cancel,
         )?;
 
         // 自動公開チェックは読むだけで変更しない
         let checks = self.collect(kinds::DIALOG_CHECKBOX, cancel)?;
-        let auto_publish = sel::auto_publish_state(&checks);
+        let auto_publish = sel::auto_publish_state(t, &checks);
         let info = SubmitDialogInfo {
             text: dialog_text,
             auto_publish,
@@ -516,14 +617,18 @@ impl ListingPage for DashboardItemPage<'_> {
 
         let dialog_buttons = self.collect(kinds::DIALOG_BUTTON, cancel)?;
         if !confirm(&info)? {
-            let cancel_button = sel::pick_button(&dialog_buttons, CANCEL_BUTTON)?;
+            let cancel_label = t.cancel_button;
+            let cancel_button = sel::pick_button(&dialog_buttons, cancel_label)?;
             self.click(
                 kinds::DIALOG_BUTTON,
                 cancel_button.index,
-                "確認ダイアログの「キャンセル」",
+                &tr!(
+                    "確認ダイアログの「{cancel_label}」",
+                    "\"{cancel_label}\" in the confirmation dialog"
+                ),
                 cancel,
             )?;
-            let status = sel::parse_status(Some(&self.body_text(cancel)?));
+            let status = sel::parse_status(t, Some(&self.body_text(cancel)?));
             return Ok(SubmitResult {
                 submitted: false,
                 dialog: info,
@@ -532,16 +637,20 @@ impl ListingPage for DashboardItemPage<'_> {
             });
         }
 
-        let ok = sel::pick_button(&dialog_buttons, SUBMIT_BUTTON)?;
+        let ok = sel::pick_button(&dialog_buttons, submit)?;
         if ok.disabled {
-            return Err(Error::WriteBlocked(
-                "確認ダイアログの送信ボタンが押せない状態です".to_string(),
-            ));
+            return Err(Error::WriteBlocked(tr!(
+                "確認ダイアログの送信ボタンが押せない状態です",
+                "The submit button in the confirmation dialog cannot be clicked"
+            )));
         }
         self.click(
             kinds::DIALOG_BUTTON,
             ok.index,
-            &format!("確認ダイアログの「{SUBMIT_BUTTON}」"),
+            &tr!(
+                "確認ダイアログの「{submit}」",
+                "\"{submit}\" in the confirmation dialog"
+            ),
             cancel,
         )?;
 
@@ -549,28 +658,30 @@ impl ListingPage for DashboardItemPage<'_> {
         let sent = try_poll(
             || {
                 messages = self.messages(cancel)?;
-                Ok(sel::has_message(&messages, SUBMITTED_MESSAGE).then_some(()))
+                Ok(sel::has_message(t, &messages, submitted_message).then_some(()))
             },
             Duration::from_secs(45),
             cancel,
         )?;
 
-        let result_messages = sel::result_messages(&messages);
-        let status = sel::parse_status(Some(&self.body_text(cancel)?));
+        let result_messages = sel::result_messages(t, &messages);
+        let status = sel::parse_status(t, Some(&self.body_text(cancel)?));
         if !sent {
             let tail = if result_messages.is_empty() {
                 String::new()
             } else {
-                format!("。表示: {}", result_messages.join(" / "))
+                let joined = result_messages.join(" / ");
+                tr!("。表示: {joined}", ". Shown: {joined}")
             };
-            return Err(Error::Dashboard(format!(
-                "送信完了のメッセージ（{SUBMITTED_MESSAGE}）を確認できませんでした。ステータス: {}{tail}",
-                status.as_deref().unwrap_or("不明")
+            let shown_status = status.clone().unwrap_or_else(|| tr!("不明", "unknown"));
+            return Err(Error::Dashboard(tr!(
+                "送信完了のメッセージ（{submitted_message}）を確認できませんでした。ステータス: {shown_status}{tail}",
+                "Could not confirm the submission message ({submitted_message}). Status: {shown_status}{tail}"
             )));
         }
         let message = result_messages
             .iter()
-            .find(|m| m.contains(SUBMITTED_MESSAGE))
+            .find(|m| sel::message_matches(t, m, submitted_message))
             .cloned();
         log(
             &format!(
@@ -623,9 +734,10 @@ fn poll<T>(
             return Ok(v);
         }
         if Instant::now() >= deadline {
-            return Err(Error::Dashboard(format!(
-                "{what}を {} 秒待ちましたが確認できませんでした",
-                timeout.as_secs()
+            let secs = timeout.as_secs();
+            return Err(Error::Dashboard(tr!(
+                "{what}を {secs} 秒待ちましたが確認できませんでした",
+                "Waited {secs} seconds for {what}, but could not confirm it"
             )));
         }
         cancel.sleep(POLL_INTERVAL)?;

@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::config::{is_valid_item_id, is_valid_locale_code, normalize_locale_code};
 use crate::error::{Error, Result};
 use crate::util::eq_ic;
+use crate::{tr, trs};
 
 /// サブコマンド
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,8 +151,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
             "submit" => CliCommandKind::Submit,
             "update" => CliCommandKind::Update,
             _ => {
-                return Err(Error::Usage(format!(
-                    "不明なコマンドです: {first}（--help で使い方を表示）"
+                return Err(Error::Usage(tr!(
+                    "不明なコマンドです: {first}（--help で使い方を表示）",
+                    "Unknown command: {first} (run --help for usage)"
                 )));
             }
         };
@@ -164,7 +166,10 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
     while index < args.len() {
         let arg = args[index];
         if !arg.starts_with("--") {
-            return Err(Error::Usage(format!("余分な引数です: {arg}")));
+            return Err(Error::Usage(tr!(
+                "余分な引数です: {arg}",
+                "Unexpected argument: {arg}"
+            )));
         }
 
         // --name=value 形式にも対応する
@@ -174,8 +179,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
         };
 
         if !kind.allowed_options().contains(&name.as_str()) {
-            return Err(Error::Usage(format!(
-                "{command_name} では {name} は使えません（--help で使い方を表示）"
+            return Err(Error::Usage(tr!(
+                "{command_name} では {name} は使えません（--help で使い方を表示）",
+                "{name} cannot be used with {command_name} (run --help for usage)"
             )));
         }
 
@@ -186,14 +192,25 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                         value = Some(next.to_string());
                         index += 1;
                     }
-                    _ => return Err(Error::Usage(format!("{name} の値がありません"))),
+                    _ => {
+                        return Err(Error::Usage(tr!(
+                            "{name} の値がありません",
+                            "{name} requires a value"
+                        )));
+                    }
                 }
             }
             if value.as_deref().is_none_or(|v| v.trim().is_empty()) {
-                return Err(Error::Usage(format!("{name} の値が空です")));
+                return Err(Error::Usage(tr!(
+                    "{name} の値が空です",
+                    "The value of {name} is empty"
+                )));
             }
         } else if value.is_some() {
-            return Err(Error::Usage(format!("{name} は値を取りません")));
+            return Err(Error::Usage(tr!(
+                "{name} は値を取りません",
+                "{name} does not take a value"
+            )));
         }
 
         let v = value.unwrap_or_default();
@@ -204,8 +221,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
             "--item" => {
                 let id = v.trim().to_lowercase();
                 if !is_valid_item_id(&id) {
-                    return Err(Error::Usage(format!(
-                        "--item は 32 文字の CWS アイテム ID で指定してください: {v}"
+                    return Err(Error::Usage(tr!(
+                        "--item は 32 文字の CWS アイテム ID で指定してください: {v}",
+                        "--item must be a 32-character CWS item ID: {v}"
                     )));
                 }
                 if !cmd.item_ids.contains(&id) {
@@ -215,8 +233,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
             "--locale" => {
                 let code = normalize_locale_code(&v);
                 if !is_valid_locale_code(&code) {
-                    return Err(Error::Usage(format!(
-                        "--locale のロケールコードが正しくありません: {v}"
+                    return Err(Error::Usage(tr!(
+                        "--locale のロケールコードが正しくありません: {v}",
+                        "Invalid locale code for --locale: {v}"
                     )));
                 }
                 if !cmd.locale_codes.iter().any(|c| eq_ic(c, &code)) {
@@ -233,7 +252,13 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                     .ok()
                     .filter(|m| (1..=120).contains(m))
                     .ok_or_else(|| {
-                        Error::Usage("--wait は 1〜120 の分数で指定してください".to_string())
+                        Error::Usage(
+                            trs!(
+                                "--wait は 1〜120 の分数で指定してください",
+                                "--wait must be a number of minutes from 1 to 120"
+                            )
+                            .to_string(),
+                        )
                     })?;
                 cmd.login_wait = Some(Duration::from_secs(minutes as u64 * 60));
             }
@@ -248,17 +273,29 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
         // 審査送信は取り返しがつかないので、複数アイテムの一括送信はさせない
         if cmd.item_ids.is_empty() {
             return Err(Error::Usage(
-                "submit には --item <アイテム ID> を 1 件指定してください".to_string(),
+                trs!(
+                    "submit には --item <アイテム ID> を 1 件指定してください",
+                    "submit requires exactly one --item <item ID>"
+                )
+                .to_string(),
             ));
         }
         if cmd.item_ids.len() > 1 {
             return Err(Error::Usage(
-                "submit は 1 件ずつ実行してください（--item は 1 つだけ指定できます）".to_string(),
+                trs!(
+                    "submit は 1 件ずつ実行してください（--item は 1 つだけ指定できます）",
+                    "Run submit for one item at a time (only one --item is allowed)"
+                )
+                .to_string(),
             ));
         }
         if !cmd.yes {
             return Err(Error::Usage(
-                "submit は審査に送信します。実行するには --yes を付けてください".to_string(),
+                trs!(
+                    "submit は審査に送信します。実行するには --yes を付けてください",
+                    "submit sends the item for review. Add --yes to run it"
+                )
+                .to_string(),
             ));
         }
     }
@@ -268,13 +305,16 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
 
 fn set_once(slot: &mut Option<String>, value: String, name: &str) -> Result<()> {
     if slot.is_some() {
-        return Err(Error::Usage(format!("{name} が 2 回指定されています")));
+        return Err(Error::Usage(tr!(
+            "{name} が 2 回指定されています",
+            "{name} is specified more than once"
+        )));
     }
     *slot = Some(value);
     Ok(())
 }
 
-/// 使い方
+/// 使い方（日本語。表示には言語を選ぶ [`help_text`] を使う）
 pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を正本ファイルと一括で比較・更新するツール
 
 使い方:
@@ -319,3 +359,54 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   4  書き込みを中止（審査待ち・状態を判定できない）
   5  ログインが必要（login を実行してください）
   130 中断（Ctrl+C）";
+
+/// 使い方（英語表示用。内容は [`HELP_TEXT`] と同じに保つ）
+pub const HELP_TEXT_EN: &str = r"Edictora - compare and update Chrome Web Store listings against source files in bulk
+
+Usage:
+  edictora login   [--config <file>] [--profile <dir>] [--chrome <exe>] [--wait <minutes>]
+  edictora pull    [--item <id>]... [--locale <code>]... [common options]
+  edictora diff    [--item <id>]... [--locale <code>]... [common options]   (default command)
+  edictora push    [--item <id>]... [--locale <code>]... --yes [common options]
+  edictora submit  --item <id> --yes [common options]
+  edictora update
+  edictora mcp
+
+Commands:
+  login    Opens Chrome with the dedicated profile and waits until you sign in manually and reach the dashboard
+  pull     Shows the current values on the dashboard (read-only)
+  diff     Shows the differences from the source files (read-only)
+  push     Updates only the fields that differ, saves as draft, then reloads and verifies. Without --yes it shows the differences and stops
+  submit   Submits one item for review (does not change the publish-automatically setting)
+  update   Downloads a newer version if available and replaces the app after it exits (Velopack Setup or Portable builds.
+           Setup builds also update automatically at sign-in. Portable builds do not register automatic updates.
+           Applying is postponed while pull and other commands are running. Connects to https://edictora.kagayoi.com)
+  mcp      Runs as an MCP server (stdio) for AI agents. Exposes list_items / diff / pull / push / submit
+           as tools (showing the browser, login, and choosing a profile are not available from the tools)
+
+Common options:
+  --config <file>   Config file (default: %APPDATA%\Edictora\config.json)
+  --profile <dir>   Chrome profile (default: profileDir in the config file, otherwise %LOCALAPPDATA%\Edictora.Data\chrome-profile)
+  --chrome <exe>    Location of chrome.exe (default: chromePath in the config file, otherwise detected automatically)
+  --item <id>       Target item (repeatable. Default: all items in the config file)
+  --locale <code>   Target locale (repeatable. e.g. ja, en)
+  --show-browser    Show the Chrome window while working (by default it runs without a window and never comes to the front).
+                    Meant for people watching. Do not use it from AI agents or automation (a window appears on the user's screen.
+                    Investigate failures with the error message and the screenshots saved at %LOCALAPPDATA%\Edictora.Data\diagnostics)
+  --wait <minutes>  How long login waits (default 10 minutes). login always shows the window
+  --help            Show this help
+  --version         Show the version
+
+Exit codes:
+  0  Success (no differences. For update: up to date, or the update has started)
+  1  Runtime error (page operation failed, verification mismatch, update failed, an update is being applied, etc.)
+  2  Invalid arguments or config
+  3  Differences found (diff, or push without --yes)
+  4  Write aborted (pending review, or the state could not be determined)
+  5  Sign-in required (run login)
+  130 Cancelled (Ctrl+C)";
+
+/// 表示言語に合わせた使い方
+pub fn help_text() -> &'static str {
+    trs!(HELP_TEXT, HELP_TEXT_EN)
+}

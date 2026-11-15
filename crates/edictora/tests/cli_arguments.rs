@@ -213,3 +213,60 @@ fn run_未知のオプションはブラウザを開かず終了コード2() {
     assert_eq!(code, 2);
     assert!(err.contains("--unknown-option"), "{err}");
 }
+
+/// 本物の exe を、表示言語を環境変数で固定して起動する（保存先は作業フォルダーの下。Chrome は開かない）。
+/// ライブラリのテストは i18n::init を呼ばない（呼ぶと同じテストバイナリ全体の言語が変わる）ので、
+/// 英語の出力は exe を起動して確かめる
+fn run_exe(dir_name: &str, lang: &str, args: &[&str]) -> (i32, String, String) {
+    let dir = work_dir(dir_name);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_edictora"))
+        .args(args)
+        .env(edictora::i18n::LANG_ENV, lang)
+        .env(edictora::app_paths::LOCAL_ROOT_ENV, dir.join("local"))
+        .env(edictora::app_paths::ROAMING_ROOT_ENV, dir.join("roaming"))
+        // Velopack の初回起動の印が親から漏れても、引数ありなので通常の CLI として動くが、念のため消す
+        .env_remove("VELOPACK_FIRSTRUN")
+        .env_remove("VELOPACK_RESTART")
+        .output()
+        .expect("edictora を起動できません");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn exe_ヘルプはedictora_langがenなら英語() {
+    let (code, output, _) = run_exe("cli-help-en", "en", &["--help"]);
+    assert_eq!(code, 0);
+    assert!(output.contains("Usage:"), "{output}");
+    assert!(output.contains("Chrome Web Store listings"), "{output}");
+    assert!(output.contains("edictora submit  --item <id> --yes"));
+    assert!(!output.contains("使い方"), "{output}");
+}
+
+#[test]
+fn exe_ヘルプはedictora_langがjaなら日本語() {
+    // CI（英語の OS）でも日本語になることを確かめる
+    let (code, output, _) = run_exe("cli-help-ja", "ja", &["--help"]);
+    assert_eq!(code, 0);
+    assert_eq!(output.trim_end(), edictora::cli::args::HELP_TEXT);
+}
+
+#[test]
+fn exe_引数の誤りはedictora_langがenなら英語で終了コード2() {
+    let (code, _, err) = run_exe("cli-usage-en", "en", &["frobnicate"]);
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with("Error: Unknown command: frobnicate"),
+        "{err}"
+    );
+
+    let (code, _, err) = run_exe("cli-usage-ja", "ja", &["frobnicate"]);
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with("エラー: 不明なコマンドです: frobnicate"),
+        "{err}"
+    );
+}

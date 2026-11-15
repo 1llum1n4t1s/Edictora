@@ -41,27 +41,45 @@ pub enum UpdateCheck {
 /// フィードの JSON を解釈する
 pub fn parse_feed(json: &str) -> Result<Vec<FeedAsset>, String> {
     let json = json.strip_prefix('\u{feff}').unwrap_or(json);
-    let root: Value =
-        serde_json::from_str(json).map_err(|e| format!("フィードが JSON として読めません: {e}"))?;
-    let root = lower_keys(&root, "フィード")?;
+    let root: Value = serde_json::from_str(json).map_err(|e| {
+        crate::tr!(
+            "フィードが JSON として読めません: {e}",
+            "The feed is not valid JSON: {e}"
+        )
+    })?;
+    let root = lower_keys(&root, crate::trs!("フィード", "The feed"))?;
     let Some(assets) = root.get("assets") else {
         return Ok(Vec::new());
     };
-    let assets = assets
-        .as_array()
-        .ok_or_else(|| "フィードの Assets が配列ではありません".to_string())?;
+    let assets = assets.as_array().ok_or_else(|| {
+        crate::trs!(
+            "フィードの Assets が配列ではありません",
+            "Assets in the feed is not an array"
+        )
+        .to_string()
+    })?;
     assets
         .iter()
         .enumerate()
-        .map(|(i, v)| parse_asset(v).map_err(|m| format!("フィードの Assets[{i}]: {m}")))
+        .map(|(i, v)| {
+            parse_asset(v).map_err(|m| {
+                crate::tr!(
+                    "フィードの Assets[{i}]: {m}",
+                    "Assets[{i}] in the feed: {m}"
+                )
+            })
+        })
         .collect()
 }
 
 /// オブジェクトのキーを小文字にした写しを作る（オブジェクトでなければエラー）
 fn lower_keys(value: &Value, what: &str) -> Result<Map<String, Value>, String> {
-    let obj = value
-        .as_object()
-        .ok_or_else(|| format!("{what}が JSON のオブジェクトではありません"))?;
+    let obj = value.as_object().ok_or_else(|| {
+        crate::tr!(
+            "{what}が JSON のオブジェクトではありません",
+            "{what} is not a JSON object"
+        )
+    })?;
     Ok(obj
         .iter()
         .map(|(k, v)| (k.to_lowercase(), v.clone()))
@@ -69,19 +87,26 @@ fn lower_keys(value: &Value, what: &str) -> Result<Map<String, Value>, String> {
 }
 
 fn parse_asset(value: &Value) -> Result<FeedAsset, String> {
-    let map = lower_keys(value, "項目")?;
+    let map = lower_keys(value, crate::trs!("項目", "An entry"))?;
     let text = |key: &str| -> Result<String, String> {
         match map.get(key) {
             None => Ok(String::new()),
             Some(Value::String(s)) => Ok(s.clone()),
-            Some(_) => Err(format!("{key} が文字列ではありません")),
+            Some(_) => Err(crate::tr!(
+                "{key} が文字列ではありません",
+                "{key} is not a string"
+            )),
         }
     };
     let size = match map.get("size") {
         None => 0,
-        Some(v) => v
-            .as_u64()
-            .ok_or_else(|| "size が 0 以上の整数ではありません".to_string())?,
+        Some(v) => v.as_u64().ok_or_else(|| {
+            crate::trs!(
+                "size が 0 以上の整数ではありません",
+                "size is not a non-negative integer"
+            )
+            .to_string()
+        })?,
     };
     Ok(FeedAsset {
         package_id: text("packageid")?,

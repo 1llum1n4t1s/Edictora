@@ -10,10 +10,14 @@
 // 導入は 1 回だけ: window.__edictora が既にあれば作り直さない。
 // store（収集した要素の配列）は Runtime.evaluate をまたいで同じオブジェクトに残る必要があるため。
 //
-// __EDICTORA_GUIDE__ は Rust 側（dashboard/text.rs の GUIDE_NOTICE_MARKER）が JSON 文字列に置き換える。
-// 文言の正本を Rust 側 1 か所に保つため、ここには書かない。
+// __EDICTORA_GUIDE__ は Rust 側（dashboard/text.rs の文言セットの guide_notice_marker）が JSON に置き換える。
+// 文言の正本を Rust 側 1 か所に保つため、ここには書かない。案内通知の語が無い画面の言語では null になり、除外しない
+// （空文字だと includes("") が常に真になり、すべてのダイアログが除外されてしまうため null で表す）。
+//
+// このスクリプトは利用者に見せる出力の言語を知らない。利用者向けの文になる例外・値は固定の印だけを返し、
+// Rust 側（dashboard/selectors.rs の ELEMENT_GONE_MARKER・OFFSCREEN_COVER）で日本語か英語の文に直す。
 
-declare const __EDICTORA_GUIDE__: string;
+declare const __EDICTORA_GUIDE__: string | null;
 
 /** 要素の種類（Rust 側の page_scripts::kinds と同じ名前） */
 type Kind = "combobox" | "option" | "button" | "textarea" | "textInput" | "dialogButton" | "dialogCheckbox";
@@ -124,7 +128,7 @@ function createApi(): EdictoraApi {
 
   const allDialogs = (): Element[] =>
     [...document.querySelectorAll("[role=dialog], [role=alertdialog]")].filter(
-      (d) => visible(d) && text(d) && !text(d).includes(GUIDE),
+      (d) => visible(d) && text(d) && !(GUIDE !== null && text(d).includes(GUIDE)),
     );
 
   const inDialog = (el: Element): boolean => !!el.closest("[role=dialog], [role=alertdialog]");
@@ -181,7 +185,8 @@ function createApi(): EdictoraApi {
 
   const get = (kind: Kind, i: number): FormLike => {
     const el = (store[kind] || [])[i];
-    if (!el || !el.isConnected) throw new Error("要素が画面から消えました: " + kind);
+    // 文は Rust 側で作る（selectors.rs の ELEMENT_GONE_MARKER と同じ印）
+    if (!el || !el.isConnected) throw new Error("EDICTORA_ELEMENT_GONE:" + kind);
     return el as FormLike;
   };
 
@@ -205,7 +210,8 @@ function createApi(): EdictoraApi {
       // 覆っている要素の説明。クラス名は画面の更新で変わるので使わず、役割・ラベル・文言だけにする。
       // 文言は 1 行にまとめて先頭 40 文字まで（長い本文を出さない）
       const describe = (n: Element | null): string | null => {
-        if (!n) return "（要素なし: 中心が画面の外）";
+        // 文は Rust 側で作る（selectors.rs の OFFSCREEN_COVER と同じ印）
+        if (!n) return "__EDICTORA_OFFSCREEN__";
         const role = n.getAttribute("role");
         const kind = role ? `${n.tagName.toLowerCase()}[role=${role}]` : n.tagName.toLowerCase();
         const words = (n.getAttribute("aria-label") || text(n)).replace(/\s+/g, " ").trim().slice(0, 40);

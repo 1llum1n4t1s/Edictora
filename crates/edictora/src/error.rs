@@ -13,8 +13,13 @@
 
 use std::fmt;
 
+use crate::trs;
+
 /// ログインが必要なときの定型文（C# の `LoginRequiredException` と同じ文面）
 pub const LOGIN_REQUIRED_MESSAGE: &str = "ダッシュボードにログインしていません。先に login を実行し、開いた Chrome で Google にログインしてください。";
+
+/// ログインが必要なときの定型文（英語表示用。日本語は [`LOGIN_REQUIRED_MESSAGE`]）
+pub const LOGIN_REQUIRED_MESSAGE_EN: &str = "You are not signed in to the dashboard. Run login first, then sign in to Google in the Chrome window that opens.";
 
 /// Edictora のエラー
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,7 +57,8 @@ impl Error {
         )
     }
 
-    /// メッセージ本文（種類の接頭辞を付けない）
+    /// メッセージ本文（種類の接頭辞を付けない）。
+    /// 文字列を持つ種類は作った時点の言語のまま返し、定型文（ログイン切れ・中断）だけここで表示言語を選ぶ
     pub fn message(&self) -> String {
         match self {
             Error::Usage(m)
@@ -64,8 +70,10 @@ impl Error {
             | Error::JavaScript(m)
             | Error::Io(m)
             | Error::Update(m) => m.clone(),
-            Error::LoginRequired => LOGIN_REQUIRED_MESSAGE.to_string(),
-            Error::Cancelled => "中断しました。".to_string(),
+            Error::LoginRequired => {
+                trs!(LOGIN_REQUIRED_MESSAGE, LOGIN_REQUIRED_MESSAGE_EN).to_string()
+            }
+            Error::Cancelled => trs!("中断しました。", "Cancelled.").to_string(),
         }
     }
 

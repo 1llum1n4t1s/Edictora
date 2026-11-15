@@ -27,6 +27,7 @@ use crate::util::{
     expand_env, is_blank, parse_absolute_url, read_text_file,
     strip_json_comments_and_trailing_commas,
 };
+use crate::{tr, trs};
 
 // ───────── 検証済みの設定 ─────────
 
@@ -161,7 +162,11 @@ impl<'de> Deserialize<'de> for OrderedLocales {
         impl<'de> Visitor<'de> for V {
             type Value = OrderedLocales;
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("ロケールコードをキーとするオブジェクト")
+                // serde のエラー文に入り、利用者に見えるので表示言語に合わせる
+                f.write_str(trs!(
+                    "ロケールコードをキーとするオブジェクト",
+                    "an object keyed by locale code"
+                ))
             }
             fn visit_map<A: MapAccess<'de>>(
                 self,
@@ -199,8 +204,9 @@ pub fn load(
     let path = full_path(&raw);
     if !path.is_file() {
         if require_file {
-            return Err(Error::Config(format!(
+            return Err(Error::Config(tr!(
                 "設定ファイルがありません: {}（README の設定例を参考に作成してください）",
+                "Config file not found: {} (create one using the example in the README)",
                 path.display()
             )));
         }
@@ -214,8 +220,9 @@ pub fn load(
     }
 
     let json = read_text_file(&path).map_err(|e| {
-        Error::Config(format!(
+        Error::Config(tr!(
             "設定ファイルを読めません: {}（{e}）",
+            "Cannot read the config file: {} ({e})",
             path.display()
         ))
     })?;
@@ -232,14 +239,16 @@ pub fn parse(
 ) -> Result<EdictoraConfig> {
     let cleaned = strip_json_comments_and_trailing_commas(json);
     let dto: Option<ConfigFileDto> = serde_json::from_str(&cleaned).map_err(|e| {
-        Error::Config(format!(
+        Error::Config(tr!(
             "設定ファイルの形式が正しくありません: {}（{e}）",
+            "The config file is not valid: {} ({e})",
             config_path.display()
         ))
     })?;
     let Some(dto) = dto else {
-        return Err(Error::Config(format!(
+        return Err(Error::Config(tr!(
             "設定ファイルが空です: {}",
+            "The config file is empty: {}",
             config_path.display()
         )));
     };
@@ -262,8 +271,9 @@ pub fn parse(
         let index = i + 1;
         let item = parse_item(item_dto, index, &config_dir)?;
         if !seen.insert(item.item_id.clone()) {
-            return Err(Error::Config(format!(
+            return Err(Error::Config(tr!(
                 "items[{index}]: アイテム ID が重複しています: {}",
+                "items[{index}]: duplicate item ID: {}",
                 item.item_id
             )));
         }
@@ -303,9 +313,12 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
     let item_id = match item_id {
         Some(id) if is_valid_item_id(&id) => id,
         _ => {
-            return Err(Error::Config(format!(
+            return Err(Error::Config(tr!(
                 "{place}: itemId は 32 文字の CWS アイテム ID（a〜p）で指定してください: {}",
-                dto.item_id.as_deref().unwrap_or("(未指定)")
+                "{place}: itemId must be a 32-character CWS item ID (a-p): {}",
+                dto.item_id
+                    .as_deref()
+                    .unwrap_or(trs!("(未指定)", "(not set)"))
             )));
         }
     };
@@ -317,8 +330,9 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
         full_path(&config_dir.join(expand(dto.base_dir.as_deref()).unwrap_or_default()))
     };
     if !base_dir.is_dir() {
-        return Err(Error::Config(format!(
+        return Err(Error::Config(tr!(
             "{place}: baseDir がありません: {}",
+            "{place}: baseDir does not exist: {}",
             base_dir.display()
         )));
     }
@@ -326,8 +340,9 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
     let entries = match dto.locales {
         Some(OrderedLocales(entries)) if !entries.is_empty() => entries,
         _ => {
-            return Err(Error::Config(format!(
-                "{place}: locales を 1 つ以上指定してください"
+            return Err(Error::Config(tr!(
+                "{place}: locales を 1 つ以上指定してください",
+                "{place}: specify at least one entry in locales"
             )));
         }
     };
@@ -337,17 +352,22 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
     for (raw_code, locale_dto) in entries {
         let code = normalize_locale_code(&raw_code);
         if !is_valid_locale_code(&code) {
-            return Err(Error::Config(format!(
-                "{place}: ロケールコードが正しくありません: {raw_code}"
+            return Err(Error::Config(tr!(
+                "{place}: ロケールコードが正しくありません: {raw_code}",
+                "{place}: invalid locale code: {raw_code}"
             )));
         }
         if !seen_codes.insert(code.to_uppercase()) {
-            return Err(Error::Config(format!(
-                "{place}: ロケールコードが重複しています: {raw_code}"
+            return Err(Error::Config(tr!(
+                "{place}: ロケールコードが重複しています: {raw_code}",
+                "{place}: duplicate locale code: {raw_code}"
             )));
         }
         let Some(locale_dto) = locale_dto else {
-            return Err(Error::Config(format!("{place}.{code}: 内容が空です")));
+            return Err(Error::Config(tr!(
+                "{place}.{code}: 内容が空です",
+                "{place}.{code}: the entry is empty"
+            )));
         };
         locales.push(parse_locale(
             locale_dto,
@@ -378,13 +398,15 @@ fn parse_locale(
     let mut description = None;
     if let Some(d) = dto.description {
         if is_blank(d.file.as_deref()) {
-            return Err(Error::Config(format!(
-                "{place}.description: file を指定してください"
+            return Err(Error::Config(tr!(
+                "{place}.description: file を指定してください",
+                "{place}.description: specify file"
             )));
         }
         if d.section_start.is_none() != d.section_end.is_none() {
-            return Err(Error::Config(format!(
-                "{place}.description: sectionStart と sectionEnd は両方指定してください"
+            return Err(Error::Config(tr!(
+                "{place}.description: sectionStart と sectionEnd は両方指定してください",
+                "{place}.description: specify both sectionStart and sectionEnd"
             )));
         }
         if let Some(p) = &d.section_start {
@@ -395,8 +417,9 @@ fn parse_locale(
         }
         let file = full_path(&base_dir.join(expand(d.file.as_deref()).unwrap_or_default()));
         if !file.is_file() {
-            return Err(Error::Config(format!(
+            return Err(Error::Config(tr!(
                 "{place}.description: 正本ファイルがありません: {}",
+                "{place}.description: source file not found: {}",
                 file.display()
             )));
         }
@@ -428,8 +451,9 @@ fn parse_locale(
     )?;
 
     if description.is_none() && urls.is_empty() {
-        return Err(Error::Config(format!(
-            "{place}: description・homepageUrl・supportUrl・officialUrl のいずれかを指定してください"
+        return Err(Error::Config(tr!(
+            "{place}: description・homepageUrl・supportUrl・officialUrl のいずれかを指定してください",
+            "{place}: specify at least one of description, homepageUrl, supportUrl, or officialUrl"
         )));
     }
 
@@ -453,8 +477,9 @@ fn add_url(
         let ok = parse_absolute_url(trimmed)
             .is_some_and(|u| (u.scheme == "https" || u.scheme == "http") && !u.host.is_empty());
         if !ok {
-            return Err(Error::Config(format!(
+            return Err(Error::Config(tr!(
                 "{place}.{}: http(s) の絶対 URL を指定してください: {value}",
+                "{place}.{}: specify an absolute http(s) URL: {value}",
                 field.config_key()
             )));
         }

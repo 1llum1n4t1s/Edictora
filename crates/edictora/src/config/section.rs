@@ -24,13 +24,15 @@ use regex::Regex;
 
 use crate::config::TextSource;
 use crate::error::{Error, Result};
+use crate::tr;
 use crate::util::read_text_file;
 
 /// ファイルを読み、`source` の指定どおりに説明文を取り出す
 pub fn extract_source(source: &TextSource) -> Result<String> {
     let text = read_text_file(&source.file_path).map_err(|e| {
-        Error::Config(format!(
+        Error::Config(tr!(
             "正本ファイルを読めません: {}（{e}）",
+            "Cannot read the source file: {} ({e})",
             source.file_path.display()
         ))
     })?;
@@ -55,8 +57,9 @@ pub fn extract(
         (None, None) => return Ok(trim_like_spike(&normalized).to_string()),
         (Some(s), Some(e)) => (s, e),
         _ => {
-            return Err(Error::Config(format!(
-                "sectionStart と sectionEnd は両方指定してください: {source_name}"
+            return Err(Error::Config(tr!(
+                "sectionStart と sectionEnd は両方指定してください: {source_name}",
+                "Specify both sectionStart and sectionEnd: {source_name}"
             )));
         }
     };
@@ -69,8 +72,9 @@ pub fn extract(
         .iter()
         .position(|l| start_re.is_match(l))
         .ok_or_else(|| {
-            Error::Config(format!(
-                "開始見出し（{start}）が見つかりません: {source_name}"
+            Error::Config(tr!(
+                "開始見出し（{start}）が見つかりません: {source_name}",
+                "Start heading ({start}) not found: {source_name}"
             ))
         })?;
     let e = lines
@@ -80,8 +84,9 @@ pub fn extract(
         .find(|(_, l)| end_re.is_match(l))
         .map(|(i, _)| i)
         .ok_or_else(|| {
-            Error::Config(format!(
-                "終端見出し（{end}）が開始見出しより後に見つかりません: {source_name}"
+            Error::Config(tr!(
+                "終端見出し（{end}）が開始見出しより後に見つかりません: {source_name}",
+                "End heading ({end}) not found after the start heading: {source_name}"
             ))
         })?;
 
@@ -127,8 +132,9 @@ pub fn is_js_whitespace(c: char) -> bool {
 
 fn create_regex(pattern: &str, name: &str) -> Result<Regex> {
     Regex::new(pattern).map_err(|e| {
-        Error::Config(format!(
-            "{name} の正規表現が正しくありません: {pattern}（{e}）。先読み・後読み・後方参照は使えません"
+        Error::Config(tr!(
+            "{name} の正規表現が正しくありません: {pattern}（{e}）。先読み・後読み・後方参照は使えません",
+            "Invalid regular expression in {name}: {pattern} ({e}). Lookahead, lookbehind, and backreferences are not supported"
         ))
     })
 }

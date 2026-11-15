@@ -36,8 +36,12 @@ impl UpdateSource {
     pub fn from_override(value: Option<&str>) -> Result<UpdateSource, String> {
         match value.map(str::trim).filter(|v| !v.is_empty()) {
             None => Ok(UpdateSource::production()),
-            Some(v) => UpdateSource::parse(v)
-                .map_err(|m| format!("環境変数 {SOURCE_URL_ENV} の値が正しくありません: {m}")),
+            Some(v) => UpdateSource::parse(v).map_err(|m| {
+                crate::tr!(
+                    "環境変数 {SOURCE_URL_ENV} の値が正しくありません: {m}",
+                    "The value of the environment variable {SOURCE_URL_ENV} is invalid: {m}"
+                )
+            }),
         }
     }
 
@@ -48,12 +52,20 @@ impl UpdateSource {
         } else if let Some(r) = strip_prefix_ic(url, "http://") {
             (false, r)
         } else {
-            return Err("https:// で始まる URL を指定してください".to_string());
+            return Err(crate::trs!(
+                "https:// で始まる URL を指定してください",
+                "Specify a URL that starts with https://"
+            )
+            .to_string());
         };
         if rest.contains(['?', '#', '@', '\\'])
             || rest.chars().any(|c| c.is_whitespace() || c.is_control())
         {
-            return Err("URL に使えない文字（? # @ \\ 空白など）が含まれています".to_string());
+            return Err(crate::trs!(
+                "URL に使えない文字（? # @ \\ 空白など）が含まれています",
+                "The URL contains characters that are not allowed (? # @ \\ whitespace, etc.)"
+            )
+            .to_string());
         }
         let (authority, path) = match rest.find('/') {
             Some(i) => (&rest[..i], &rest[i..]),
@@ -61,11 +73,9 @@ impl UpdateSource {
         };
         let (host, port) = match authority.rsplit_once(':') {
             Some((h, p)) => {
-                let port: u16 = p
-                    .parse()
-                    .ok()
-                    .filter(|p| *p != 0)
-                    .ok_or_else(|| "ポート番号が正しくありません".to_string())?;
+                let port: u16 = p.parse().ok().filter(|p| *p != 0).ok_or_else(|| {
+                    crate::trs!("ポート番号が正しくありません", "Invalid port number").to_string()
+                })?;
                 (h, port)
             }
             None => (authority, if secure { 443 } else { 80 }),
@@ -76,13 +86,19 @@ impl UpdateSource {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
         {
-            return Err("ホスト名が正しくありません".to_string());
+            return Err(crate::trs!("ホスト名が正しくありません", "Invalid host name").to_string());
         }
         if !secure && host != "127.0.0.1" {
-            return Err("平文の http は 127.0.0.1 だけに使えます".to_string());
+            return Err(crate::trs!(
+                "平文の http は 127.0.0.1 だけに使えます",
+                "Plain http is allowed only for 127.0.0.1"
+            )
+            .to_string());
         }
         if path.split('/').any(|seg| seg == "..") {
-            return Err("パスに .. は使えません".to_string());
+            return Err(
+                crate::trs!("パスに .. は使えません", "The path must not contain ..").to_string(),
+            );
         }
         Ok(UpdateSource {
             secure,

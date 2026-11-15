@@ -24,6 +24,7 @@ pub mod cli;
 pub mod config;
 pub mod dashboard;
 pub mod error;
+pub mod i18n;
 pub mod install;
 pub mod listing;
 pub mod logging;

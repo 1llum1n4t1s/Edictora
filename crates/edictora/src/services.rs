@@ -17,6 +17,7 @@ use crate::listing::{
 };
 use crate::logging::{LogLevel, log, redact};
 use crate::util::eq_ic;
+use crate::{tr, trs};
 
 /// 進捗の出力先
 pub type Progress<'a> = dyn Fn(&str) + 'a;
@@ -56,8 +57,9 @@ pub fn pull(
     progress: &Progress<'_>,
     cancel: &CancelToken,
 ) -> Result<ItemSnapshot> {
-    progress(&format!(
+    progress(&tr!(
         "{}: 編集画面を開いています…",
+        "{}: opening the edit page...",
         expected.display_name
     ));
     match pull_core(page, expected, progress, cancel) {
@@ -70,7 +72,7 @@ pub fn pull(
                     "読み出し失敗 {}: {}{}",
                     expected.item_id,
                     e,
-                    shot_suffix(&shot)
+                    log_shot_suffix(&shot)
                 ),
                 LogLevel::Warning,
             );
@@ -104,8 +106,9 @@ fn pull_core(
         if !available.iter().any(|c| eq_ic(c, &locale.code)) {
             locales.push(LocaleSnapshot::failed(
                 &locale.code,
-                format!(
+                tr!(
                     "ダッシュボードにロケール {} がありません（ある言語: {}）",
+                    "Locale {} is not on the dashboard (available: {})",
                     locale.code,
                     available.join(", ")
                 ),
@@ -113,9 +116,11 @@ fn pull_core(
             continue;
         }
 
-        progress(&format!(
+        progress(&tr!(
             "{}: [{}] を読み出しています…",
-            expected.display_name, locale.code
+            "{}: reading [{}]...",
+            expected.display_name,
+            locale.code
         ));
         let read = page
             .switch_locale(&locale.code, cancel)
@@ -136,7 +141,7 @@ fn pull_core(
                         expected.item_id,
                         locale.code,
                         e,
-                        shot_suffix(&shot)
+                        log_shot_suffix(&shot)
                     ),
                     LogLevel::Warning,
                 );
@@ -176,13 +181,24 @@ fn capture_read_failure(
     };
     let shot = page.capture_diagnostics(&label);
     if let Some(s) = &shot {
-        progress(&format!("失敗時の画面を保存しました: {s}"));
+        progress(&tr!(
+            "失敗時の画面を保存しました: {s}",
+            "Saved a screenshot of the failure: {s}"
+        ));
     }
     shot
 }
 
-/// エラー文の後ろに付ける「（失敗時の画面: <パス>）」（保存できなかったときは空）
+/// エラー文の後ろに付ける「（失敗時の画面: <パス>）」（保存できなかったときは空）。
+/// 結果（標準出力）に入るので表示言語に合わせる。ログには [`log_shot_suffix`] を使う
 fn shot_suffix(shot: &Option<String>) -> String {
+    shot.as_ref()
+        .map(|s| tr!("（失敗時の画面: {s}）", " (failure screenshot: {s})"))
+        .unwrap_or_default()
+}
+
+/// ログ用の「（失敗時の画面: <パス>）」。ログは作者の調査用なので表示言語によらず日本語
+fn log_shot_suffix(shot: &Option<String>) -> String {
     shot.as_ref()
         .map(|s| format!("（失敗時の画面: {s}）"))
         .unwrap_or_default()
@@ -245,7 +261,10 @@ fn report_failure(
         LogLevel::Error,
     );
     if let Some(s) = shot {
-        progress(&format!("失敗時の画面を保存しました: {s}"));
+        progress(&tr!(
+            "失敗時の画面を保存しました: {s}",
+            "Saved a screenshot of the failure: {s}"
+        ));
     }
 }
 
@@ -256,7 +275,10 @@ fn push_core(
     cancel: &CancelToken,
 ) -> Result<PushResult> {
     let name = &expected.display_name;
-    progress(&format!("{name}: 編集画面を開いています…"));
+    progress(&tr!(
+        "{name}: 編集画面を開いています…",
+        "{name}: opening the edit page..."
+    ));
     page.open_item(&expected.item_id, cancel)?;
     ensure_allowed(&page.get_state(cancel)?)?;
 
@@ -268,8 +290,9 @@ fn push_core(
         .map(|l| l.code.as_str())
         .collect();
     if !missing.is_empty() {
-        return Err(Error::Dashboard(format!(
+        return Err(Error::Dashboard(tr!(
             "ダッシュボードにロケール {} がありません（ある言語: {}）。何も書き換えずに止めます",
+            "Locale {} is not on the dashboard (available: {}). Stopping without changing anything",
             missing.join(", "),
             available.join(", ")
         )));
@@ -279,13 +302,19 @@ fn push_core(
     for locale in &expected.locales {
         cancel.check()?;
         let code = &locale.code;
-        progress(&format!("{name}: [{code}] の現在値を確認しています…"));
+        progress(&tr!(
+            "{name}: [{code}] の現在値を確認しています…",
+            "{name}: checking the current values of [{code}]..."
+        ));
         page.switch_locale(code, cancel)?;
         let fields = locale.fields();
         let current = page.read_fields(&fields, cancel)?;
         let targets = mismatched_fields(locale, &fields, &current);
         if targets.is_empty() {
-            progress(&format!("{name}: [{code}] は正本と一致しています"));
+            progress(&tr!(
+                "{name}: [{code}] は正本と一致しています",
+                "{name}: [{code}] matches the source files"
+            ));
             results.push(LocalePushResult {
                 locale: code.clone(),
                 outcome: LocalePushOutcome::Unchanged,
@@ -295,8 +324,9 @@ fn push_core(
         }
 
         for field in &targets {
-            progress(&format!(
+            progress(&tr!(
                 "{name}: [{code}] {}を書き換えています…",
+                "{name}: [{code}] updating {}...",
                 field.display_name()
             ));
             page.write_field(*field, &locale.values[field], cancel)?;
@@ -307,12 +337,15 @@ fn push_core(
             locale,
             &fields,
             &page.read_fields(&fields, cancel)?,
-            "保存前の照合",
+            trs!("保存前の照合", "pre-save check"),
         )?;
 
         // 保存の直前にも状態を確かめる
         ensure_allowed(&page.get_state(cancel)?)?;
-        progress(&format!("{name}: [{code}] を下書き保存しています…"));
+        progress(&tr!(
+            "{name}: [{code}] を下書き保存しています…",
+            "{name}: saving [{code}] as draft..."
+        ));
         page.save_draft(cancel)?;
 
         // 読み込み直して、保存された値を確かめる
@@ -322,10 +355,11 @@ fn push_core(
             locale,
             &fields,
             &page.read_fields(&fields, cancel)?,
-            "保存後の照合",
+            trs!("保存後の照合", "post-save check"),
         )?;
-        progress(&format!(
-            "{name}: [{code}] を保存し、読み直して一致を確認しました"
+        progress(&tr!(
+            "{name}: [{code}] を保存し、読み直して一致を確認しました",
+            "{name}: saved [{code}], reloaded, and confirmed it matches"
         ));
         results.push(LocalePushResult {
             locale: code.clone(),
@@ -339,7 +373,10 @@ fn push_core(
         .iter()
         .any(|r| r.outcome == LocalePushOutcome::Saved)
     {
-        progress(&format!("{name}: 全言語を読み直して照合しています…"));
+        progress(&tr!(
+            "{name}: 全言語を読み直して照合しています…",
+            "{name}: reloading and checking all languages..."
+        ));
         page.reload(cancel)?;
         let mut snapshots = Vec::new();
         for locale in &expected.locales {
@@ -366,12 +403,13 @@ fn push_core(
                         .iter()
                         .map(|f| f.display_name())
                         .collect();
-                    format!("[{}] {}", b.locale, names.join("・"))
+                    format!("[{}] {}", b.locale, names.join(trs!("・", ", ")))
                 })
                 .collect();
-            return Err(Error::Dashboard(format!(
+            return Err(Error::Dashboard(tr!(
                 "最終照合で正本と一致しない欄があります: {}",
-                detail.join(", ")
+                "Some fields do not match the source files in the final check: {}",
+                detail.join(trs!(", ", "; "))
             )));
         }
         rows
@@ -419,11 +457,15 @@ pub fn submit(
 ) -> Result<SubmitResult> {
     let run =
         |page: &mut dyn ListingPage, confirm: &mut SubmitConfirm<'_>| -> Result<SubmitResult> {
-            progress(&format!("{item_id}: 編集画面を開いています…"));
+            progress(&tr!(
+                "{item_id}: 編集画面を開いています…",
+                "{item_id}: opening the edit page..."
+            ));
             page.open_item(item_id, cancel)?;
             ensure_allowed(&page.get_state(cancel)?)?;
-            progress(&format!(
-                "{item_id}: 審査送信の確認ダイアログを開いています…"
+            progress(&tr!(
+                "{item_id}: 審査送信の確認ダイアログを開いています…",
+                "{item_id}: opening the submit-for-review confirmation dialog..."
             ));
             page.submit_for_review(confirm, cancel)
         };
@@ -461,7 +503,8 @@ fn mismatched_fields(
         .collect()
 }
 
-/// 対象欄がすべて正本と一致するか確かめる。一致しない欄があれば、その欄名を並べた `Dashboard` エラー
+/// 対象欄がすべて正本と一致するか確かめる。一致しない欄があれば、その欄名を並べた `Dashboard` エラー。
+/// `phase` は表示言語に合わせた照合の名前（呼び出し側で `trs!` で渡す）
 fn ensure_matches(
     locale: &ExpectedLocale,
     fields: &[ListingField],
@@ -475,10 +518,11 @@ fn ensure_matches(
     if bad.is_empty() {
         Ok(())
     } else {
-        Err(Error::Dashboard(format!(
+        Err(Error::Dashboard(tr!(
             "[{}] {phase}で正本と一致しない欄があります: {}",
+            "[{}] Some fields do not match the source files in the {phase}: {}",
             locale.code,
-            bad.join("・")
+            bad.join(trs!("・", ", "))
         )))
     }
 }

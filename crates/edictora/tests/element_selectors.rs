@@ -2,7 +2,7 @@
 
 use edictora::Error;
 use edictora::dashboard::selectors::*;
-use edictora::dashboard::text::{SAVE_DRAFT_BUTTON, SAVED_MESSAGE, SUBMIT_BUTTON};
+use edictora::dashboard::text::{DashboardLang, EN, JA};
 use edictora::dashboard::write_gate::ItemPageState;
 use edictora::listing::ListingField;
 
@@ -61,7 +61,7 @@ fn pick_language_combobox_最初のパブリッシャー選択ではなく言語
         el(1).text("言語\n英語 – en （デフォルト）"),
         el(2).text("仕事効率化").label("カテゴリ"),
     ];
-    assert_eq!(pick_language_combobox(&combos).unwrap().index, 1);
+    assert_eq!(pick_language_combobox(&JA, &combos).unwrap().index, 1);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn pick_language_combobox_親要素の説明文に言語を含むカテゴリ欄
             .text("カテゴリ\nカテゴリ\nカテゴリ\nユーザー補助機能")
             .label("カテゴリ\nカテゴリ\nカテゴリ\nカテゴリ\nユーザー補助機能\nすべての言語用"),
     ];
-    assert_eq!(pick_language_combobox(&combos).unwrap().index, 0);
+    assert_eq!(pick_language_combobox(&JA, &combos).unwrap().index, 0);
 }
 
 #[test]
@@ -88,13 +88,13 @@ fn pick_field_by_label_説明文に別の欄名を含む欄には当たらない
         el(1).label("ホームページ URL\nアイテムのウェブサイトへのリンク").tag("input"),
     ];
     assert_eq!(
-        pick_field_by_label(&inputs, ListingField::HomepageUrl)
+        pick_field_by_label(&JA, &inputs, ListingField::HomepageUrl)
             .unwrap()
             .index,
         1
     );
     assert_eq!(
-        pick_field_by_label(&inputs, ListingField::OfficialUrl)
+        pick_field_by_label(&JA, &inputs, ListingField::OfficialUrl)
             .unwrap()
             .index,
         0
@@ -103,13 +103,14 @@ fn pick_field_by_label_説明文に別の欄名を含む欄には当たらない
 
 #[test]
 fn pick_language_combobox_無い場合と複数ある場合は例外() {
-    assert!(is_dashboard(pick_language_combobox(&[
-        el(0).text("Kagayoi")
-    ])));
-    assert!(is_dashboard(pick_language_combobox(&[
-        el(0).label("言語"),
-        el(1).label("言語")
-    ])));
+    assert!(is_dashboard(pick_language_combobox(
+        &JA,
+        &[el(0).text("Kagayoi")]
+    )));
+    assert!(is_dashboard(pick_language_combobox(
+        &JA,
+        &[el(0).label("言語"), el(1).label("言語")]
+    )));
 }
 
 /// `Dashboard` エラーの本文を取り出す（文言をバイト単位で固定するテスト用）。
@@ -127,15 +128,14 @@ fn dashboard_message<T: std::fmt::Debug>(r: edictora::Result<T>) -> String {
 #[test]
 fn pick_language_combobox_0件と複数件のエラー文言() {
     assert_eq!(
-        dashboard_message(pick_language_combobox(&[el(0).text("Kagayoi")])),
-        "「言語」のコンボボックスが見つかりません（ダッシュボードが日本語表示か確認してください）"
+        dashboard_message(pick_language_combobox(&JA, &[el(0).text("Kagayoi")])),
+        "「言語」のコンボボックスが見つかりません（ダッシュボードが日本語か英語で表示されているか確認してください）"
     );
     assert_eq!(
-        dashboard_message(pick_language_combobox(&[
-            el(0).label("言語"),
-            el(1).label("言語"),
-            el(2).text("言語"),
-        ])),
+        dashboard_message(pick_language_combobox(
+            &JA,
+            &[el(0).label("言語"), el(1).label("言語"), el(2).text("言語"),]
+        )),
         "「言語」のコンボボックスが 3 個あり、特定できません"
     );
 }
@@ -144,11 +144,12 @@ fn pick_language_combobox_0件と複数件のエラー文言() {
 fn pick_locale_option_0件と複数件のエラー文言() {
     let options = [el(0).text("英語 – en"), el(1).text("日本語 – ja")];
     assert_eq!(
-        dashboard_message(pick_locale_option(&options, "fr")),
+        dashboard_message(pick_locale_option(&JA, &options, "fr")),
         "言語の選択肢にロケール fr がありません（ある言語: en, ja）"
     );
     assert_eq!(
         dashboard_message(pick_locale_option(
+            &JA,
             &[el(0).text("英語 – en"), el(1).text("English – EN")],
             "en"
         )),
@@ -165,7 +166,7 @@ fn pick_button_0件と複数件のエラー文言() {
     assert_eq!(
         dashboard_message(pick_button(
             &[el(0).text("審査のため送信"), el(1).text("審査のため送信")],
-            SUBMIT_BUTTON
+            JA.submit_button
         )),
         "「審査のため送信」ボタンが 2 個あり、特定できません"
     );
@@ -175,6 +176,7 @@ fn pick_button_0件と複数件のエラー文言() {
 fn pick_field_by_label_0件と複数件のエラー文言() {
     assert_eq!(
         dashboard_message(pick_field_by_label(
+            &JA,
             &[el(0).label("公式 URL")],
             ListingField::SupportUrl
         )),
@@ -182,6 +184,7 @@ fn pick_field_by_label_0件と複数件のエラー文言() {
     );
     assert_eq!(
         dashboard_message(pick_field_by_label(
+            &JA,
             &[el(0).label("サポート URL"), el(1).label("サポートURL")],
             ListingField::SupportUrl
         )),
@@ -189,16 +192,16 @@ fn pick_field_by_label_0件と複数件のエラー文言() {
     );
     // 説明欄はラベルで探さない（共通化の対象外の早期リターン）
     assert_eq!(
-        dashboard_message(pick_field_by_label(&[], ListingField::Description)),
+        dashboard_message(pick_field_by_label(&JA, &[], ListingField::Description)),
         "説明欄はラベルではなく textarea で特定します"
     );
 }
 
 #[test]
 fn parse_locale_option_言語名とコードとデフォルト表記を読む() {
-    let en = parse_locale_option(Some("英語 – en （デフォルト）"));
-    let ja = parse_locale_option(Some("日本語 – ja"));
-    let pt = parse_locale_option(Some("ポルトガル語（ブラジル） – pt-BR"));
+    let en = parse_locale_option(&JA, Some("英語 – en （デフォルト）"));
+    let ja = parse_locale_option(&JA, Some("日本語 – ja"));
+    let pt = parse_locale_option(&JA, Some("ポルトガル語（ブラジル） – pt-BR"));
 
     assert_eq!(
         en,
@@ -217,8 +220,8 @@ fn parse_locale_option_言語名とコードとデフォルト表記を読む() 
         })
     );
     assert_eq!(pt.map(|p| p.code).as_deref(), Some("pt-BR"));
-    assert!(parse_locale_option(Some("言語")).is_none());
-    assert!(parse_locale_option(Some("")).is_none());
+    assert!(parse_locale_option(&JA, Some("言語")).is_none());
+    assert!(parse_locale_option(&JA, Some("")).is_none());
 }
 
 #[test]
@@ -228,38 +231,38 @@ fn pick_locale_option_コードが完全一致するものだけを選ぶ() {
         el(1).text("英語 – en （デフォルト）"),
         el(2).text("日本語 – ja"),
     ];
-    assert_eq!(pick_locale_option(&options, "en").unwrap().index, 1);
-    assert_eq!(pick_locale_option(&options, "en-GB").unwrap().index, 0);
-    assert!(is_dashboard(pick_locale_option(&options, "fr")));
-    assert_eq!(locale_codes(&options), vec!["en-GB", "en", "ja"]);
+    assert_eq!(pick_locale_option(&JA, &options, "en").unwrap().index, 1);
+    assert_eq!(pick_locale_option(&JA, &options, "en-GB").unwrap().index, 0);
+    assert!(is_dashboard(pick_locale_option(&JA, &options, "fr")));
+    assert_eq!(locale_codes(&JA, &options), vec!["en-GB", "en", "ja"]);
 }
 
 #[test]
 fn current_locale_code_表示の最後の言語行を読む() {
     assert_eq!(
-        current_locale_code(&el(0).text("言語\n英語 – en （デフォルト）")).as_deref(),
+        current_locale_code(&JA, &el(0).text("言語\n英語 – en （デフォルト）")).as_deref(),
         Some("en")
     );
-    assert!(current_locale_code(&el(0).text("言語")).is_none());
+    assert!(current_locale_code(&JA, &el(0).text("言語")).is_none());
 }
 
 #[test]
 fn single_locale_code_言語が1つだけのアイテムは言語名からコードを決める() {
     // 2026-11-14 の実画面: 言語が 1 つだけのアイテムの選択欄はコードなしの言語名だけ
     assert_eq!(
-        single_locale_code(&el(0).text("言語\n言語\n言語\n日本語")).as_deref(),
+        single_locale_code(&JA, &el(0).text("言語\n言語\n言語\n日本語")).as_deref(),
         Some("ja")
     );
     assert_eq!(
-        single_locale_code(&el(0).text("言語\n英語 ")).as_deref(),
+        single_locale_code(&JA, &el(0).text("言語\n英語 ")).as_deref(),
         Some("en")
     );
     // コード付き（複数言語のアイテム）は対象外。切り替えの手順を使う
-    assert!(single_locale_code(&el(0).text("言語\n日本語 – ja")).is_none());
+    assert!(single_locale_code(&JA, &el(0).text("言語\n日本語 – ja")).is_none());
     // 対応表に無い言語名は推測しない
-    assert!(single_locale_code(&el(0).text("言語\nフランス語")).is_none());
+    assert!(single_locale_code(&JA, &el(0).text("言語\nフランス語")).is_none());
     // 値が無い（ラベルだけ）も推測しない
-    assert!(single_locale_code(&el(0).text("言語")).is_none());
+    assert!(single_locale_code(&JA, &el(0).text("言語")).is_none());
 }
 
 #[test]
@@ -269,11 +272,14 @@ fn pick_button_文言の完全一致で1つだけ選ぶ() {
         el(1).text(" 下書きとして保存する "),
         el(2).text("審査のため送信"),
     ];
-    assert_eq!(pick_button(&buttons, SAVE_DRAFT_BUTTON).unwrap().index, 1);
+    assert_eq!(
+        pick_button(&buttons, JA.save_draft_button).unwrap().index,
+        1
+    );
     assert!(is_dashboard(pick_button(&buttons, "削除")));
     assert!(is_dashboard(pick_button(
         &[el(0).text("審査のため送信"), el(1).text("審査のため送信")],
-        SUBMIT_BUTTON
+        JA.submit_button
     )));
 }
 
@@ -288,24 +294,25 @@ fn pick_field_by_label_空白の有無を無視してラベルで特定する() 
         el(2).label("サポート URL").tag("input").ty("text"),
     ];
     assert_eq!(
-        pick_field_by_label(&inputs, ListingField::OfficialUrl)
+        pick_field_by_label(&JA, &inputs, ListingField::OfficialUrl)
             .unwrap()
             .index,
         0
     );
     assert_eq!(
-        pick_field_by_label(&inputs, ListingField::HomepageUrl)
+        pick_field_by_label(&JA, &inputs, ListingField::HomepageUrl)
             .unwrap()
             .index,
         1
     );
     assert_eq!(
-        pick_field_by_label(&inputs, ListingField::SupportUrl)
+        pick_field_by_label(&JA, &inputs, ListingField::SupportUrl)
             .unwrap()
             .index,
         2
     );
     assert!(is_dashboard(pick_field_by_label(
+        &JA,
         &[el(0).label("サポート URL"), el(1).label("サポート URL")],
         ListingField::SupportUrl
     )));
@@ -346,10 +353,10 @@ fn has_message_常設の案内通知を除いて判定する() {
         "ガイドやヒントが必要な場合は、ヘルプをご覧ください。保存されました",
         "",
     ];
-    assert!(!has_message(&messages, SAVED_MESSAGE));
+    assert!(!has_message(&JA, &messages, JA.saved_message));
     let mut more = messages.clone();
     more.push("アイテムが保存されました。");
-    assert!(has_message(&more, SAVED_MESSAGE));
+    assert!(has_message(&JA, &more, JA.saved_message));
 }
 
 // ───────── 編集画面の状態の導出（item_page の get_state から切り出した純粋関数）─────────
@@ -357,6 +364,7 @@ fn has_message_常設の案内通知を除いて判定する() {
 #[test]
 fn item_page_state_説明欄と保存ボタンが1つずつなら見つかり操作できる() {
     let state = item_page_state(
+        &JA,
         Some("下書き".to_string()),
         &[el(0).tag("textarea")],
         &[el(0).text("公開"), el(1).text(" 下書きとして保存する ")],
@@ -376,9 +384,10 @@ fn item_page_state_説明欄と保存ボタンが1つずつなら見つかり操
 #[test]
 fn item_page_state_編集不可の説明欄と押せない保存ボタン() {
     let readonly = item_page_state(
+        &JA,
         None,
         &[el(0).tag("textarea").read_only()],
-        &[el(0).text(SAVE_DRAFT_BUTTON).disabled()],
+        &[el(0).text(JA.save_draft_button).disabled()],
     );
     assert!(readonly.description_found);
     assert!(!readonly.description_editable);
@@ -386,7 +395,7 @@ fn item_page_state_編集不可の説明欄と押せない保存ボタン() {
     assert!(!readonly.save_button_enabled);
     assert_eq!(readonly.status_text, None);
 
-    let disabled = item_page_state(None, &[el(0).tag("textarea").disabled()], &[]);
+    let disabled = item_page_state(&JA, None, &[el(0).tag("textarea").disabled()], &[]);
     assert!(disabled.description_found);
     assert!(!disabled.description_editable);
 }
@@ -394,7 +403,7 @@ fn item_page_state_編集不可の説明欄と押せない保存ボタン() {
 #[test]
 fn item_page_state_0個と複数個は見つからない扱い() {
     // 0 個（添字 0 を読まずに false になる）
-    let none = item_page_state(None, &[], &[el(0).text("公開")]);
+    let none = item_page_state(&JA, None, &[], &[el(0).text("公開")]);
     assert!(!none.description_found);
     assert!(!none.description_editable);
     assert!(!none.save_button_found);
@@ -402,9 +411,13 @@ fn item_page_state_0個と複数個は見つからない扱い() {
 
     // 複数個（どれか 1 つを選ばない）
     let many = item_page_state(
+        &JA,
         None,
         &[el(0).tag("textarea"), el(1).tag("textarea")],
-        &[el(0).text(SAVE_DRAFT_BUTTON), el(1).text(SAVE_DRAFT_BUTTON)],
+        &[
+            el(0).text(JA.save_draft_button),
+            el(1).text(JA.save_draft_button),
+        ],
     );
     assert!(!many.description_found);
     assert!(!many.description_editable);
@@ -427,24 +440,30 @@ fn auto_publish_state_ラベルが一致するチェックの状態を読む() {
         check(0, "利用規約に同意する", Some(false)),
         check(1, "審査に合格したら自動的に公開する", Some(true)),
     ];
-    assert_eq!(auto_publish_state(&checks), Some(true));
+    assert_eq!(auto_publish_state(&JA, &checks), Some(true));
     // 空白の有無は無視する
     assert_eq!(
-        auto_publish_state(&[check(0, "自動的に 公開する", Some(false))]),
+        auto_publish_state(&JA, &[check(0, "自動的に 公開する", Some(false))]),
         Some(false)
     );
 }
 
 #[test]
 fn auto_publish_state_ラベルが無くてもチェックが1つならその状態() {
-    assert_eq!(auto_publish_state(&[check(0, "", Some(true))]), Some(true));
+    assert_eq!(
+        auto_publish_state(&JA, &[check(0, "", Some(true))]),
+        Some(true)
+    );
 }
 
 #[test]
 fn auto_publish_state_0個とラベルなし複数は不明() {
-    assert_eq!(auto_publish_state(&[]), None);
+    assert_eq!(auto_publish_state(&JA, &[]), None);
     assert_eq!(
-        auto_publish_state(&[check(0, "", Some(true)), check(1, "別の項目", Some(false))]),
+        auto_publish_state(
+            &JA,
+            &[check(0, "", Some(true)), check(1, "別の項目", Some(false))]
+        ),
         None
     );
 }
@@ -453,34 +472,38 @@ fn auto_publish_state_0個とラベルなし複数は不明() {
 fn auto_publish_state_ラベル一致の状態が不明なら1個でも不明() {
     // ラベルで見つけた要素を優先し、「1 つだけ」の判断へ切り替えない
     assert_eq!(
-        auto_publish_state(&[check(0, "自動的に公開する", None)]),
+        auto_publish_state(&JA, &[check(0, "自動的に公開する", None)]),
         None
     );
 }
 
 #[test]
 fn mentions_language_label_ラベルか表示テキストに言語を含めば当たる() {
-    assert!(mentions_language_label(&el(0).label("言語")));
-    assert!(mentions_language_label(&el(0).text("言 語\n英語 – en")));
+    assert!(mentions_language_label(&JA, &el(0).label("言語")));
+    assert!(mentions_language_label(
+        &JA,
+        &el(0).text("言 語\n英語 – en")
+    ));
     // 部分一致（説明文中の「すべての言語用」にも当たる。pick_language_combobox の完全一致より緩い）
     assert!(mentions_language_label(
+        &JA,
         &el(0).label("カテゴリ\nすべての言語用")
     ));
-    assert!(pick_language_combobox(&[el(0).label("カテゴリ\nすべての言語用")]).is_err());
-    assert!(!mentions_language_label(&el(0).text("Kagayoi")));
+    assert!(pick_language_combobox(&JA, &[el(0).label("カテゴリ\nすべての言語用")]).is_err());
+    assert!(!mentions_language_label(&JA, &el(0).text("Kagayoi")));
 }
 
 #[test]
 fn parse_status_ステータス行の値を読む() {
     assert_eq!(
-        parse_status(Some("アイテム\nステータス: 審査待ち\nパッケージ")).as_deref(),
+        parse_status(&JA, Some("アイテム\nステータス: 審査待ち\nパッケージ")).as_deref(),
         Some("審査待ち")
     );
     assert_eq!(
-        parse_status(Some("ステータス：公開済み")).as_deref(),
+        parse_status(&JA, Some("ステータス：公開済み")).as_deref(),
         Some("公開済み")
     );
-    assert!(parse_status(Some("なし")).is_none());
+    assert!(parse_status(&JA, Some("なし")).is_none());
 }
 
 #[test]
@@ -503,5 +526,271 @@ fn covered_error_message_項目が無ければ従来の文だけにする() {
     assert_eq!(
         covered_error_message("保存ボタン", &point),
         "保存ボタンが他の要素に覆われていて押せません"
+    );
+}
+
+// ───────── 画面の表示言語の判定（<html lang> の解釈）─────────
+
+#[test]
+fn dashboard_lang_日本語と英語を主サブタグで判定する() {
+    assert_eq!(dashboard_lang(Some("ja")).unwrap(), DashboardLang::Ja);
+    assert_eq!(dashboard_lang(Some(" ja-JP ")).unwrap(), DashboardLang::Ja);
+    assert_eq!(dashboard_lang(Some("en")).unwrap(), DashboardLang::En);
+    assert_eq!(dashboard_lang(Some("en-US")).unwrap(), DashboardLang::En);
+    assert_eq!(dashboard_lang(Some("EN_gb")).unwrap(), DashboardLang::En);
+    assert_eq!(dashboard_text_for_lang(Some("ja")).unwrap(), &JA);
+    assert_eq!(dashboard_text_for_lang(Some("en-US")).unwrap(), &EN);
+}
+
+#[test]
+fn dashboard_lang_日本語と英語以外は推測せずに止める() {
+    let fr = dashboard_message(dashboard_lang(Some("fr-FR")));
+    assert!(fr.contains("fr-FR"), "{fr}");
+    assert!(is_dashboard(dashboard_lang(Some("jav"))));
+    assert!(is_dashboard(dashboard_lang(Some("english"))));
+}
+
+#[test]
+fn dashboard_lang_空は従来どおり日本語にする() {
+    // 日本語表示の実画面で lang 属性を確かめるまで、確認済みの日本語の経路を止めない
+    assert_eq!(dashboard_lang(Some("  ")).unwrap(), DashboardLang::Ja);
+    assert_eq!(dashboard_lang(None).unwrap(), DashboardLang::Ja);
+}
+
+// ───────── 英語表示の画面（文言は実画面で未確認の暫定値）─────────
+
+#[test]
+fn 英語_言語の選択欄をラベルの行の完全一致で選ぶ() {
+    let combos = [
+        el(0).text("Kagayoi"),
+        el(1)
+            .text("Language\nEnglish – en (Default)")
+            .label("Language\nLanguage\nEnglish – en (Default)"),
+        // 親要素の説明文に "languages" を含むカテゴリ欄には当たらない
+        el(2)
+            .text("Category\nProductivity")
+            .label("Category\nProductivity\nFor all languages"),
+    ];
+    assert_eq!(pick_language_combobox(&EN, &combos).unwrap().index, 1);
+    // 英語の文言セットでは日本語のラベルに当たらない（1 セットだけで探す）
+    assert!(is_dashboard(pick_language_combobox(
+        &EN,
+        &[el(0).label("言語")]
+    )));
+    assert!(is_dashboard(pick_language_combobox(
+        &JA,
+        &[el(0).label("Language")]
+    )));
+}
+
+#[test]
+fn 英語_言語の選択肢と既定の表記を読む() {
+    assert_eq!(
+        parse_locale_option(&EN, Some("English – en (Default)")),
+        Some(LocaleOption {
+            name: "English".to_string(),
+            code: "en".to_string(),
+            is_default: true
+        })
+    );
+    // 全角の括弧・小文字の default も受ける
+    assert!(
+        parse_locale_option(&EN, Some("English – en （default）"))
+            .unwrap()
+            .is_default
+    );
+    assert_eq!(
+        parse_locale_option(&EN, Some("Japanese – ja")),
+        Some(LocaleOption {
+            name: "Japanese".to_string(),
+            code: "ja".to_string(),
+            is_default: false
+        })
+    );
+    assert_eq!(
+        parse_locale_option(&EN, Some("Portuguese (Brazil) – pt-BR"))
+            .map(|p| p.code)
+            .as_deref(),
+        Some("pt-BR")
+    );
+    assert!(parse_locale_option(&EN, Some("Language")).is_none());
+
+    let options = [
+        el(0).text("English (United Kingdom) – en-GB"),
+        el(1).text("English – en (Default)"),
+        el(2).text("Japanese – ja"),
+    ];
+    assert_eq!(pick_locale_option(&EN, &options, "en").unwrap().index, 1);
+    assert_eq!(locale_codes(&EN, &options), vec!["en-GB", "en", "ja"]);
+    assert_eq!(
+        current_locale_code(&EN, &el(0).text("Language\nEnglish – en (Default)")).as_deref(),
+        Some("en")
+    );
+}
+
+#[test]
+fn 英語_言語が1つだけのアイテムは言語名からコードを決める() {
+    assert_eq!(
+        single_locale_code(&EN, &el(0).text("Language\nLanguage\nEnglish")).as_deref(),
+        Some("en")
+    );
+    assert_eq!(
+        single_locale_code(&EN, &el(0).text("Language\nJapanese ")).as_deref(),
+        Some("ja")
+    );
+    assert!(single_locale_code(&EN, &el(0).text("Language\nFrench")).is_none());
+    // 日本語の言語名は英語の文言セットでは解釈しない
+    assert!(single_locale_code(&EN, &el(0).text("Language\n日本語")).is_none());
+}
+
+#[test]
+fn 英語_ボタンとurl欄を英語の文言で選ぶ() {
+    let buttons = [
+        el(0).text("Publish"),
+        el(1).text(" Save draft "),
+        el(2).text("Submit for review"),
+    ];
+    assert_eq!(
+        pick_button(&buttons, EN.save_draft_button).unwrap().index,
+        1
+    );
+    assert_eq!(pick_button(&buttons, EN.submit_button).unwrap().index, 2);
+
+    let inputs = [
+        el(0)
+            .label("Official URL\nShown instead of the homepage URL when ...")
+            .tag("input"),
+        el(1)
+            .label("Homepage URL\nA link to your website")
+            .tag("input"),
+        el(2).label("Support URL").tag("input"),
+    ];
+    assert_eq!(
+        pick_field_by_label(&EN, &inputs, ListingField::OfficialUrl)
+            .unwrap()
+            .index,
+        0
+    );
+    assert_eq!(
+        pick_field_by_label(&EN, &inputs, ListingField::HomepageUrl)
+            .unwrap()
+            .index,
+        1
+    );
+    assert_eq!(
+        pick_field_by_label(&EN, &inputs, ListingField::SupportUrl)
+            .unwrap()
+            .index,
+        2
+    );
+
+    let state = item_page_state(
+        &EN,
+        Some("Draft".to_string()),
+        &[el(0).tag("textarea")],
+        &buttons,
+    );
+    assert!(state.save_button_found && state.save_button_enabled);
+    // 日本語の文言セットでは英語のボタンは見つからない
+    assert!(!item_page_state(&JA, None, &[], &buttons).save_button_found);
+}
+
+#[test]
+fn 英語_ステータス行は行頭のラベルだけを読む() {
+    assert_eq!(
+        parse_status(&EN, Some("Item\nStatus: Published\nPackage")).as_deref(),
+        Some("Published")
+    );
+    assert_eq!(
+        parse_status(&EN, Some("  Status：Pending review")).as_deref(),
+        Some("Pending review")
+    );
+    // 本文中の別の文の "status:" には当たらない
+    assert!(parse_status(&EN, Some("Check the review status: see help")).is_none());
+    assert!(parse_status(&EN, Some("Item status: Draft")).is_none());
+    // 日本語の文言セットでは英語のラベルを読まない
+    assert!(parse_status(&JA, Some("Status: Published")).is_none());
+}
+
+#[test]
+fn 英語_成功メッセージは単語単位で否定の文を除いて判定する() {
+    let saved = EN.saved_message;
+    assert!(has_message(&EN, &["Item saved."], saved));
+    assert!(has_message(&EN, &["Your changes have been SAVED"], saved));
+    // 失敗・否定の文は成功と見なさない
+    assert!(!has_message(&EN, &["Item could not be saved."], saved));
+    assert!(!has_message(&EN, &["Changes weren't saved"], saved));
+    assert!(!has_message(&EN, &["Failed: item saved partially"], saved));
+    // 単語の一部（unsaved）には当たらない
+    assert!(!has_message(&EN, &["You have unsaved changes"], saved));
+    let submitted = EN.submitted_message;
+    assert!(has_message(&EN, &["Item submitted for review."], submitted));
+    assert!(!has_message(
+        &EN,
+        &["The item was not submitted"],
+        submitted
+    ));
+    // 英語では案内通知を除外しない（語が不明なため）。空文字で全部が消えることもない
+    assert_eq!(
+        result_messages(&EN, &["Need help? See the guide", " ", "Item saved."]),
+        vec!["Need help? See the guide", "Item saved."]
+    );
+    // 日本語の判定は従来どおり（部分一致・否定語なし）
+    assert!(has_message(
+        &JA,
+        &["アイテムが保存されました。"],
+        JA.saved_message
+    ));
+}
+
+#[test]
+fn 英語_自動公開チェックを大文字小文字を問わず見つける() {
+    let checks = [
+        check(0, "I agree to the terms", Some(false)),
+        check(
+            1,
+            "Publish Automatically after the review passes",
+            Some(true),
+        ),
+    ];
+    assert_eq!(auto_publish_state(&EN, &checks), Some(true));
+    assert_eq!(
+        auto_publish_state(
+            &EN,
+            &[
+                check(0, "publish automatically", Some(false)),
+                check(1, "", Some(true))
+            ]
+        ),
+        Some(false)
+    );
+}
+
+#[test]
+fn 英語_待ち条件は英語のラベルで判定する() {
+    assert!(mentions_language_label(&EN, &el(0).label("Language")));
+    assert!(!mentions_language_label(&EN, &el(0).label("言語")));
+}
+
+// ───────── ページ内スクリプトの固定の印を利用者向けの文に直す ─────────
+
+#[test]
+fn page_script_error_message_要素が消えた印を文に直す() {
+    assert_eq!(
+        page_script_error_message(
+            "ページ内スクリプトの実行に失敗しました: Error: EDICTORA_ELEMENT_GONE:textarea\n    at get (<anonymous>:95:15)"
+        ),
+        "ページ内スクリプトの実行に失敗しました: Error: 要素が画面から消えました: textarea\n    at get (<anonymous>:95:15)"
+    );
+    // 印が無い例外はそのまま
+    assert_eq!(page_script_error_message("別の例外"), "別の例外");
+}
+
+#[test]
+fn covered_error_message_画面の外の印を文に直す() {
+    let point = serde_json::json!({ "hit": false, "cover": OFFSCREEN_COVER });
+    assert_eq!(
+        covered_error_message("保存ボタン", &point),
+        "保存ボタンが他の要素に覆われていて押せません（中心にあった要素: （要素なし: 中心が画面の外））"
     );
 }

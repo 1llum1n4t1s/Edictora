@@ -75,3 +75,27 @@ fn ensure_allowed_不可ならwrite_blocked() {
     ));
     ensure_allowed(&ok_state(Some("公開済み"))).unwrap();
 }
+
+#[test]
+fn evaluate_英語のステータス() {
+    // 英語の表記は実画面で未確認。許可リストの語だけを許し、審査中の語は止める
+    assert!(evaluate(&ok_state(Some("Published"))).allowed);
+    assert!(evaluate(&ok_state(Some("Draft"))).allowed);
+    assert!(!evaluate(&ok_state(Some("Pending review"))).allowed);
+    assert!(!evaluate(&ok_state(Some("In review"))).allowed);
+    assert!(!evaluate(&ok_state(Some("Published (update pending review)"))).allowed);
+    assert!(!evaluate(&ok_state(Some("Taken down"))).allowed);
+}
+
+#[test]
+fn evaluate_unpublishedは部分一致でpublishedに当たっても止める() {
+    // 大文字小文字を区別しない部分一致だと "Unpublished" は "Published" を含む。確認済みの状態ではないので止める
+    assert!(!evaluate(&ok_state(Some("Not published"))).allowed);
+    let decision = evaluate(&ok_state(Some("Unpublished")));
+    assert!(!decision.allowed);
+    assert!(
+        decision.reason.contains("確認済みの状態ではない"),
+        "{}",
+        decision.reason
+    );
+}

@@ -8,9 +8,12 @@
 //! - 説明欄が編集不可、または保存ボタンが無い・押せない → 止める
 //!
 //! 実画面で新しいステータス表記を確認したら、[`EDITABLE_STATUS_KEYWORDS`] に足す。
+//!
+//! ステータスの語は日本語・英語の両方を 1 つの一覧で持つ（画面の言語に依らず同じ判定）。
+//! 英語の語は実画面で未確認。英語で新しい語を足すときは「止める」側だけにし、「書いてよい」側に推測で足さない。
 
-use crate::dashboard::text::SAVE_DRAFT_BUTTON;
 use crate::error::{Error, Result};
+use crate::tr;
 use crate::util::contains_ic;
 
 /// 編集画面の状態（書き込み可否の判断材料）
@@ -48,6 +51,12 @@ pub const LOCKED_STATUS_KEYWORDS: [&str; 7] = [
     "Under review",
 ];
 
+/// 編集可能な状態の語を含んでいても、確認済みの状態ではないので止める語（部分一致の取り違えを防ぐ）。
+///
+/// 例: 英語の "Unpublished"・"Not published" は大文字小文字を区別しない部分一致だと "Published" を含み、許可されてしまう。
+/// 非公開のアイテムへの書き込みは実画面で確かめていないので止める（英語の表記も実画面で未確認）。
+pub const UNCONFIRMED_LOOKALIKE_KEYWORDS: [&str; 2] = ["Unpublished", "Not published"];
+
 /// 書き込んでよいと判断できる状態の語。
 /// 「拒否」は審査で却下された状態で、掲載情報を直して再送信するために編集する必要がある。
 /// 実画面（2026-11-15、ステータス「拒否」）で説明欄が編集でき、「下書きとして保存する」が押せることを確認済み。
@@ -66,9 +75,10 @@ pub fn evaluate(state: &ItemPageState) -> WriteDecision {
     let status = match state.status_text.as_deref() {
         Some(s) if !s.trim().is_empty() => s.trim(),
         _ => {
-            return deny(
-                "アイテムのステータスを読み取れません。安全のため書き込みを止めます".to_string(),
-            );
+            return deny(tr!(
+                "アイテムのステータスを読み取れません。安全のため書き込みを止めます",
+                "Cannot read the item status. Stopping the write to be safe"
+            ));
         }
     };
 
@@ -76,32 +86,49 @@ pub fn evaluate(state: &ItemPageState) -> WriteDecision {
         .iter()
         .any(|k| contains_ic(status, k))
     {
-        return deny(format!(
-            "ステータスが「{status}」のため書き込みません（審査の取り消しはしません）"
+        return deny(tr!(
+            "ステータスが「{status}」のため書き込みません（審査の取り消しはしません）",
+            "Not writing because the status is \"{status}\" (the review is never cancelled)"
         ));
     }
-    if !EDITABLE_STATUS_KEYWORDS
+    let unconfirmed = UNCONFIRMED_LOOKALIKE_KEYWORDS
         .iter()
-        .any(|k| contains_ic(status, k))
+        .any(|k| contains_ic(status, k));
+    if unconfirmed
+        || !EDITABLE_STATUS_KEYWORDS
+            .iter()
+            .any(|k| contains_ic(status, k))
     {
-        return deny(format!(
-            "ステータス「{status}」は書き込みを確認済みの状態ではないため、安全のため止めます"
+        return deny(tr!(
+            "ステータス「{status}」は書き込みを確認済みの状態ではないため、安全のため止めます",
+            "Stopping to be safe because writing has not been verified for the status \"{status}\""
         ));
     }
     if !state.description_found {
-        return deny("説明欄が見つからないため書き込みを止めます".to_string());
+        return deny(tr!(
+            "説明欄が見つからないため書き込みを止めます",
+            "Stopping the write because the description field was not found"
+        ));
     }
     if !state.description_editable {
-        return deny("説明欄が編集できない状態のため書き込みを止めます".to_string());
+        return deny(tr!(
+            "説明欄が編集できない状態のため書き込みを止めます",
+            "Stopping the write because the description field cannot be edited"
+        ));
     }
+    // ボタンの文言は画面の言語で違うが、この判定は画面の言語を受け取らない（`ensure_allowed` の署名を保つため）。
+    // 日本語の文は従来どおり日本語の画面の文言を、英語の文は一般的な言い方を使う
+    let save = crate::dashboard::text::JA.save_draft_button;
     if !state.save_button_found {
-        return deny(format!(
-            "「{SAVE_DRAFT_BUTTON}」ボタンが見つからないため書き込みを止めます"
+        return deny(tr!(
+            "「{save}」ボタンが見つからないため書き込みを止めます",
+            "Stopping the write because the save-draft button was not found"
         ));
     }
     if !state.save_button_enabled {
-        return deny(format!(
-            "「{SAVE_DRAFT_BUTTON}」ボタンが押せない状態のため書き込みを止めます"
+        return deny(tr!(
+            "「{save}」ボタンが押せない状態のため書き込みを止めます",
+            "Stopping the write because the save-draft button cannot be clicked"
         ));
     }
     WriteDecision {

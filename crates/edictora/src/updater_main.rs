@@ -27,6 +27,8 @@ use edictora::update::{UpdateOutcome, run_update};
 const RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(30), Duration::from_secs(90)];
 
 fn main() {
+    // 表示言語を最初に決める（フック・引数の誤りより前。失敗しない。EDICTORA_LANG → OS の表示言語）
+    edictora::i18n::init(edictora::i18n::detect());
     let args: Vec<String> = std::env::args().skip(1).collect();
     let paths = AppPaths::from_environment();
     logging::init(&paths.log_directory());

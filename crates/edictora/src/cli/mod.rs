@@ -24,7 +24,8 @@ use crate::update::UpdateOutcome;
 use crate::update::lock::{LockFile, is_held_by_another};
 use crate::update::source::UpdateSource;
 use crate::util::{eq_ic, format_n0, utf16_len};
-use args::{CliCommand, CliCommandKind, HELP_TEXT};
+use crate::{tr, trs};
+use args::{CliCommand, CliCommandKind, help_text};
 
 /// 終了コード
 pub mod exit_codes {
@@ -75,7 +76,11 @@ pub fn refuse_update(
     _cancel: &CancelToken,
 ) -> Result<UpdateOutcome> {
     Err(Error::Update(
-        "この実行環境では更新処理を使えません".to_string(),
+        trs!(
+            "この実行環境では更新処理を使えません",
+            "Updates are not available in this environment"
+        )
+        .to_string(),
     ))
 }
 
@@ -151,14 +156,14 @@ impl<'a> CliApp<'a> {
         let command = match args::parse(args) {
             Ok(c) => c,
             Err(e) => {
-                self.errln(&format!("エラー: {}", e.message()));
+                self.errln(&error_line(&e.message()));
                 return exit_codes::USAGE;
             }
         };
 
         match command.kind {
             CliCommandKind::Help => {
-                self.outln(HELP_TEXT);
+                self.outln(help_text());
                 return exit_codes::SUCCESS;
             }
             CliCommandKind::Version => {
@@ -189,12 +194,12 @@ impl<'a> CliApp<'a> {
         let (config, targets) = match prepared {
             Ok(v) => v,
             Err(e @ (Error::Config(_) | Error::Usage(_))) => {
-                self.errln(&format!("エラー: {}", e.message()));
+                self.errln(&error_line(&e.message()));
                 return exit_codes::USAGE;
             }
             Err(e) => {
                 // 設定の段階で起きるのは Config / Usage だけのはずだが、念のため実行時エラーとして扱う
-                self.errln(&format!("エラー: {}", redact(&e.message())));
+                self.errln(&error_line(&redact(&e.message())));
                 return exit_codes::FAILURE;
             }
         };
@@ -207,9 +212,10 @@ impl<'a> CliApp<'a> {
         let _running = match LockFile::try_acquire_shared(&self.paths.running_lock_path()) {
             Ok(lock) => Some(lock),
             Err(e) if is_held_by_another(&e) => {
-                self.errln(
+                self.errln(trs!(
                     "エラー: edictora の更新を適用している最中です。少し待ってから実行し直してください。",
-                );
+                    "Error: an edictora update is being applied. Wait a moment and run the command again.",
+                ));
                 return exit_codes::FAILURE;
             }
             Err(e) => {
@@ -237,15 +243,15 @@ impl<'a> CliApp<'a> {
         match result {
             Ok(code) => code,
             Err(Error::Cancelled) => {
-                self.errln("中断しました。");
+                self.errln(&Error::Cancelled.message());
                 exit_codes::CANCELLED
             }
             Err(Error::LoginRequired) => {
-                self.errln(&format!("エラー: {}", Error::LoginRequired.message()));
+                self.errln(&error_line(&Error::LoginRequired.message()));
                 exit_codes::LOGIN_REQUIRED
             }
             Err(Error::WriteBlocked(m)) => {
-                self.errln(&format!("中止: {}", redact(&m)));
+                self.errln(&tr!("中止: {}", "Aborted: {}", redact(&m)));
                 exit_codes::BLOCKED
             }
             Err(e) => {
@@ -253,7 +259,7 @@ impl<'a> CliApp<'a> {
                     &format!("{} の実行に失敗", command.kind.name()),
                     &format!("{}: {}", e.kind_name(), e.message()),
                 );
-                self.errln(&format!("エラー: {}", redact(&e.message())));
+                self.errln(&error_line(&redact(&e.message())));
                 exit_codes::FAILURE
             }
         }
@@ -265,7 +271,7 @@ impl<'a> CliApp<'a> {
         let source = match UpdateSource::from_override(self.update_source_override.as_deref()) {
             Ok(s) => s,
             Err(m) => {
-                self.errln(&format!("エラー: {m}"));
+                self.errln(&error_line(&m));
                 return exit_codes::USAGE;
             }
         };
@@ -285,7 +291,7 @@ impl<'a> CliApp<'a> {
                 }
             }
             Err(Error::Cancelled) => {
-                self.errln("中断しました。");
+                self.errln(&Error::Cancelled.message());
                 exit_codes::CANCELLED
             }
             Err(e) => {
@@ -293,7 +299,7 @@ impl<'a> CliApp<'a> {
                     "update の実行に失敗",
                     &format!("{}: {}", e.kind_name(), e.message()),
                 );
-                self.errln(&format!("エラー: {}", e.message()));
+                self.errln(&error_line(&e.message()));
                 exit_codes::FAILURE
             }
         }
@@ -318,8 +324,9 @@ impl<'a> CliApp<'a> {
         command: &CliCommand,
         cancel: &CancelToken,
     ) -> Result<i32> {
-        self.outln(&format!(
+        self.outln(&tr!(
             "Chrome を開きます（プロファイル: {}）",
+            "Opening Chrome (profile: {})",
             config.profile_directory.display()
         ));
         // ログインは利用者が画面で操作するので、常にウィンドウを表示する
@@ -333,9 +340,10 @@ impl<'a> CliApp<'a> {
         );
         browser.close();
         result?;
-        self.outln(
+        self.outln(trs!(
             "ログイン状態をプロファイルに保存しました。以後は pull / diff / push が使えます。",
-        );
+            "Saved the sign-in to the profile. You can now use pull / diff / push.",
+        ));
         Ok(exit_codes::SUCCESS)
     }
 
@@ -372,7 +380,7 @@ impl<'a> CliApp<'a> {
             ));
             if let Some(err) = &snapshot.error {
                 failed = true;
-                self.outln(&format!("  エラー: {err}"));
+                self.outln(&format!("  {}", error_line(err)));
                 continue;
             }
             for locale in &expected.locales {
@@ -381,18 +389,19 @@ impl<'a> CliApp<'a> {
                     Some(c) if c.error.is_none() => c,
                     other => {
                         failed = true;
-                        let msg = other
-                            .and_then(|c| c.error.clone())
-                            .unwrap_or_else(|| "読み出せませんでした".to_string());
-                        self.outln(&format!("-- [{}] エラー: {msg}", locale.code));
+                        let msg = other.and_then(|c| c.error.clone()).unwrap_or_else(|| {
+                            trs!("読み出せませんでした", "Could not read the values").to_string()
+                        });
+                        self.outln(&format!("-- [{}] {}", locale.code, error_line(&msg)));
                         continue;
                     }
                 };
                 for field in locale.fields() {
                     let value = current.values.get(&field).cloned().unwrap_or_default();
                     if field == ListingField::Description {
-                        self.outln(&format!(
+                        self.outln(&tr!(
                             "-- [{}] {}（{} 文字）",
+                            "-- [{}] {} ({} characters)",
                             locale.code,
                             field.display_name(),
                             format_n0(utf16_len(&value))
@@ -445,7 +454,10 @@ impl<'a> CliApp<'a> {
         }
 
         if push_hint && any_diff {
-            self.outln("差分のある欄を書き換えるには、--yes を付けて push を再実行してください（下書き保存まで行い、審査には送信しません）。");
+            self.outln(trs!(
+                "差分のある欄を書き換えるには、--yes を付けて push を再実行してください（下書き保存まで行い、審査には送信しません）。",
+                "To update the fields that differ, run push again with --yes (it saves as draft and does not submit for review).",
+            ));
         }
         Ok(if any_error {
             exit_codes::FAILURE
@@ -477,18 +489,26 @@ impl<'a> CliApp<'a> {
                         .iter()
                         .map(|f| f.display_name())
                         .collect();
-                    format!(
+                    tr!(
                         "  [{}] 下書き保存・照合済み: {}",
+                        "  [{}] Saved as draft and verified: {}",
                         locale.locale,
-                        names.join("・")
+                        names.join(trs!("・", ", "))
                     )
                 } else {
-                    format!("  [{}] 変更なし（正本と一致）", locale.locale)
+                    tr!(
+                        "  [{}] 変更なし（正本と一致）",
+                        "  [{}] No changes (matches the source files)",
+                        locale.locale
+                    )
                 };
                 self.outln(&line);
             }
         }
-        self.outln("完了しました。審査への送信は行っていません（必要なら submit を 1 件ずつ実行してください）。");
+        self.outln(trs!(
+            "完了しました。審査への送信は行っていません（必要なら submit を 1 件ずつ実行してください）。",
+            "Done. Nothing was submitted for review (run submit one item at a time if needed).",
+        ));
         Ok(exit_codes::SUCCESS)
     }
 
@@ -504,10 +524,11 @@ impl<'a> CliApp<'a> {
 
         let mut confirm = |dialog: &crate::dashboard::SubmitDialogInfo| -> Result<bool> {
             // --yes で同意済み。確認ダイアログの内容は記録として表示する
-            self.outln("確認ダイアログ:");
+            self.outln(trs!("確認ダイアログ:", "Confirmation dialog:"));
             self.outln(&indent(&dialog.text));
-            self.outln(&format!(
+            self.outln(&tr!(
                 "  自動公開: {}（変更しません）",
+                "  Publish automatically: {} (unchanged)",
                 auto_publish_text(dialog.auto_publish)
             ));
             Ok(true)
@@ -515,16 +536,25 @@ impl<'a> CliApp<'a> {
         let result = services::submit(&mut page, &target.item_id, &mut confirm, &progress, cancel)?;
 
         self.outln(&format!("== {} ({})", target.display_name, target.item_id));
-        self.outln(&format!(
+        self.outln(&tr!(
             "  結果: {}",
-            result.message.as_deref().unwrap_or("（メッセージなし）")
+            "  Result: {}",
+            result
+                .message
+                .as_deref()
+                .unwrap_or(trs!("（メッセージなし）", "(no message)"))
         ));
-        self.outln(&format!(
+        self.outln(&tr!(
             "  ステータス: {}",
-            result.status_text.as_deref().unwrap_or("不明")
+            "  Status: {}",
+            result
+                .status_text
+                .as_deref()
+                .unwrap_or(trs!("不明", "unknown"))
         ));
-        self.outln(&format!(
+        self.outln(&tr!(
             "  自動公開: {}",
+            "  Publish automatically: {}",
             auto_publish_text(result.dialog.auto_publish)
         ));
         Ok(exit_codes::SUCCESS)
@@ -535,8 +565,9 @@ impl<'a> CliApp<'a> {
 /// --item はすべて設定に存在する必要がある（打ち間違いで別のアイテムを触らないため）
 pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<Vec<ExpectedItem>> {
     if config.items.is_empty() {
-        return Err(Error::Config(format!(
+        return Err(Error::Config(tr!(
             "設定ファイルに items がありません: {}",
+            "The config file has no items: {}",
             config.source_path.display()
         )));
     }
@@ -549,7 +580,10 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
             .iter()
             .map(|id| {
                 config.find_item(id).ok_or_else(|| {
-                    Error::Config(format!("設定ファイルにアイテム {id} がありません"))
+                    Error::Config(tr!(
+                        "設定ファイルにアイテム {id} がありません",
+                        "Item {id} is not in the config file"
+                    ))
                 })
             })
             .collect::<Result<_>>()?
@@ -580,8 +614,9 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
     }
 
     if result.is_empty() {
-        return Err(Error::Config(format!(
+        return Err(Error::Config(tr!(
             "指定したロケール（{}）を持つアイテムが設定にありません",
+            "No item in the config file has the specified locale(s) ({})",
             command.locale_codes.join(", ")
         )));
     }
@@ -590,12 +625,12 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
 
 fn item_header(item: &ExpectedItem, status: Option<&str>, locales: &[String]) -> String {
     let status = status
-        .map(|s| format!("  ステータス: {s}"))
+        .map(|s| tr!("  ステータス: {s}", "  Status: {s}"))
         .unwrap_or_default();
     let locales = if locales.is_empty() {
         String::new()
     } else {
-        format!("  言語: {}", locales.join(", "))
+        tr!("  言語: {}", "  Languages: {}", locales.join(", "))
     };
     format!(
         "== {} ({}){status}{locales}",
@@ -606,10 +641,15 @@ fn item_header(item: &ExpectedItem, status: Option<&str>, locales: &[String]) ->
 /// 自動公開の表示
 pub fn auto_publish_text(value: Option<bool>) -> &'static str {
     match value {
-        Some(true) => "する",
-        Some(false) => "しない",
-        None => "不明",
+        Some(true) => trs!("する", "on"),
+        Some(false) => trs!("しない", "off"),
+        None => trs!("不明", "unknown"),
     }
+}
+
+/// 「エラー: <本文>」の 1 行（接頭辞を表示言語に合わせる。本文は作った時点の言語のまま）
+fn error_line(message: &str) -> String {
+    tr!("エラー: {message}", "Error: {message}")
 }
 
 fn indent(text: &str) -> String {

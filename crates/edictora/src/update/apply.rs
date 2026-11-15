@@ -63,8 +63,9 @@ impl ApplyLauncher for ProcessApplyLauncher {
             command.creation_flags(CREATE_NO_WINDOW);
         }
         command.spawn().map(|_| ()).map_err(|e| {
-            update_err(format!(
+            update_err(crate::tr!(
                 "Update.exe を起動できませんでした（{}）: {e}",
+                "Could not start Update.exe ({}): {e}",
                 update_exe.display()
             ))
         })
