@@ -48,8 +48,18 @@ pub const LOCKED_STATUS_KEYWORDS: [&str; 7] = [
     "Under review",
 ];
 
-/// 書き込んでよいと判断できる状態の語
-pub const EDITABLE_STATUS_KEYWORDS: [&str; 4] = ["公開済み", "下書き", "Published", "Draft"];
+/// 書き込んでよいと判断できる状態の語。
+/// 「拒否」は審査で却下された状態で、掲載情報を直して再送信するために編集する必要がある。
+/// 実画面（2026-11-15、ステータス「拒否」）で説明欄が編集でき、「下書きとして保存する」が押せることを確認済み。
+/// 説明欄・保存ボタンの確認は他の状態と同じく後段で行う。
+pub const EDITABLE_STATUS_KEYWORDS: [&str; 6] = [
+    "公開済み",
+    "下書き",
+    "拒否",
+    "Published",
+    "Draft",
+    "Rejected",
+];
 
 /// 書き込み可否を判定する
 pub fn evaluate(state: &ItemPageState) -> WriteDecision {

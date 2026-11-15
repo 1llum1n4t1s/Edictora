@@ -64,8 +64,14 @@ pub fn pull(
         Ok(s) => Ok(s),
         Err(Error::LoginRequired) => Err(Error::LoginRequired),
         Err(e) if e.is_dashboard() => {
+            let shot = capture_read_failure(page, &expected.item_id, None, progress);
             log(
-                &format!("読み出し失敗 {}: {}", expected.item_id, e),
+                &format!(
+                    "読み出し失敗 {}: {}{}",
+                    expected.item_id,
+                    e,
+                    shot_suffix(&shot)
+                ),
                 LogLevel::Warning,
             );
             Ok(ItemSnapshot {
@@ -75,7 +81,7 @@ pub fn pull(
                 locales: Vec::new(),
                 // 結果は標準出力へ出るので、エラー文中のダッシュボード URL の publisherId を伏せる
                 // （ログと同じ redact。欄の値や差分本文には掛けない）
-                error: Some(redact(&e.message())),
+                error: Some(redact(&format!("{}{}", e.message(), shot_suffix(&shot)))),
             })
         }
         Err(e) => Err(e),
@@ -118,12 +124,27 @@ fn pull_core(
             Ok(values) => locales.push(LocaleSnapshot::ok(&locale.code, values)),
             // C# 版と同じく、ロケール単位では DashboardException 系（ログイン切れも含む）をそのロケールのエラーにする
             Err(e) if e.is_dashboard() => {
+                // ログイン切れは画面を見ても原因が分からないので保存しない（push / submit と同じ）
+                let shot = if e == Error::LoginRequired {
+                    None
+                } else {
+                    capture_read_failure(page, &expected.item_id, Some(&locale.code), progress)
+                };
                 log(
-                    &format!("読み出し失敗 {} [{}]: {}", expected.item_id, locale.code, e),
+                    &format!(
+                        "読み出し失敗 {} [{}]: {}{}",
+                        expected.item_id,
+                        locale.code,
+                        e,
+                        shot_suffix(&shot)
+                    ),
                     LogLevel::Warning,
                 );
                 // 結果（標準出力）へ入るエラー文は publisherId を伏せる
-                locales.push(LocaleSnapshot::failed(&locale.code, redact(&e.message())));
+                locales.push(LocaleSnapshot::failed(
+                    &locale.code,
+                    redact(&format!("{}{}", e.message(), shot_suffix(&shot))),
+                ));
             }
             Err(e) => return Err(e),
         }
@@ -135,6 +156,36 @@ fn pull_core(
         locales,
         error: None,
     })
+}
+
+/// 読み出しに失敗したときの画面を診断用に保存し、保存先を返す（保存できなければ None）。
+///
+/// pull / diff は読み取りだけで続行するため、以前は画面を残していなかった。そのため原因を調べる側
+/// （AI エージェントを含む）が `--show-browser` で表示して確かめようとし、利用者の画面にウィンドウが出ていた。
+/// 保存先はエラー文（標準出力の結果）にも含める。標準エラーを捨てて実行されても場所が分かるように。
+/// - 画面のラベル: `pull-<item_id>` または `pull-<item_id>-<locale>`
+fn capture_read_failure(
+    page: &mut dyn ListingPage,
+    item_id: &str,
+    locale: Option<&str>,
+    progress: &Progress<'_>,
+) -> Option<String> {
+    let label = match locale {
+        Some(code) => format!("pull-{item_id}-{code}"),
+        None => format!("pull-{item_id}"),
+    };
+    let shot = page.capture_diagnostics(&label);
+    if let Some(s) = &shot {
+        progress(&format!("失敗時の画面を保存しました: {s}"));
+    }
+    shot
+}
+
+/// エラー文の後ろに付ける「（失敗時の画面: <パス>）」（保存できなかったときは空）
+fn shot_suffix(shot: &Option<String>) -> String {
+    shot.as_ref()
+        .map(|s| format!("（失敗時の画面: {s}）"))
+        .unwrap_or_default()
 }
 
 /// 読み出して比較する（読み取りのみ）

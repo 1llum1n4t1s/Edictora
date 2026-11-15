@@ -26,6 +26,11 @@ fn ok_state(status: Option<&str>) -> ItemPageState {
 fn evaluate_確認済みの編集可能な状態なら許可する() {
     assert!(evaluate(&ok_state(Some("公開済み"))).allowed);
     assert!(evaluate(&ok_state(Some("下書き"))).allowed);
+    // 審査で却下された状態。掲載情報を直して再送信するために編集できる必要がある
+    assert!(evaluate(&ok_state(Some("拒否"))).allowed);
+    assert!(evaluate(&ok_state(Some("Rejected"))).allowed);
+    // 却下でも、欄や保存ボタンが使えなければ止める
+    assert!(!evaluate(&state(Some("拒否"), true, true, false)).allowed);
 }
 
 #[test]

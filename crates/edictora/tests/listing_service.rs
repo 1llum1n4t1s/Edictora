@@ -30,6 +30,8 @@ struct FakeListingPage {
     open_error: Option<String>,
     /// このロケールへ切り替えるときに返す Dashboard エラー（ロケール単位の失敗の再現用）
     switch_error: Option<(String, String)>,
+    /// capture_diagnostics が返す保存先（None なら保存できなかった扱い）
+    shot: Option<String>,
 }
 
 impl FakeListingPage {
@@ -153,7 +155,7 @@ impl ListingPage for FakeListingPage {
 
     fn capture_diagnostics(&mut self, label: &str) -> Option<String> {
         self.log.push(format!("capture {label}"));
-        None
+        self.shot.clone()
     }
 }
 
@@ -204,6 +206,7 @@ fn page() -> FakeListingPage {
         },
         open_error: None,
         switch_error: None,
+        shot: None,
     }
 }
 
@@ -413,4 +416,66 @@ fn pull_ロケール単位のエラー文はpublisher_idを伏せる() {
     assert!(error.contains("devconsole/<publisher>/"), "{error}");
     // 他のロケールは続けて読めている
     assert_eq!(snapshot.find("en").and_then(|l| l.error.clone()), None);
+}
+
+#[test]
+fn pull_ロケール単位の失敗では画面を保存し結果のエラー文に保存先を含める() {
+    let mut page = page();
+    page.switch_error = Some((
+        "ja".to_string(),
+        "言語の選択肢（ja）が他の要素に覆われていて押せません".to_string(),
+    ));
+    page.shot = Some(r"C:\diag\20261115-103133-pull-x-ja.png".to_string());
+
+    let snapshot =
+        services::pull(&mut page, &expected(), &no_progress, &CancelToken::new()).unwrap();
+
+    assert!(
+        page.log.contains(&format!("capture pull-{ITEM}-ja")),
+        "{:?}",
+        page.log
+    );
+    let error = snapshot
+        .find("ja")
+        .and_then(|l| l.error.clone())
+        .expect("ja のエラー");
+    assert_eq!(
+        error,
+        r"言語の選択肢（ja）が他の要素に覆われていて押せません（失敗時の画面: C:\diag\20261115-103133-pull-x-ja.png）"
+    );
+    // 成功したロケールでは保存しない
+    assert_eq!(
+        page.log.iter().filter(|l| l.starts_with("capture")).count(),
+        1
+    );
+}
+
+#[test]
+fn pull_アイテム単位の失敗でも画面を保存する() {
+    let mut page = page();
+    page.open_error = Some("画面を開けませんでした".to_string());
+
+    let snapshot =
+        services::pull(&mut page, &expected(), &no_progress, &CancelToken::new()).unwrap();
+
+    assert!(
+        page.log.contains(&format!("capture pull-{ITEM}")),
+        "{:?}",
+        page.log
+    );
+    // 保存できなかったときはエラー文を変えない
+    assert_eq!(snapshot.error.as_deref(), Some("画面を開けませんでした"));
+}
+
+#[test]
+fn pull_成功したときは画面を保存しない() {
+    let mut page = page();
+
+    services::pull(&mut page, &expected(), &no_progress, &CancelToken::new()).unwrap();
+
+    assert!(
+        !page.log.iter().any(|l| l.starts_with("capture")),
+        "{:?}",
+        page.log
+    );
 }

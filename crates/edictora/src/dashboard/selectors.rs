@@ -54,6 +54,46 @@ pub struct LocaleOption {
     pub is_default: bool,
 }
 
+/// クリックしようとした要素が覆われていたときのエラー文を組み立てる（`point` の結果から）。
+///
+/// 目的: エラー文だけで原因（何が重なっていたか・画面の大きさ・要素の位置）を絞れるようにする。
+/// これが無いと、呼び出した側（AI エージェントを含む）が「画面サイズのせいかも」と推測して
+/// `--show-browser` で表示して試すことになり、利用者の画面にウィンドウが出てしまう（2026-11-15 に実際に起きた）。
+/// 古いページ内スクリプトなどで項目が欠けていても、分かる部分だけを出す。
+pub fn covered_error_message(what: &str, point: &Value) -> String {
+    let num = |v: Option<&Value>| v.and_then(Value::as_f64).map(|n| n.round() as i64);
+    let mut details = Vec::new();
+    if let Some(cover) = point.get("cover").and_then(Value::as_str) {
+        details.push(format!("中心にあった要素: {cover}"));
+    }
+    if let (Some(x), Some(y)) = (num(point.get("x")), num(point.get("y"))) {
+        details.push(format!("中心: ({x}, {y})"));
+    }
+    if let Some(r) = point.get("rect")
+        && let (Some(l), Some(t), Some(w), Some(h)) = (
+            num(r.get("left")),
+            num(r.get("top")),
+            num(r.get("width")),
+            num(r.get("height")),
+        )
+    {
+        details.push(format!("要素の枠: 左 {l}・上 {t}・幅 {w}・高さ {h}"));
+    }
+    if let Some(v) = point.get("viewport")
+        && let (Some(w), Some(h)) = (num(v.get("width")), num(v.get("height")))
+    {
+        details.push(format!("画面: {w}×{h}"));
+    }
+    if details.is_empty() {
+        format!("{what}が他の要素に覆われていて押せません")
+    } else {
+        format!(
+            "{what}が他の要素に覆われていて押せません（{}）",
+            details.join("、")
+        )
+    }
+}
+
 /// 収集結果（JSON 配列）を [`ElementInfo`] に変換する（配列でなければ空）
 pub fn parse_elements(array: &Value) -> Vec<ElementInfo> {
     let Some(items) = array.as_array() else {

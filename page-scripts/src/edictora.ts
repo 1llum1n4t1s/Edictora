@@ -32,11 +32,21 @@ interface ElementInfo {
   checked: boolean | null;
 }
 
-/** クリック位置（要素の中心）と、その点に要素自身（または子孫）があるか */
+/**
+ * クリック位置（要素の中心）と、その点に要素自身（または子孫）があるか。
+ * 覆われていたときの原因調査用に、中心にあった要素の説明・要素の枠・画面の大きさも返す
+ * （エラー文だけで原因を絞れるようにし、--show-browser で表示して確かめる必要をなくすため）
+ */
 interface Point {
   x: number;
   y: number;
   hit: boolean;
+  /** 中心にあった別の要素の説明（role または タグ名と、ラベル・文言の先頭）。覆われていなければ null */
+  cover: string | null;
+  /** 要素の枠（ビューポート座標、整数に丸める） */
+  rect: { left: number; top: number; width: number; height: number };
+  /** ビューポートの大きさ */
+  viewport: { width: number; height: number };
 }
 
 /** Rust から呼ぶ関数一式 */
@@ -191,7 +201,29 @@ function createApi(): EdictoraApi {
       const x = r.left + r.width / 2;
       const y = r.top + r.height / 2;
       const hit = document.elementFromPoint(x, y);
-      return { x, y, hit: !!hit && (hit === el || el.contains(hit)) };
+      const ok = !!hit && (hit === el || el.contains(hit));
+      // 覆っている要素の説明。クラス名は画面の更新で変わるので使わず、役割・ラベル・文言だけにする。
+      // 文言は 1 行にまとめて先頭 40 文字まで（長い本文を出さない）
+      const describe = (n: Element | null): string | null => {
+        if (!n) return "（要素なし: 中心が画面の外）";
+        const role = n.getAttribute("role");
+        const kind = role ? `${n.tagName.toLowerCase()}[role=${role}]` : n.tagName.toLowerCase();
+        const words = (n.getAttribute("aria-label") || text(n)).replace(/\s+/g, " ").trim().slice(0, 40);
+        return words ? `${kind}「${words}」` : kind;
+      };
+      return {
+        x,
+        y,
+        hit: ok,
+        cover: ok ? null : describe(hit),
+        rect: {
+          left: Math.round(r.left),
+          top: Math.round(r.top),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        },
+        viewport: { width: innerWidth, height: innerHeight },
+      };
     },
     focusSelectAll: (kind, i) => {
       const el = get(kind, i);

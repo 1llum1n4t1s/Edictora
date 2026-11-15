@@ -111,7 +111,28 @@
         const x = r.left + r.width / 2;
         const y = r.top + r.height / 2;
         const hit = document.elementFromPoint(x, y);
-        return { x, y, hit: !!hit && (hit === el || el.contains(hit)) };
+        const ok = !!hit && (hit === el || el.contains(hit));
+        const describe = (n) => {
+          if (!n)
+            return "（要素なし: 中心が画面の外）";
+          const role = n.getAttribute("role");
+          const kind = role ? `${n.tagName.toLowerCase()}[role=${role}]` : n.tagName.toLowerCase();
+          const words = (n.getAttribute("aria-label") || text(n)).replace(/\s+/g, " ").trim().slice(0, 40);
+          return words ? `${kind}「${words}」` : kind;
+        };
+        return {
+          x,
+          y,
+          hit: ok,
+          cover: ok ? null : describe(hit),
+          rect: {
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            width: Math.round(r.width),
+            height: Math.round(r.height)
+          },
+          viewport: { width: innerWidth, height: innerHeight }
+        };
       },
       focusSelectAll: (kind, i) => {
         const el = get(kind, i);

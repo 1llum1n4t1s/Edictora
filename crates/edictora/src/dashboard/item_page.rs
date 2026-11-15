@@ -119,20 +119,29 @@ impl<'a> DashboardItemPage<'a> {
     /// 要素を画面内へスクロールし、中心を実際のマウス入力でクリックする
     fn click(&self, kind: &str, index: i32, what: &str, cancel: &CancelToken) -> Result<()> {
         self.page.prepare_for_input(cancel)?;
-        self.evaluate(&scripts::scroll_to(kind, index), cancel)?;
-        cancel.sleep(Duration::from_millis(150))?;
 
-        // スクロール後の矩形を読み直す。中心が別の要素に覆われていたら押さない
-        let point = self.evaluate(&scripts::point(kind, index), cancel)?;
-        if !point.is_object() {
-            return Err(Error::Dashboard(format!(
-                "{what}の位置を取得できませんでした"
-            )));
+        // スクロール後の矩形を読み直す。中心が別の要素に覆われていたら押さない。
+        // 一覧（メニュー）は開く・スクロールするアニメーションの途中だと、中心に別の要素が来ることがある
+        // （例: 言語が多いアイテムで、一覧の下の方の選択肢）。覆われている間は押さずに、
+        // スクロールし直して少し待ち、上限まで測り直す。上限を過ぎても覆われていれば従来どおり止める。
+        const ATTEMPTS: u32 = 8;
+        let mut point = Value::Null;
+        for attempt in 0..ATTEMPTS {
+            self.evaluate(&scripts::scroll_to(kind, index), cancel)?;
+            cancel.sleep(Duration::from_millis(if attempt == 0 { 150 } else { 250 }))?;
+            point = self.evaluate(&scripts::point(kind, index), cancel)?;
+            if !point.is_object() {
+                return Err(Error::Dashboard(format!(
+                    "{what}の位置を取得できませんでした"
+                )));
+            }
+            if point.get("hit").and_then(Value::as_bool) == Some(true) {
+                break;
+            }
         }
         if point.get("hit").and_then(Value::as_bool) != Some(true) {
-            return Err(Error::Dashboard(format!(
-                "{what}が他の要素に覆われていて押せません"
-            )));
+            // 何が重なっていたか・画面の大きさをエラー文に含める（表示して確かめなくても原因を絞れるように）
+            return Err(Error::Dashboard(sel::covered_error_message(what, &point)));
         }
         let x = point.get("x").and_then(Value::as_f64).unwrap_or(0.0);
         let y = point.get("y").and_then(Value::as_f64).unwrap_or(0.0);

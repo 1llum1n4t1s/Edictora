@@ -482,3 +482,26 @@ fn parse_status_ステータス行の値を読む() {
     );
     assert!(parse_status(Some("なし")).is_none());
 }
+
+#[test]
+fn covered_error_message_覆っていた要素と枠と画面の大きさを含める() {
+    let point = serde_json::json!({
+        "x": 640.4, "y": 812.6, "hit": false,
+        "cover": "div[role=option]「英語 – en」",
+        "rect": { "left": 600, "top": 790, "width": 81, "height": 45 },
+        "viewport": { "width": 1280, "height": 900 }
+    });
+    assert_eq!(
+        covered_error_message("言語の選択肢（ja）", &point),
+        "言語の選択肢（ja）が他の要素に覆われていて押せません（中心にあった要素: div[role=option]「英語 – en」、中心: (640, 813)、要素の枠: 左 600・上 790・幅 81・高さ 45、画面: 1280×900）"
+    );
+}
+
+#[test]
+fn covered_error_message_項目が無ければ従来の文だけにする() {
+    let point = serde_json::json!({ "hit": false });
+    assert_eq!(
+        covered_error_message("保存ボタン", &point),
+        "保存ボタンが他の要素に覆われていて押せません"
+    );
+}
