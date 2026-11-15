@@ -104,6 +104,10 @@ pub struct DashboardText {
     pub localized_assets_heading: &'static str,
     /// スクリーンショットの alt の接頭辞（alt は「スクリーンショット 1」の形。番号は 1 始まり）
     pub screenshot_alt_prefix: &'static str,
+    /// ストア アイコンの alt。画面ではアイコン欄の見出し・画像の alt とも「ショップ アイコン」
+    /// （2026-11-16 に Clean Reload の実画面で確認。削除ボタンの aria-label は「画像を削除 ショップ アイコン」）。
+    /// 英語は実画面で未確認の暫定値
+    pub icon_alt: &'static str,
     /// 小タイルの alt
     pub small_tile_alt: &'static str,
     /// マーキーの alt
@@ -152,6 +156,7 @@ pub const JA: DashboardText = DashboardText {
     global_assets_heading: "全言語向けアセット",
     localized_assets_heading: "ローカライズ版アセット",
     screenshot_alt_prefix: "スクリーンショット",
+    icon_alt: "ショップ アイコン",
     small_tile_alt: "プロモーション タイル（小）",
     marquee_alt: "マーキー プロモーション タイル",
     delete_image_prefix: "画像を削除 ",
@@ -191,6 +196,7 @@ pub const EN: DashboardText = DashboardText {
     global_assets_heading: "Global assets",
     localized_assets_heading: "Localized assets",
     screenshot_alt_prefix: "Screenshot",
+    icon_alt: "Store icon",
     small_tile_alt: "Small promo tile",
     marquee_alt: "Marquee promo tile",
     delete_image_prefix: "Delete image ",

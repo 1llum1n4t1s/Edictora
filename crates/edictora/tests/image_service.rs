@@ -101,6 +101,7 @@ impl FakeDashboard {
 
 fn alt_of(slot: ImageSlot, i: usize) -> String {
     match slot {
+        ImageSlot::Icon => "ショップ アイコン".to_string(),
         ImageSlot::SmallTile => "プロモーション タイル（小）".to_string(),
         ImageSlot::Marquee => "マーキー プロモーション タイル".to_string(),
         _ => format!("スクリーンショット {}", i + 1),
@@ -246,7 +247,7 @@ struct FakeFetcher {
 }
 
 impl ImageFetcher for FakeFetcher {
-    fn pixel_digest_of(&self, src: &str, _: &CancelToken) -> Result<String> {
+    fn pixel_digest_of(&self, src: &str, _: ImageSlot, _: &CancelToken) -> Result<String> {
         let digest = src.strip_prefix("fake://").expect("偽の URL");
         if self.unfetchable.as_deref() == Some(digest) {
             return Err(Error::Dashboard("HTTP 403".to_string()));
@@ -739,4 +740,115 @@ fn ロケール名の大文字小文字を区別しない() {
     )
     .unwrap();
     assert_eq!(rows.len(), 1);
+}
+
+// ───────── ストア アイコン ─────────
+
+#[test]
+fn アイコンは全言語向けの置き場として差分を読み取り専用で返す() {
+    // 言語が複数でも、アイコンは全言語共通なのでロケールを切り替えずに読む
+    let mut page = FakeDashboard::new(&["ja", "en"]);
+    page.set_saved(ImageSlot::Icon, None, &["ICON-OLD"]);
+    let expected = item(vec![slot(ImageSlot::Icon, None, &[("icon.png", "ICON1")])]);
+
+    let (_, rows) = services::diff_images(
+        &mut page,
+        &FakeFetcher { unfetchable: None },
+        &expected,
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+
+    assert_eq!(rows[0].status, ComparisonStatus::Different);
+    assert_eq!(rows[0].label(), "ショップ アイコン");
+    assert_eq!(page.count("switch"), 0);
+    assert_eq!(
+        page.count("delete") + page.count("upload") + page.count("save"),
+        0
+    );
+}
+
+#[test]
+fn push_images_アイコンは小タイルと同じ経路で削除_追加_保存_照合する() {
+    let mut page = FakeDashboard::new(&["ja"]);
+    page.set_saved(ImageSlot::Icon, None, &["ICON-OLD"]);
+    page.set_saved(ImageSlot::SmallTile, None, &["T1"]); // 一致
+    let expected = item(vec![
+        slot(ImageSlot::Icon, None, &[("icon.png", "ICON1")]),
+        slot(ImageSlot::SmallTile, None, &[("tile.png", "T1")]),
+    ]);
+    register(&mut page, &expected);
+
+    let result = services::push_images(
+        &mut page,
+        &FakeFetcher { unfetchable: None },
+        &expected,
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+
+    assert_eq!(result.saved, vec!["ショップ アイコン".to_string()]);
+    assert_eq!(
+        result.unchanged,
+        vec!["プロモーション タイル（小）".to_string()]
+    );
+    assert_eq!(page.saved_digests(ImageSlot::Icon, None), vec!["ICON1"]);
+    let ops: Vec<&str> = page
+        .log
+        .iter()
+        .map(String::as_str)
+        .filter(|l| l.starts_with("delete") || l.starts_with("upload"))
+        .collect();
+    assert_eq!(ops, vec!["delete icon 0", "upload icon icon.png"]);
+    // 全言語向けなので保存は 1 回、ロケールの切替もしない
+    assert_eq!(page.count("save"), 1);
+    assert_eq!(page.count("switch"), 0);
+    assert!(
+        result
+            .final_comparison
+            .iter()
+            .all(|r| r.status == ComparisonStatus::Match)
+    );
+}
+
+#[test]
+fn push_images_アイコンが一致なら何も触らず_審査待ちなら削除の前に止める() {
+    let mut page = FakeDashboard::new(&["ja"]);
+    page.set_saved(ImageSlot::Icon, None, &["ICON1"]);
+    let expected = item(vec![slot(ImageSlot::Icon, None, &[("icon.png", "ICON1")])]);
+    register(&mut page, &expected);
+    let result = services::push_images(
+        &mut page,
+        &FakeFetcher { unfetchable: None },
+        &expected,
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert!(result.saved.is_empty());
+    assert_eq!(
+        page.count("delete") + page.count("upload") + page.count("save"),
+        0
+    );
+
+    // 審査待ちのアイテムのアイコンは、差分があっても何も触らない
+    let mut pending = FakeDashboard::new(&["ja"]);
+    pending.status = "審査待ち".to_string();
+    pending.set_saved(ImageSlot::Icon, None, &["ICON-OLD"]);
+    register(&mut pending, &expected);
+    let err = services::push_images(
+        &mut pending,
+        &FakeFetcher { unfetchable: None },
+        &expected,
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::WriteBlocked(_)));
+    assert_eq!(
+        pending.count("delete") + pending.count("upload") + pending.count("save"),
+        0
+    );
 }

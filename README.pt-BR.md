@@ -22,7 +22,7 @@ Ele funciona como uma única ferramenta de linha de comando (`edictora.exe`). É
 - **pull**: lê os valores atuais do painel (descrição, URL oficial, URL da página inicial e URL de suporte). Somente leitura.
 - **diff**: mostra as diferenças em relação aos seus arquivos de origem. Somente leitura e é o comando padrão.
 - **push**: reescreve apenas os campos que diferem, **salva como rascunho**, depois recarrega a página e confere os valores salvos com os seus arquivos de origem.
-- **Imagens**: se um item tiver `images` na configuração, `pull`, `diff` e `push` também tratam as imagens da página (capturas de tela, bloco promocional pequeno e marquee). Restrinja com `--only text|images` e `--image-scope all|global|localized`.
+- **Imagens**: se um item tiver `images` na configuração, `pull`, `diff` e `push` também tratam as imagens da página (ícone da loja, capturas de tela, bloco promocional pequeno e marquee). Restrinja com `--only text|images` e `--image-scope all|global|localized`.
 - **submit**: envia um item para revisão. Não altera a configuração "publicar automaticamente após a revisão".
 - **login**: abre o Chrome com o perfil dedicado para que você mesmo faça login no Google.
 - **update**: baixa e instala uma versão mais recente, se houver. Só funciona quando você instalou o Edictora com o Setup, e também é executado automaticamente quando você faz login no Windows.
@@ -102,6 +102,7 @@ Adicione `images` a um item para gerenciar as imagens dele. Como nos demais camp
 
 ```jsonc
 "images": {
+  "icon": "icons/icon-128.png",                             // 128x128 (a transparent PNG is allowed)
   "smallTile": "webstore/images/tile-small.png",            // 440x280
   "marquee": "webstore/images/tile-marquee.png",            // 1400x560
   "globalScreenshots": { "dir": "webstore/images/en" },     // or { "files": ["a.png", "b.png"] }
@@ -113,10 +114,10 @@ Adicione `images` a um item para gerenciar as imagens dele. Como nos demais camp
 ```
 
 - `dir` usa os arquivos `screenshot-*.png` diretamente na pasta, em ordem de nome (1–5 arquivos). `files` usa os arquivos na ordem em que você os escrever (1–5).
-- Só há suporte a PNG de 24 bits sem alfa, com 1280x800 ou 640x400 (capturas), 440x280 (bloco pequeno) ou 1400x560 (marquee). O Edictora verifica isso, e que nenhuma imagem se repita dentro de um conjunto, antes de abrir o Chrome (código de saída 2). O ícone da loja não é gerenciado.
+- Só há suporte a PNG de 24 bits sem alfa, com 1280x800 ou 640x400 (capturas), 440x280 (bloco pequeno) ou 1400x560 (marquee). O Edictora verifica isso, e que nenhuma imagem se repita dentro de um conjunto, antes de abrir o Chrome (código de saída 2). O ícone da loja (`icon`) é a exceção: deve ter 128x128 e pode ser um PNG transparente (RGB ou RGBA de 8 bits). A comparação inclui o alfa e ignora a cor dos pixels totalmente transparentes. Ele é comum a todos os idiomas, então `--image-scope global` o inclui.
 - Um item pode ter `images` sem `locales` (somente imagens).
 - **As imagens são comparadas pelos pixels decodificados, não pelos bytes do arquivo.** O painel recodifica os PNG enviados, então o arquivo guardado nunca tem os mesmos bytes do seu, embora os pixels sejam idênticos. O Edictora baixa cada imagem do painel (o original `=s0`, somente por HTTPS a partir de `*.googleusercontent.com` e sem cookies) e compara os hashes dos pixels em ordem. Se uma imagem não puder ser baixada ou decodificada, o resultado é "não é possível comparar": nunca "igual" nem "substituir".
-- `push --yes` substitui um local inteiro (apaga tudo e envia em ordem) somente se ele diferir, salva um rascunho, recarrega e confere de novo. A ordem é: bloco pequeno, marquee, capturas globais e, depois, as capturas localizadas de cada idioma.
+- `push --yes` substitui um local inteiro (apaga tudo e envia em ordem) somente se ele diferir, salva um rascunho, recarrega e confere de novo. A ordem é: ícone da loja, bloco pequeno, marquee, capturas globais e, depois, as capturas localizadas de cada idioma.
 - **Excluir uma imagem tem efeito imediato no painel** (ele pergunta "isso não pode ser desfeito" e, ao recarregar sem salvar, o local continuava vazio). Se um push parar no meio, o rascunho pode ficar sem algumas imagens: execute-o de novo para concluir. O Edictora nunca mexe em um item pendente de revisão.
 - Um item com um único idioma não tem capturas localizadas; use `--image-scope global`. Se um idioma de `localizedScreenshots` não estiver no painel, o Edictora para antes de alterar qualquer coisa: use `--image-scope global` ou `--locale`.
 - A gravação de imagens só funciona com o painel em japonês (os rótulos em inglês não foram verificados).
@@ -244,7 +245,7 @@ Se você usa um gateway MCP (como o Toolport), registre o mesmo comando (stdio, 
 - Os campos e botões são encontrados por rótulo, função e texto, nunca por nomes de classe CSS. Se uma busca não corresponder a exatamente um elemento, o Edictora para.
 - O Chrome é iniciado sem flags de automação e encerrado de forma limpa. **O perfil nunca é excluído.**
 - As capturas de tela feitas em caso de falha são salvas em `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca no seu repositório.
-- As atualizações de imagens substituem apenas os locais que diferem. Não tocam no ícone da loja nem reordenam imagens, e nunca podem enviar para revisão (o código de imagens não tem como chamá-lo).
+- As atualizações de imagens substituem apenas os locais que diferem. Não reordenam imagens, e nunca podem enviar para revisão (o código de imagens não tem como chamá-lo).
 
 ## Onde os arquivos ficam
 

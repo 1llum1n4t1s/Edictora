@@ -768,7 +768,7 @@ fn read_current(
     let mut current = Vec::new();
     for image in page.read_images(slot, cancel)? {
         cancel.check()?;
-        let pixel_sha256 = match fetcher.pixel_digest_of(&image.src, cancel) {
+        let pixel_sha256 = match fetcher.pixel_digest_of(&image.src, slot, cancel) {
             Ok(h) => Ok(h),
             Err(Error::Dashboard(m)) => Err(m),
             Err(e) => return Err(e),
@@ -803,7 +803,7 @@ fn slot_matches(
 
 /// 差分のある画像を置き換えて下書き保存し、読み直して照合する。
 ///
-/// 順序: テキストの push は呼び出し側が済ませる → 編集画面を開く → 書き込み可否 → 全言語向け（小タイル → マーキー →
+/// 順序: テキストの push は呼び出し側が済ませる → 編集画面を開く → 書き込み可否 → 全言語向け（アイコン → 小タイル → マーキー →
 /// スクリーンショット。差分のあるスロットだけ全入れ替え）→ 保存 → 読み直して照合 → ロケールごとに
 /// （切替 → 置換 → 保存 → 読み直し → 切替 → 照合）→ 最後に読み直して全対象スロットを再照合。
 /// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時は画面を診断用に保存する

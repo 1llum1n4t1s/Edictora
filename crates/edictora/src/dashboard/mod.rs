@@ -112,7 +112,7 @@ pub struct PageImage {
 /// 掲載画像の読み書き。スロットは画面の寸法の表記と見出しで Rust 側が 1 つに絞る（絞れなければ止める）。
 ///
 /// ローカライズ版スクリーンショットは、編集中の言語（[`EditorPage::switch_locale`]）のものを操作する。
-/// 画像の書き込みは日本語の画面だけ許す（英語の画面の文言は未確認）。アイコン・並べ替えには触れない。
+/// 画像の書き込みは日本語の画面だけ許す（英語の画面の文言は未確認）。並べ替えには触れない（アイコンは全言語共通の 1 枚として他の画像と同じ手順で扱う）。
 pub trait ImagePage: EditorPage {
     /// スロットの現在の画像（画面の並び順）
     fn read_images(&mut self, slot: ImageSlot, cancel: &CancelToken) -> Result<Vec<PageImage>>;

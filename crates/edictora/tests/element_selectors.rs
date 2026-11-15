@@ -864,6 +864,8 @@ fn 画像の置き場を寸法と見出しで1つに絞る() {
     use edictora::images::ImageSlot::*;
     let inputs = multi_language_inputs();
     let pick = |slot| pick_image_slot(&JA, &inputs, slot).map(|i| i.index);
+    // ストア アイコン（実画面の見出しは「ショップ アイコン」。全言語向け・ローカライズ版の見出しは持たない）
+    assert_eq!(pick(Icon).unwrap(), 0);
     assert_eq!(pick(SmallTile).unwrap(), 3);
     assert_eq!(pick(Marquee).unwrap(), 4);
     // 同じ寸法のスクリーンショットは、見出しの行（全言語向けアセット / ローカライズ版アセット）で分ける
@@ -939,6 +941,7 @@ fn 画像のaltの並びを確かめる() {
         expected_image_alt(&JA, GlobalScreenshots, 2),
         "スクリーンショット 3"
     );
+    assert_eq!(expected_image_alt(&JA, Icon, 0), "ショップ アイコン");
     assert_eq!(
         expected_image_alt(&JA, SmallTile, 0),
         "プロモーション タイル（小）"
@@ -992,6 +995,18 @@ fn 削除ボタンはaria_labelの完全一致だけを選ぶ() {
     let mut dup = buttons.clone();
     dup.push(button(5, "画像を削除 スクリーンショット 2"));
     assert!(pick_delete_button(&JA, &dup, "スクリーンショット 2").is_err());
+}
+
+#[test]
+fn アイコンの削除ボタンも画面のaltの完全一致で選べる() {
+    // 実画面（2026-11-16 Clean Reload）: アイコン欄のボタンは「画像を削除 ショップ アイコン」とステータスを閉じるだけ
+    let buttons = vec![
+        button(0, "画像を削除 ショップ アイコン"),
+        button(1, "画像アップロードのステータスを閉じる"),
+    ];
+    let alt = expected_image_alt(&JA, edictora::images::ImageSlot::Icon, 0);
+    assert_eq!(pick_delete_button(&JA, &buttons, &alt).unwrap().index, 0);
+    assert!(ensure_image_click_allowed(&JA, &buttons[0].label).is_ok());
 }
 
 #[test]

@@ -46,7 +46,7 @@ pub fn is_mcp_command<S: AsRef<str>>(args: &[S]) -> bool {
 
 /// initialize で返す、サーバーの使い方の案内（クライアントが AI に渡す文言なので英語に統一する）
 const INSTRUCTIONS: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, and support URL) \
-with the source files in each extension repository and fixes them in bulk. Store images (screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The CWS API cannot read or write store listings, \
+with the source files in each extension repository and fixes them in bulk. Store images (store icon, screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The CWS API cannot read or write store listings, \
 so Edictora drives the Developer Dashboard with a dedicated Chrome profile running without a window (headless). \
 To view or fix store listings, first call edictora_list_items to check the items and languages, review the differences with edictora_diff, \
 then use edictora_push (confirm: true saves as draft) and edictora_submit (confirm: true submits for review, one item at a time). \
@@ -83,7 +83,7 @@ fn target_properties() -> Map<String, Value> {
         json!({
             "type": "string",
             "enum": ["text", "images"],
-            "description": "What to process: text (description and URLs) or images (store images: screenshots, small tile, marquee). Omit for both"
+            "description": "What to process: text (description and URLs) or images (store images: store icon, screenshots, small tile, marquee). Omit for both"
         }),
     );
     m.insert(
@@ -91,7 +91,7 @@ fn target_properties() -> Map<String, Value> {
         json!({
             "type": "string",
             "enum": ["all", "global", "localized"],
-            "description": "Which images: all (default), global (small tile, marquee, global screenshots), or localized (localized screenshots only). Use global for items with a single language"
+            "description": "Which images: all (default), global (store icon, small tile, marquee, global screenshots), or localized (localized screenshots only). Use global for items with a single language"
         }),
     );
     m
@@ -169,7 +169,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "edictora_diff",
             "Edictora: store listing differences",
-            "Chrome Web Store (CWS) store listing description, URLs, and images (screenshots, small tile, marquee): reads the current values from the Developer Dashboard \
+            "Chrome Web Store (CWS) store listing description, URLs, and images (store icon, screenshots, small tile, marquee): reads the current values from the Developer Dashboard \
                  and shows the differences from the source files in each repository (read-only. Chrome runs without a window and does not appear on screen). \
                  Differences are not a failure (exit code 3).",
             target_properties(),
@@ -441,6 +441,9 @@ fn list_items(paths: &AppPaths) -> Value {
         ));
         if let Some(images) = &item.images {
             let mut slots = Vec::new();
+            if images.icon.is_some() {
+                slots.push("icon".to_string());
+            }
             if images.small_tile.is_some() {
                 slots.push("smallTile".to_string());
             }
