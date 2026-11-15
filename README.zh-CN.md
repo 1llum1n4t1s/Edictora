@@ -22,6 +22,7 @@
 - **pull**：从信息中心读取当前值（说明、官方 URL、主页 URL 和支持 URL）。只读。
 - **diff**：显示与源文件的差异。只读，也是默认命令。
 - **push**：仅重写有差异的字段，并**保存为草稿**，然后重新加载页面，将保存的值与源文件进行核对。
+- **图片**：如果配置中的项目写了 `images`，`pull`、`diff`、`push` 也会处理商店图片（截图、小型宣传图块、宣传横幅）。可用 `--only text|images` 和 `--image-scope all|global|localized` 缩小范围。
 - **submit**：将一个项目提交审核。不会更改“审核后自动发布”设置。
 - **login**：使用专用配置文件打开 Chrome，让您自行登录 Google。
 - **update**：如有新版本，则下载并安装。仅在您通过 Setup 安装 Edictora 时有效，并且会在您登录 Windows 时自动运行。
@@ -94,6 +95,36 @@ Edictora 的消息、差异输出和帮助文本提供九种语言：日语、�
 - 提取区段时，Edictora 取起始标题之后、结束标题之前的行。它会去除首尾的空行和行尾空白，并将换行符统一为 `\n`。如果找不到标题，则报错停止。
 - 没有键的 URL 字段会被忽略。`""` 表示该字段应为空。
 - 未知的键（例如拼写错误）会报错。允许使用注释和尾随逗号。
+
+#### 商店图片（可选）
+
+在项目中添加 `images` 即可管理商店图片。与其他字段一样，**没有写的键不会被触碰**。路径相对于 `baseDir`。
+
+```jsonc
+"images": {
+  "smallTile": "webstore/images/tile-small.png",            // 440x280
+  "marquee": "webstore/images/tile-marquee.png",            // 1400x560
+  "globalScreenshots": { "dir": "webstore/images/en" },     // or { "files": ["a.png", "b.png"] }
+  "localizedScreenshots": {                                 // zh_CN = zh-CN
+    "ja": { "dir": "webstore/images/ja" },
+    "zh_CN": { "dir": "webstore/images/zh_CN" }
+  }
+}
+```
+
+- `dir` 按文件名升序使用文件夹直下的 `screenshot-*.png`（1–5 张）。`files` 按书写顺序使用（1–5 张）。
+- 仅支持 PNG：24 位、无 Alpha，截图为 1280x800 或 640x400，小型图块为 440x280，横幅为 1400x560。Edictora 会在打开 Chrome 之前检查这些规格以及同一组内是否有重复图片（退出码 2）。商店图标不在管理范围内。
+- 项目可以只写 `images` 而不写 `locales`（仅图片）。
+- **图片按解码后的像素比较，而不是按文件字节。** 控制台会重新编码上传的 PNG，所以保存的文件字节与原文件不同，但像素相同。Edictora 会下载控制台上的每张图片（`=s0` 原图，仅通过 HTTPS 访问 `*.googleusercontent.com`，不带 Cookie），并按顺序比较像素哈希。无法下载或解码的图片结果为“无法比较”，既不视为一致，也不会替换。
+- `push --yes` 只在有差异时整体替换一个位置（先全部删除，再按顺序上传），然后保存草稿、重新载入并再次核对。处理顺序为：小型图块 → 横幅 → 全语言截图 → 各语言的本地化截图。
+- **删除图片会立即在控制台生效**（会提示“此操作无法撤销”，且未保存就重新载入后该位置仍为空）。如果 push 中途停止，草稿中可能缺少图片：再次运行即可补全。待审核的项目不会被触碰。
+- 只有一种语言的项目没有本地化截图，请使用 `--image-scope global`。如果 `localizedScreenshots` 中的语言不在控制台上，Edictora 会在更改任何内容之前停止：请使用 `--image-scope global` 或 `--locale`。
+- 仅当控制台以日语显示时才能写入图片（英文文案尚未确认）。
+
+```powershell
+edictora diff --only images --item <id>                                  # Images only (read-only)
+edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
 
 ### 2. 登录
 
@@ -213,6 +244,7 @@ args = ["mcp"]
 - 字段和按钮通过标签、角色和文本查找，绝不使用 CSS 类名。如果一次查找没有恰好匹配一个元素，Edictora 就会停止。
 - Chrome 不带自动化标志启动，并会被正常关闭。**配置文件绝不会被删除。**
 - 失败时截取的屏幕截图保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，绝不会保存到您的仓库中。
+- 图片更新只替换有差异的位置。不会触碰商店图标，也不会调整顺序，更不可能提交审核（图片处理中没有调用提交的途径）。
 
 ## 文件存放位置
 

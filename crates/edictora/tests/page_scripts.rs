@@ -83,3 +83,29 @@ fn 収集結果の変換() {
     assert!(parse_elements(&json!(null)).is_empty());
     assert_eq!(parse_strings(&json!(["a", 1, "b"])), vec!["a", "", "b"]);
 }
+
+#[test]
+fn 画像用の式は種類と位置だけを埋め込む() {
+    use edictora::dashboard::page_scripts::{collect_slot, element};
+
+    let e = collect(&JA, kinds::FILE_INPUT);
+    assert!(e.contains("return window.__edictora.collect(\"fileInput\");"));
+    let s = collect_slot(&JA, kinds::IMAGE_BUTTON, 2);
+    assert!(s.contains("return window.__edictora.collectSlot(\"imageButton\", 2);"));
+    let el = element(&JA, kinds::FILE_INPUT, 4);
+    assert!(el.contains("return window.__edictora.element(\"fileInput\", 4);"));
+    // ファイルのパスは式に入らない（set_file_input_files が CDP の引数で渡す）
+    assert!(!el.contains(".png"));
+}
+
+#[test]
+fn 画像の収集関数を持ち_srcが空のimgは数えない() {
+    assert!(BUNDLE.contains("collectSlot"));
+    assert!(BUNDLE.contains("input[type=file]"));
+    // 削除したスロットに残る src の空の img を 1 枚と数えない（2026-11-15 の実画面）
+    assert!(BUNDLE.contains("realImages"));
+    assert!(BUNDLE.contains("img"));
+    // 画像の操作（削除・アップロード・並べ替え）をページ内スクリプトから直接行わない
+    assert!(!BUNDLE.contains(".click()"));
+    assert!(!BUNDLE.contains("DataTransfer"));
+}

@@ -20,7 +20,23 @@
 declare const __EDICTORA_GUIDE__: string | null;
 
 /** 要素の種類（Rust 側の page_scripts::kinds と同じ名前） */
-type Kind = "combobox" | "option" | "button" | "textarea" | "textInput" | "dialogButton" | "dialogCheckbox";
+type Kind =
+  | "combobox"
+  | "option"
+  | "button"
+  | "textarea"
+  | "textInput"
+  | "dialogButton"
+  | "dialogCheckbox"
+  | "fileInput"
+  | "slotImage"
+  | "imageButton";
+
+/** 画像 1 枚の情報（alt と src。Rust 側の PageImage に対応） */
+interface ImageInfo {
+  alt: string;
+  src: string;
+}
 
 /** 収集した要素 1 つの情報（Rust 側の ElementInfo に対応） */
 interface ElementInfo {
@@ -34,6 +50,13 @@ interface ElementInfo {
   /** コンボボックスの開閉状態（"true"/"false"、属性が無ければ null）。一覧を閉じたかの判定に使う */
   expanded: string | null;
   checked: boolean | null;
+  /** fileInput のみ: accept 属性 */
+  accept?: string;
+  /** fileInput のみ: その入力だけを含む最大の祖先の中の img（画面の並び順） */
+  images?: ImageInfo[];
+  /** slotImage / imageButton のみ: 枠の大きさ（ホバーで現れるボタンが出たかの判定に使う） */
+  width?: number;
+  height?: number;
 }
 
 /**
@@ -56,6 +79,8 @@ interface Point {
 /** Rust から呼ぶ関数一式 */
 interface EdictoraApi {
   collect(kind: Kind): ElementInfo[];
+  collectSlot(kind: Kind, slotIndex: number): ElementInfo[];
+  element(kind: Kind, i: number): Element;
   scrollTo(kind: Kind, i: number): true;
   point(kind: Kind, i: number): Point;
   focusSelectAll(kind: Kind, i: number): boolean;
@@ -159,9 +184,33 @@ function createApi(): EdictoraApi {
       const d = allDialogs();
       return d.length === 1 ? [...d[0].querySelectorAll("input[type=checkbox], [role=checkbox]")] : [];
     },
+    fileInput: () => [...document.querySelectorAll("input[type=file]")],
+    // slotImage / imageButton は collectSlot で集める（単独では空）
+    slotImage: () => [],
+    imageButton: () => [],
+  };
+
+  // 画像アセットの入力（input[type=file]）。非表示でも集める（実画面では 0 幅のものがある）。
+  // その入力だけを含む最大の祖先が「1 つのスロット」で、見出し・寸法・画像・ボタンはその中にある。
+  const slotRoot = (input: Element): Element => {
+    let cur: Element = input;
+    let best: Element = input;
+    while (cur.parentElement && cur.parentElement !== document.body) {
+      const p = cur.parentElement;
+      if (p.querySelectorAll("input[type=file]").length > 1) break;
+      best = p;
+      cur = p;
+    }
+    return best;
   };
 
   const store: Partial<Record<Kind, Element[]>> = {};
+
+  // slotImage / imageButton は、直前の collect("fileInput") で集めたスロットの中だけから集める
+  const slotSources: Partial<Record<Kind, (root: Element) => Element[]>> = {
+    slotImage: (root) => realImages(root),
+    imageButton: (root) => [...root.querySelectorAll("[role=button][aria-label], button[aria-label]")],
+  };
 
   const info = (el: Element, i: number): ElementInfo => {
     const f = el as FormLike;
@@ -183,6 +232,52 @@ function createApi(): EdictoraApi {
     };
   };
 
+  // スロットの中の実画像。src 属性が空の img は数えない。
+  // 実画面（2026-11-15）: 画像を削除したスロットに、alt だけを持つ src が空の img が残る（枚数 0 のスロットを 1 枚と数えない）
+  const realImages = (root: Element): Element[] =>
+    [...root.querySelectorAll("img")].filter((m) => (m.getAttribute("src") || "").trim() !== "");
+
+  // fileInput 用: スロットの見出し・寸法・画像を、その入力を含む最小の枠（slotRoot）から読む
+  const fileInfo = (el: Element, i: number): ElementInfo => {
+    const root = slotRoot(el);
+    return {
+      index: i,
+      tag: "input",
+      // 見出し・寸法の表記・案内文（行ごとに改行で区切られる）
+      text: text(root),
+      label: "",
+      disabled: !!(el as FormLike).disabled,
+      readOnly: false,
+      type: "file",
+      expanded: null,
+      checked: null,
+      accept: el.getAttribute("accept") || "",
+      images: realImages(root).map((m) => ({
+        alt: m.getAttribute("alt") || "",
+        src: (m as HTMLImageElement).currentSrc || m.getAttribute("src") || "",
+      })),
+    };
+  };
+
+  // slotImage / imageButton 用。ボタンのラベルは aria-label そのものだけにする
+  // （祖先の文字列を混ぜない。「画像を削除 <alt>」の完全一致で選ぶため）
+  const slotInfo = (el: Element, i: number): ElementInfo => {
+    const r = el.getBoundingClientRect();
+    return {
+      index: i,
+      tag: el.tagName.toLowerCase(),
+      text: el.tagName === "IMG" ? "" : text(el),
+      label: el.tagName === "IMG" ? el.getAttribute("alt") || "" : el.getAttribute("aria-label") || "",
+      disabled: (el as FormLike).disabled === true || el.getAttribute("aria-disabled") === "true",
+      readOnly: false,
+      type: "",
+      expanded: el.getAttribute("aria-expanded"),
+      checked: null,
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    };
+  };
+
   const get = (kind: Kind, i: number): FormLike => {
     const el = (store[kind] || [])[i];
     // 文は Rust 側で作る（selectors.rs の ELEMENT_GONE_MARKER と同じ印）
@@ -194,8 +289,18 @@ function createApi(): EdictoraApi {
     collect: (kind) => {
       const els = sources[kind]();
       store[kind] = els;
-      return els.map(info);
+      return kind === "fileInput" ? els.map(fileInfo) : els.map(info);
     },
+    collectSlot: (kind, slotIndex) => {
+      const input = (store.fileInput || [])[slotIndex];
+      if (!input || !input.isConnected) throw new Error("EDICTORA_ELEMENT_GONE:fileInput");
+      const pick = slotSources[kind];
+      if (!pick) throw new Error("EDICTORA_ELEMENT_GONE:" + kind);
+      const els = pick(slotRoot(input));
+      store[kind] = els;
+      return els.map(slotInfo);
+    },
+    element: (kind, i) => get(kind, i),
     scrollTo: (kind, i) => {
       get(kind, i).scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
       return true;

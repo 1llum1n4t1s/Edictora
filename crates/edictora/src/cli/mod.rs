@@ -17,9 +17,14 @@ use crate::cancel::CancelToken;
 use crate::config::{self, EdictoraConfig};
 use crate::dashboard::browser::{DashboardBrowser, DashboardBrowserOptions};
 use crate::error::{Error, Result};
-use crate::listing::{ComparisonStatus, ExpectedItem, ListingField, build_expected};
+use crate::images::fetch::WinHttpImageFetcher;
+use crate::images::{self, ImageSlot, slot_label};
+use crate::listing::{
+    ComparisonStatus, ExpectedItem, ItemSnapshot, ListingField, build_expected,
+    build_expected_images,
+};
 use crate::logging::{LogLevel, log, log_error_detail, redact};
-use crate::services::{self, LocalePushOutcome};
+use crate::services::{self, ImageSnapshot, LocalePushOutcome};
 use crate::update::UpdateOutcome;
 use crate::update::lock::{LockFile, is_held_by_another};
 use crate::update::source::UpdateSource;
@@ -358,47 +363,32 @@ impl<'a> CliApp<'a> {
         let browser = self.open_logged_in(config, cancel)?;
         let mut page = browser.create_item_page()?;
         let progress = self.progress();
+        let fetcher = WinHttpImageFetcher;
         let mut failed = false;
 
         for expected in targets {
-            let snapshot = services::pull(&mut page, expected, &progress, cancel)?;
-            self.outln(&item_header(
-                expected,
-                snapshot.status_text.as_deref(),
-                &snapshot.available_locales,
-            ));
-            if let Some(err) = &snapshot.error {
-                failed = true;
-                self.outln(&format!("  {}", error_line(err)));
-                continue;
+            let mut header_done = false;
+            if !expected.locales.is_empty() {
+                let snapshot = services::pull(&mut page, expected, &progress, cancel)?;
+                self.outln(&item_header(
+                    expected,
+                    snapshot.status_text.as_deref(),
+                    &snapshot.available_locales,
+                ));
+                header_done = true;
+                failed |= self.print_pulled_text(expected, &snapshot);
             }
-            for locale in &expected.locales {
-                let current = snapshot.find(&locale.code);
-                let current = match current {
-                    Some(c) if c.error.is_none() => c,
-                    other => {
-                        failed = true;
-                        let msg = other
-                            .and_then(|c| c.error.clone())
-                            .unwrap_or_else(|| trs!("cli.could_not_read_the_values").to_string());
-                        self.outln(&format!("-- [{}] {}", locale.code, error_line(&msg)));
-                        continue;
-                    }
-                };
-                for field in locale.fields() {
-                    let value = current.values.get(&field).cloned().unwrap_or_default();
-                    if field == ListingField::Description {
-                        self.outln(&tr!(
-                            "cli.characters",
-                            locale = locale.code,
-                            display_name = field.display_name(),
-                            length = format_n0(utf16_len(&value))
-                        ));
-                    } else {
-                        self.outln(&format!("-- [{}] {}", locale.code, field.display_name()));
-                    }
-                    self.outln(&value);
+            if expected.images.as_ref().is_some_and(|i| !i.is_empty()) {
+                let snapshot =
+                    services::pull_images(&mut page, &fetcher, expected, &progress, cancel)?;
+                if !header_done {
+                    self.outln(&item_header(
+                        expected,
+                        snapshot.status_text.as_deref(),
+                        &snapshot.available_locales,
+                    ));
                 }
+                failed |= self.print_pulled_images(&snapshot);
             }
             self.outln("");
         }
@@ -407,6 +397,80 @@ impl<'a> CliApp<'a> {
         } else {
             exit_codes::SUCCESS
         })
+    }
+
+    /// pull のテキスト部分を表示する。失敗があれば true
+    fn print_pulled_text(&self, expected: &ExpectedItem, snapshot: &ItemSnapshot) -> bool {
+        let mut failed = false;
+        if let Some(err) = &snapshot.error {
+            self.outln(&format!("  {}", error_line(err)));
+            return true;
+        }
+        for locale in &expected.locales {
+            let current = snapshot.find(&locale.code);
+            let current = match current {
+                Some(c) if c.error.is_none() => c,
+                other => {
+                    failed = true;
+                    let msg = other
+                        .and_then(|c| c.error.clone())
+                        .unwrap_or_else(|| trs!("cli.could_not_read_the_values").to_string());
+                    self.outln(&format!("-- [{}] {}", locale.code, error_line(&msg)));
+                    continue;
+                }
+            };
+            for field in locale.fields() {
+                let value = current.values.get(&field).cloned().unwrap_or_default();
+                if field == ListingField::Description {
+                    self.outln(&tr!(
+                        "cli.characters",
+                        locale = locale.code,
+                        display_name = field.display_name(),
+                        length = format_n0(utf16_len(&value))
+                    ));
+                } else {
+                    self.outln(&format!("-- [{}] {}", locale.code, field.display_name()));
+                }
+                self.outln(&value);
+            }
+        }
+        failed
+    }
+
+    /// pull の画像部分を表示する（枚数・alt・原本のハッシュの先頭）。失敗があれば true
+    fn print_pulled_images(&self, snapshot: &ImageSnapshot) -> bool {
+        if let Some(err) = &snapshot.error {
+            self.outln(&format!("  {}", error_line(err)));
+            return true;
+        }
+        let mut failed = false;
+        for reading in &snapshot.slots {
+            let label = slot_label(reading.slot, reading.locale.as_deref());
+            match &reading.images {
+                Err(m) => {
+                    failed = true;
+                    self.outln(&format!("-- {label} {}", error_line(m)));
+                }
+                Ok(images) => {
+                    self.outln(&tr!(
+                        "cli.image_slot_header",
+                        label = label,
+                        count = images.len()
+                    ));
+                    for (i, image) in images.iter().enumerate() {
+                        let hash = match &image.pixel_sha256 {
+                            Ok(h) => h.chars().take(12).collect::<String>(),
+                            Err(m) => {
+                                failed = true;
+                                error_line(m)
+                            }
+                        };
+                        self.outln(&format!("  {}. {}  {hash}", i + 1, image.alt));
+                    }
+                }
+            }
+        }
+        failed
     }
 
     fn diff(
@@ -419,24 +483,54 @@ impl<'a> CliApp<'a> {
         let browser = self.open_logged_in(config, cancel)?;
         let mut page = browser.create_item_page()?;
         let progress = self.progress();
+        let fetcher = WinHttpImageFetcher;
         let mut any_diff = false;
         let mut any_error = false;
 
         for expected in targets {
-            let (snapshot, rows) = services::diff(&mut page, expected, &progress, cancel)?;
-            self.outln(&item_header(
-                expected,
-                snapshot.status_text.as_deref(),
-                &snapshot.available_locales,
-            ));
-            for row in &rows {
-                self.out_raw(&diff_formatter::format(row));
-                let status = row.status();
-                any_diff |= status == ComparisonStatus::Different;
-                any_error |= matches!(
-                    status,
-                    ComparisonStatus::Error | ComparisonStatus::NotFetched
-                );
+            let mut header_done = false;
+            if !expected.locales.is_empty() {
+                let (snapshot, rows) = services::diff(&mut page, expected, &progress, cancel)?;
+                self.outln(&item_header(
+                    expected,
+                    snapshot.status_text.as_deref(),
+                    &snapshot.available_locales,
+                ));
+                header_done = true;
+                for row in &rows {
+                    self.out_raw(&diff_formatter::format(row));
+                    let status = row.status();
+                    any_diff |= status == ComparisonStatus::Different;
+                    any_error |= matches!(
+                        status,
+                        ComparisonStatus::Error | ComparisonStatus::NotFetched
+                    );
+                }
+            }
+            if expected.images.as_ref().is_some_and(|i| !i.is_empty()) {
+                let (snapshot, rows) =
+                    services::diff_images(&mut page, &fetcher, expected, &progress, cancel)?;
+                if !header_done {
+                    self.outln(&item_header(
+                        expected,
+                        snapshot.status_text.as_deref(),
+                        &snapshot.available_locales,
+                    ));
+                }
+                if let Some(err) = &snapshot.error {
+                    self.outln(&format!("  {}", error_line(err)));
+                    any_error = true;
+                }
+                for row in &rows {
+                    if snapshot.error.is_none() {
+                        self.outln(&images::describe(row));
+                    }
+                    any_diff |= row.status == ComparisonStatus::Different;
+                    any_error |= matches!(
+                        row.status,
+                        ComparisonStatus::Error | ComparisonStatus::NotFetched
+                    );
+                }
             }
             self.outln("");
         }
@@ -462,30 +556,50 @@ impl<'a> CliApp<'a> {
         let browser = self.open_logged_in(config, cancel)?;
         let mut page = browser.create_item_page()?;
         let progress = self.progress();
+        let fetcher = WinHttpImageFetcher;
 
         // 1 件でも失敗したら残りは行わない（エラーがそのまま run へ上がる）
         for expected in targets {
-            let result = services::push(&mut page, expected, &progress, cancel)?;
-            self.outln(&format!("== {} ({})", result.item_name, result.item_id));
-            for locale in &result.locales {
-                let line = if locale.outcome == LocalePushOutcome::Saved {
-                    let names: Vec<&str> = locale
-                        .updated_fields
-                        .iter()
-                        .map(|f| f.display_name())
-                        .collect();
-                    tr!(
-                        "cli.saved_as_draft_and_verified",
-                        locale = locale.locale,
-                        text = names.join(trs!("cli.name_separator"))
-                    )
-                } else {
-                    tr!(
-                        "cli.no_changes_matches_the_source_files",
-                        locale = locale.locale
-                    )
-                };
-                self.outln(&line);
+            if !expected.locales.is_empty() {
+                let result = services::push(&mut page, expected, &progress, cancel)?;
+                self.outln(&format!("== {} ({})", result.item_name, result.item_id));
+                for locale in &result.locales {
+                    let line = if locale.outcome == LocalePushOutcome::Saved {
+                        let names: Vec<&str> = locale
+                            .updated_fields
+                            .iter()
+                            .map(|f| f.display_name())
+                            .collect();
+                        tr!(
+                            "cli.saved_as_draft_and_verified",
+                            locale = locale.locale,
+                            text = names.join(trs!("cli.name_separator"))
+                        )
+                    } else {
+                        tr!(
+                            "cli.no_changes_matches_the_source_files",
+                            locale = locale.locale
+                        )
+                    };
+                    self.outln(&line);
+                }
+            }
+            // 画像は、テキストの保存・照合が終わってから（同じアイテムの別の保存として行う）
+            if expected.images.as_ref().is_some_and(|i| !i.is_empty()) {
+                let result =
+                    services::push_images(&mut page, &fetcher, expected, &progress, cancel)?;
+                if expected.locales.is_empty() {
+                    self.outln(&format!("== {} ({})", result.item_name, result.item_id));
+                }
+                for label in &result.saved {
+                    self.outln(&tr!(
+                        "cli.images_saved_as_draft_and_verified",
+                        label = label
+                    ));
+                }
+                for label in &result.unchanged {
+                    self.outln(&tr!("cli.images_no_changes", label = label));
+                }
             }
         }
         self.outln(trs!("cli.done_nothing_was_submitted_for_review_run"));
@@ -531,8 +645,11 @@ impl<'a> CliApp<'a> {
     }
 }
 
-/// 対象アイテムを選び、正本を組み立てる（説明文をファイルから取り出す）。
-/// --item はすべて設定に存在する必要がある（打ち間違いで別のアイテムを触らないため）
+/// 対象アイテムを選び、正本を組み立てる（説明文をファイルから取り出し、画像を検証する）。
+/// --item はすべて設定に存在する必要がある（打ち間違いで別のアイテムを触らないため）。
+///
+/// `--only` で対象の種類を、`--image-scope` で画像の範囲を絞る。`--locale` はテキストのロケールと
+/// ローカライズ版スクリーンショットのロケールに効く（全言語向けの画像はロケールを持たないので絞らない）
 pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<Vec<ExpectedItem>> {
     if config.items.is_empty() {
         return Err(Error::Config(tr!(
@@ -555,35 +672,95 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
             .collect::<Result<_>>()?
     };
 
+    let explicit = !command.item_ids.is_empty();
+    let codes = &command.locale_codes;
     let mut result = Vec::new();
     for item in items {
-        let mut expected = build_expected(item)?;
-        if !command.locale_codes.is_empty() {
-            if !command.item_ids.is_empty() {
+        let want_text = command.only.text() && !item.locales.is_empty();
+        let want_images = command.only.images() && item.images.is_some();
+
+        // ロケールの指定が、このアイテムのどこに当たるか（テキストの言語・ローカライズ版スクリーンショットの言語）
+        let in_text = |c: &str| want_text && item.locales.iter().any(|l| eq_ic(&l.code, c));
+        let in_images = |c: &str| {
+            want_images
+                && command
+                    .image_scope
+                    .includes(ImageSlot::LocalizedScreenshots)
+                && item
+                    .images
+                    .as_ref()
+                    .is_some_and(|i| i.localized_screenshots.iter().any(|(l, _)| eq_ic(l, c)))
+        };
+        let matched: Vec<String> = codes
+            .iter()
+            .filter(|c| in_text(c) || in_images(c))
+            .cloned()
+            .collect();
+        if !codes.is_empty() {
+            if explicit {
                 // アイテムを明示したなら、指定ロケールが無いのは誤り
-                expected = expected.filter_locales(&command.locale_codes)?;
-            } else {
-                // 全アイテムが対象なら、指定ロケールを持つアイテムだけを残す
-                let codes: Vec<String> = command
-                    .locale_codes
-                    .iter()
-                    .filter(|c| expected.locales.iter().any(|l| eq_ic(&l.code, c)))
-                    .cloned()
-                    .collect();
-                if codes.is_empty() {
-                    continue;
+                if let Some(missing) = codes.iter().find(|c| !in_text(c) && !in_images(c)) {
+                    return Err(Error::Config(tr!(
+                        "listing.has_no_locale_in_the_config_file",
+                        display_name = item.display_name,
+                        item_id = item.item_id,
+                        code = missing
+                    )));
                 }
-                expected = expected.filter_locales(&codes)?;
+            } else if matched.is_empty() {
+                // 全アイテムが対象なら、指定ロケールを持つアイテムだけを残す
+                continue;
             }
+        }
+
+        let mut expected = if want_text {
+            let mut e = build_expected(item)?;
+            if !codes.is_empty() {
+                let text_codes: Vec<String> =
+                    codes.iter().filter(|c| in_text(c)).cloned().collect();
+                if text_codes.is_empty() {
+                    // ロケールの指定がローカライズ版スクリーンショットだけに当たる。テキストは今回は対象外
+                    e.locales.clear();
+                } else {
+                    e = e.filter_locales(&text_codes)?;
+                }
+            }
+            e
+        } else {
+            ExpectedItem {
+                item_id: item.item_id.clone(),
+                display_name: item.display_name.clone(),
+                locales: Vec::new(),
+                images: None,
+            }
+        };
+        if want_images {
+            expected.images = build_expected_images(item, command.image_scope, codes)?;
+        }
+
+        let has_work =
+            !expected.locales.is_empty() || expected.images.as_ref().is_some_and(|i| !i.is_empty());
+        if !has_work {
+            if explicit {
+                return Err(Error::Config(tr!(
+                    "cli.the_item_has_nothing_to_do_with_these_options",
+                    id = item.item_id
+                )));
+            }
+            continue;
         }
         result.push(expected);
     }
 
     if result.is_empty() {
-        return Err(Error::Config(tr!(
-            "cli.no_item_in_the_config_file_has",
-            locale_codes = command.locale_codes.join(", ")
-        )));
+        return Err(Error::Config(if codes.is_empty() {
+            trs!("cli.no_item_in_the_config_file_has_targets").to_string()
+        } else {
+            tr!(
+                "cli.no_item_in_the_config_file_has",
+                locale_codes = codes.join(", ")
+            )
+        }));
     }
     Ok(result)
 }

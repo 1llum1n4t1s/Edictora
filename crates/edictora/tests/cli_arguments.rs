@@ -331,3 +331,117 @@ fn exe_言語の判定はedictora_languageからlc_allからlangの順で未対�
     let err = unknown("cli-order-3", &[("LANG", "it_IT.UTF-8")]);
     assert!(err.starts_with("Error: "), "{err}");
 }
+
+// ───────── 画像（--only / --image-scope）─────────
+
+#[test]
+fn parse_onlyとimage_scopeを読む() {
+    use edictora::cli::args::Only;
+    use edictora::images::ImageScope;
+
+    let cmd = parse(&["diff"]).unwrap();
+    assert_eq!((cmd.only, cmd.image_scope), (Only::Both, ImageScope::All));
+
+    let cmd = parse(&["push", "--only", "images", "--image-scope=global", "--yes"]).unwrap();
+    assert_eq!(
+        (cmd.only, cmd.image_scope),
+        (Only::Images, ImageScope::Global)
+    );
+    assert!(cmd.yes);
+
+    let cmd = parse(&["pull", "--only=TEXT", "--image-scope", "Localized"]).unwrap();
+    assert_eq!(
+        (cmd.only, cmd.image_scope),
+        (Only::Text, ImageScope::Localized)
+    );
+    assert!(Only::Both.text() && Only::Both.images());
+    assert!(Only::Text.text() && !Only::Text.images());
+    assert!(!Only::Images.text() && Only::Images.images());
+}
+
+#[test]
+fn parse_onlyとimage_scopeの誤りは使い方の誤り() {
+    assert!(usage_error(&["diff", "--only", "image"]));
+    assert!(usage_error(&["diff", "--only"]));
+    assert!(usage_error(&["diff", "--image-scope", "everything"]));
+    assert!(usage_error(&["diff", "--only", "text", "--only", "images"]));
+    assert!(usage_error(&[
+        "diff",
+        "--image-scope",
+        "all",
+        "--image-scope",
+        "global"
+    ]));
+    // 対象を持たないコマンドでは使えない（submit は画像を触らない）
+    assert!(usage_error(&[
+        "submit", "--item", ITEM, "--yes", "--only", "images"
+    ]));
+    assert!(usage_error(&["login", "--only", "images"]));
+    assert!(usage_error(&["login", "--image-scope", "global"]));
+}
+
+#[test]
+fn run_画像の設定の誤りはブラウザを開かず終了コード2() {
+    let dir = work_dir("cli-images-config-error");
+    let config = dir.join("config.json");
+    std::fs::write(
+        &config,
+        format!(
+            r#"{{ "items": [ {{ "itemId": "{ITEM}", "baseDir": "{}", "images": {{ "marquee": "none.png" }} }} ] }}"#,
+            dir.to_str().unwrap().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    let (code, _, err) = run(
+        "cli-images-config-error",
+        &[
+            "diff",
+            "--config",
+            config.to_str().unwrap(),
+            "--only",
+            "images",
+        ],
+    );
+    assert_eq!(code, 2);
+    assert!(err.contains("none.png"), "{err}");
+
+    // 規格外の画像（PNG でない）も Chrome を開く前に止まる
+    let bad = dir.join("marquee.png");
+    std::fs::write(&bad, b"not a png at all, just text").unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"{{ "items": [ {{ "itemId": "{ITEM}", "baseDir": "{}", "images": {{ "marquee": "marquee.png" }} }} ] }}"#,
+            dir.to_str().unwrap().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    let (code, _, err) = run(
+        "cli-images-config-error",
+        &["push", "--config", config.to_str().unwrap(), "--yes"],
+    );
+    assert_eq!(code, 2);
+    assert!(err.contains("PNG"), "{err}");
+}
+
+#[test]
+fn run_対象が無い組み合わせはブラウザを開かず終了コード2() {
+    let config = write_config("cli-images-nothing");
+    // テキストだけのアイテムに --only images
+    let (code, _, err) = run(
+        "cli-images-nothing",
+        &[
+            "diff", "--config", &config, "--item", ITEM, "--only", "images",
+        ],
+    );
+    assert_eq!(code, 2);
+    assert!(err.contains(ITEM), "{err}");
+}
+
+#[test]
+fn ヘルプにonlyとimage_scopeがある() {
+    let (code, output, _) = run("cli-help-images", &["--help"]);
+    assert_eq!(code, 0);
+    assert!(output.contains("--only"));
+    assert!(output.contains("--image-scope"));
+}

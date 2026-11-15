@@ -6,8 +6,33 @@ use std::time::Duration;
 
 use crate::config::{is_valid_item_id, is_valid_locale_code, normalize_locale_code};
 use crate::error::{Error, Result};
+use crate::images::ImageScope;
 use crate::util::eq_ic;
 use crate::{tr, trs};
+
+/// 対象の種類（`--only`）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Only {
+    /// テキストと画像の両方（既定）
+    #[default]
+    Both,
+    /// テキスト（説明・URL）だけ
+    Text,
+    /// 掲載画像だけ
+    Images,
+}
+
+impl Only {
+    /// テキストを対象にするか
+    pub fn text(self) -> bool {
+        self != Only::Images
+    }
+
+    /// 画像を対象にするか
+    pub fn images(self) -> bool {
+        self != Only::Text
+    }
+}
 
 /// サブコマンド
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +80,8 @@ impl CliCommandKind {
                 "--chrome",
                 "--item",
                 "--locale",
+                "--only",
+                "--image-scope",
                 "--show-browser",
             ],
             CliCommandKind::Push => &[
@@ -63,6 +90,8 @@ impl CliCommandKind {
                 "--chrome",
                 "--item",
                 "--locale",
+                "--only",
+                "--image-scope",
                 "--yes",
                 "--show-browser",
             ],
@@ -81,13 +110,15 @@ impl CliCommandKind {
 }
 
 /// 値を取るオプション
-const VALUE_OPTIONS: [&str; 6] = [
+const VALUE_OPTIONS: [&str; 8] = [
     "--config",
     "--profile",
     "--chrome",
     "--item",
     "--locale",
     "--wait",
+    "--only",
+    "--image-scope",
 ];
 
 /// 解釈済みのコマンドライン
@@ -101,6 +132,10 @@ pub struct CliCommand {
     pub item_ids: Vec<String>,
     /// 指定されたロケール（未指定なら空。「-」区切りに正規化・重複なし）
     pub locale_codes: Vec<String>,
+    /// 対象の種類（未指定ならテキストと画像の両方）
+    pub only: Only,
+    /// 画像の対象範囲（未指定なら全言語向けとローカライズ版の両方）
+    pub image_scope: ImageScope,
     pub yes: bool,
     pub login_wait: Option<Duration>,
     pub show_browser: bool,
@@ -115,6 +150,8 @@ impl CliCommand {
             chrome_path: None,
             item_ids: Vec::new(),
             locale_codes: Vec::new(),
+            only: Only::Both,
+            image_scope: ImageScope::All,
             yes: false,
             login_wait: None,
             show_browser: false,
@@ -162,6 +199,7 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
 
     let command_name = kind.name();
     let mut cmd = CliCommand::of(kind);
+    let (mut seen_only, mut seen_scope) = (false, false);
 
     while index < args.len() {
         let arg = args[index];
@@ -204,6 +242,34 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
 
         let v = value.unwrap_or_default();
         match name.as_str() {
+            "--only" => {
+                if seen_only {
+                    return Err(Error::Usage(tr!(
+                        "cli.is_specified_more_than_once",
+                        name = name
+                    )));
+                }
+                seen_only = true;
+                cmd.only = match v.trim().to_ascii_lowercase().as_str() {
+                    "text" => Only::Text,
+                    "images" => Only::Images,
+                    _ => {
+                        return Err(Error::Usage(tr!("cli.invalid_value_for_only", value = v)));
+                    }
+                };
+            }
+            "--image-scope" => {
+                if seen_scope {
+                    return Err(Error::Usage(tr!(
+                        "cli.is_specified_more_than_once",
+                        name = name
+                    )));
+                }
+                seen_scope = true;
+                cmd.image_scope = ImageScope::parse(&v).ok_or_else(|| {
+                    Error::Usage(tr!("cli.invalid_value_for_image_scope", value = v))
+                })?;
+            }
             "--config" => set_once(&mut cmd.config_path, v, &name)?,
             "--profile" => set_once(&mut cmd.profile_dir, v, &name)?,
             "--chrome" => set_once(&mut cmd.chrome_path, v, &name)?,

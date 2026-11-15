@@ -494,3 +494,82 @@ fn exe_表示言語が日本語でもmcpの説明は英語でライブラリと�
         assert_eq!(tools, Value::Array(tool_definitions()), "{lang}");
     }
 }
+
+#[test]
+fn build_cli_args_onlyとimage_scopeをcliの引数にする() {
+    let args = |name: &str, v: Value| build_cli_args(name, &v).unwrap().unwrap();
+    assert_eq!(
+        args(
+            "edictora_diff",
+            json!({ "items": [ITEM], "only": "images", "imageScope": "global" })
+        ),
+        [
+            "diff",
+            "--item",
+            ITEM,
+            "--only",
+            "images",
+            "--image-scope",
+            "global"
+        ]
+    );
+    assert_eq!(
+        args(
+            "edictora_push",
+            json!({ "only": "images", "imageScope": "localized", "locales": ["ja"], "confirm": true })
+        ),
+        [
+            "push",
+            "--locale",
+            "ja",
+            "--only",
+            "images",
+            "--image-scope",
+            "localized",
+            "--yes"
+        ]
+    );
+    assert_eq!(
+        args("edictora_pull", json!({ "only": "text" })),
+        ["pull", "--only", "text"]
+    );
+}
+
+#[test]
+fn build_cli_args_onlyとimage_scopeは列挙の値だけ() {
+    let err = |name: &str, v: Value| build_cli_args(name, &v).unwrap_err().0;
+    // 値にオプションを紛れ込ませられない
+    assert!(err("edictora_diff", json!({ "only": "--yes" })).contains("only"));
+    assert!(err("edictora_push", json!({ "imageScope": "all --yes" })).contains("imageScope"));
+    assert!(err("edictora_push", json!({ "only": 1 })).contains("only"));
+    // submit には使えない
+    assert!(
+        err(
+            "edictora_submit",
+            json!({ "item": ITEM, "confirm": true, "only": "images" })
+        )
+        .contains("not allowed")
+    );
+}
+
+#[test]
+fn ツール定義にonlyとimage_scopeがあり審査送信には無い() {
+    let tools = tool_definitions();
+    let props = |name: &str| -> Vec<String> {
+        tools.iter().find(|t| t["name"] == name).unwrap()["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    };
+    for name in ["edictora_diff", "edictora_pull", "edictora_push"] {
+        let p = props(name);
+        assert!(
+            p.contains(&"only".to_string()) && p.contains(&"imageScope".to_string()),
+            "{name}"
+        );
+    }
+    let submit = props("edictora_submit");
+    assert!(!submit.contains(&"only".to_string()) && !submit.contains(&"imageScope".to_string()));
+}

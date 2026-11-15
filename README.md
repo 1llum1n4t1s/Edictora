@@ -22,6 +22,7 @@ It runs as a single command-line tool (`edictora.exe`). It's written in Rust and
 - **pull**: reads the current values from the dashboard (description, official URL, homepage URL and support URL). Read-only.
 - **diff**: shows the differences from your source files. Read-only, and the default command.
 - **push**: rewrites only the fields that differ, **saves them as a draft**, then reloads the page and checks the saved values against your source files.
+- **Images**: when an item has `images` in the config, `pull`, `diff` and `push` also handle its store images (screenshots, small promo tile and marquee). Narrow them with `--only text|images` and `--image-scope all|global|localized`.
 - **submit**: submits one item for review. It doesn't change the "publish automatically after review" setting.
 - **login**: opens Chrome with the dedicated profile so you can sign in to Google yourself.
 - **update**: downloads and installs a newer version, if there is one. This only works when you installed Edictora with Setup, and it also runs automatically when you sign in to Windows.
@@ -94,6 +95,36 @@ For each item, map each locale to its source files. **Fields you leave out are n
 - When a section is extracted, Edictora takes the lines after the start heading and before the end heading. It trims leading and trailing blank lines and trailing whitespace, and normalizes line endings to `\n`. If a heading isn't found, it stops with an error.
 - A URL field without a key is ignored. `""` means the field should be empty.
 - Unknown keys (such as typos) are errors. Comments and trailing commas are allowed.
+
+#### Store images (optional)
+
+Add `images` to an item to manage its store images. Like every other field, **keys you leave out are never touched**. Paths are relative to `baseDir`.
+
+```jsonc
+"images": {
+  "smallTile": "webstore/images/tile-small.png",            // 440x280
+  "marquee": "webstore/images/tile-marquee.png",            // 1400x560
+  "globalScreenshots": { "dir": "webstore/images/en" },     // or { "files": ["a.png", "b.png"] }
+  "localizedScreenshots": {                                 // zh_CN = zh-CN
+    "ja": { "dir": "webstore/images/ja" },
+    "zh_CN": { "dir": "webstore/images/zh_CN" }
+  }
+}
+```
+
+- `dir` uses the `screenshot-*.png` files directly inside the folder, in name order (1–5 files). `files` uses the files in the order you write them (1–5).
+- Only PNG is supported: 24-bit without alpha, 1280x800 or 640x400 for screenshots, 440x280 for the small tile and 1400x560 for the marquee. Edictora checks this, and that no image repeats inside a set, before opening Chrome (exit code 2). The shop icon isn't managed.
+- An item may have `images` without `locales` (images only).
+- **Images are compared by their decoded pixels, not by file bytes.** The dashboard re-encodes uploaded PNGs, so the stored file never has the same bytes as yours even though the pixels are identical. Edictora downloads each image from the dashboard (the `=s0` original, over HTTPS from `*.googleusercontent.com` only, with no cookies) and compares the pixel hashes in order. If an image can't be downloaded or decoded, the result is "cannot compare": never "match" and never "replace".
+- `push --yes` replaces a whole slot (delete all, then upload in order) only when it differs, saves a draft, reloads and checks again. Slots are handled in this order: small tile, marquee, global screenshots, then each language's localized screenshots.
+- **Deleting an image takes effect on the dashboard immediately** (it asks "this can't be undone", and the slot stayed empty after reloading without saving). If a push stops halfway, the draft can be left with images missing: run it again to finish. Edictora never touches an item that is pending review.
+- An item with a single language has no localized screenshots, so use `--image-scope global`. If a locale in `localizedScreenshots` isn't on the dashboard, Edictora stops before changing anything: use `--image-scope global` or `--locale`.
+- Writing images works only while the dashboard is shown in Japanese (the English labels are unverified).
+
+```powershell
+edictora diff --only images --item <id>                                  # Images only (read-only)
+edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
 
 ### 2. Sign in
 
@@ -213,6 +244,7 @@ If you use an MCP gateway (such as Toolport), register the same command (stdio, 
 - Fields and buttons are found by label, role and text, never by CSS class names. If a search doesn't match exactly one element, Edictora stops.
 - Chrome is started without automation flags and shut down cleanly. **The profile is never deleted.**
 - Screenshots taken on failure are saved to `%LOCALAPPDATA%\Edictora.Data\diagnostics`, never to your repository.
+- Image updates replace only the slots that differ. They never touch the shop icon or reorder images, and they can never submit for review (the image code has no way to call it).
 
 ## Where files are stored
 

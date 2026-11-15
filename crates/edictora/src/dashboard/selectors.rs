@@ -11,9 +11,11 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::dashboard::PageImage;
 use crate::dashboard::text::{DashboardLang, DashboardText};
 use crate::dashboard::write_gate::ItemPageState;
 use crate::error::{Error, Result};
+use crate::images::ImageSlot;
 use crate::listing::ListingField;
 use crate::util::{contains_ic, eq_ic};
 use crate::{tr, trs};
@@ -71,6 +73,13 @@ pub struct ElementInfo {
     pub checked: Option<bool>,
     /// aria-expanded の値（"true"/"false"。属性が無ければ None）。コンボボックスの開閉判定に使う
     pub expanded: Option<String>,
+    /// `fileInput` のみ: accept 属性
+    pub accept: String,
+    /// `fileInput` のみ: スロットの中の画像（画面の並び順）
+    pub images: Vec<PageImage>,
+    /// `slotImage` / `imageButton` のみ: 枠の大きさ（0 ならまだ表示されていない）
+    pub width: i32,
+    pub height: i32,
 }
 
 /// 言語の選択肢 1 つ（「日本語 – ja」「英語 – en （デフォルト）」）
@@ -181,6 +190,21 @@ pub fn parse_elements(array: &Value) -> Vec<ElementInfo> {
                 .get("expanded")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            accept: str_of(e, "accept"),
+            images: e
+                .get("images")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|m| PageImage {
+                            alt: str_of(m, "alt"),
+                            src: str_of(m, "src"),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            width: e.get("width").and_then(Value::as_i64).unwrap_or(0) as i32,
+            height: e.get("height").and_then(Value::as_i64).unwrap_or(0) as i32,
         })
         .collect()
 }
@@ -602,4 +626,149 @@ pub fn contains_ignoring_space(haystack: Option<&str>, needle: &str) -> bool {
 
 fn remove_white_space(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+// ───────── 画像アセット ─────────
+
+/// スロットの寸法の表記（画面の案内は「1280x800」「440×280」のように x か × で書かれる）
+fn size_pattern(slot: ImageSlot) -> &'static Regex {
+    static SMALL: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b440\s*[x×]\s*280\b").expect("固定の正規表現"));
+    static MARQUEE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b1400\s*[x×]\s*560\b").expect("固定の正規表現"));
+    static SHOT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b1280\s*[x×]\s*800\b").expect("固定の正規表現"));
+    match slot {
+        ImageSlot::SmallTile => &SMALL,
+        ImageSlot::Marquee => &MARQUEE,
+        ImageSlot::GlobalScreenshots | ImageSlot::LocalizedScreenshots => &SHOT,
+    }
+}
+
+/// 画像のスロット（`input[type=file]`）を 1 つ選ぶ。
+///
+/// 見分けは、その入力を含む枠の文字列の「寸法の表記」（1280x800・440×280・1400×560）と「見出しの行」
+/// （全言語向けアセット / ローカライズ版アセット）で行う。クラス名・位置には頼らない。
+/// - スクリーンショットは見出しの行が必要（全言語向けとローカライズ版は同じ寸法なので、見出しで分ける）
+/// - 小タイル・マーキーは寸法だけで選び、ローカライズ版の見出しを持つ枠は除く
+/// - 候補がちょうど 1 つに絞れなければ止める（別のスロットを書き換える事故を防ぐ）
+/// - PNG を受け付けない入力・無効な入力は候補にしない
+pub fn pick_image_slot<'a>(
+    t: &DashboardText,
+    inputs: &'a [ElementInfo],
+    slot: ImageSlot,
+) -> Result<&'a ElementInfo> {
+    let pattern = size_pattern(slot);
+    let global = |i: &ElementInfo| has_label_line(Some(&i.text), t.global_assets_heading);
+    let localized = |i: &ElementInfo| has_label_line(Some(&i.text), t.localized_assets_heading);
+    let name = slot.display_name();
+    exactly_one(
+        inputs
+            .iter()
+            .filter(|i| i.tag == "input" && i.r#type == "file" && !i.disabled)
+            .filter(|i| contains_ic(&i.accept, ".png"))
+            .filter(|i| pattern.is_match(&i.text))
+            .filter(|i| match slot {
+                ImageSlot::GlobalScreenshots => global(i) && !localized(i),
+                ImageSlot::LocalizedScreenshots => localized(i) && !global(i),
+                ImageSlot::SmallTile | ImageSlot::Marquee => !localized(i),
+            }),
+        || tr!("dashboard.the_image_slot_was_not_found", name = name),
+        |n| {
+            tr!(
+                "dashboard.found_image_slots_cannot_identify_which_one",
+                count = n,
+                name = name
+            )
+        },
+    )
+}
+
+/// スロットの `position`（0 始まり）番目の画像に画面が付ける alt（「スクリーンショット 3」など）
+pub fn expected_image_alt(t: &DashboardText, slot: ImageSlot, position: usize) -> String {
+    match slot {
+        ImageSlot::SmallTile => t.small_tile_alt.to_string(),
+        ImageSlot::Marquee => t.marquee_alt.to_string(),
+        ImageSlot::GlobalScreenshots | ImageSlot::LocalizedScreenshots => {
+            format!("{} {}", t.screenshot_alt_prefix, position + 1)
+        }
+    }
+}
+
+/// スロットの画像の alt が、画面が付ける並び（スクリーンショット 1, 2, ...）どおりか確かめる。
+/// 保存前の照合と、アップロードのたびの確認に使う（画像の取り違え・並びの崩れに気づくため）
+pub fn ensure_image_alts(t: &DashboardText, slot: ImageSlot, images: &[PageImage]) -> Result<()> {
+    for (i, image) in images.iter().enumerate() {
+        let want = expected_image_alt(t, slot, i);
+        if image.alt.trim() != want {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_image_alt_does_not_match_the_expected",
+                name = slot.display_name(),
+                position = i + 1,
+                alt = image.alt.trim(),
+                want = want
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 画像の削除ボタンの aria-label（`画像を削除 <alt>`）
+pub fn delete_image_label(t: &DashboardText, alt: &str) -> String {
+    format!("{}{}", t.delete_image_prefix, alt.trim())
+}
+
+/// 画像の削除ボタンを 1 つ選ぶ（aria-label が `画像を削除 <alt>` に完全一致するものだけ）。
+/// 並べ替え（「画像を左に移動して並べ替え」など）のボタンは候補にしない
+pub fn pick_delete_button<'a>(
+    t: &DashboardText,
+    buttons: &'a [ElementInfo],
+    alt: &str,
+) -> Result<&'a ElementInfo> {
+    let want = delete_image_label(t, alt);
+    exactly_one(
+        buttons.iter().filter(|b| b.label.trim() == want),
+        || tr!("dashboard.the_button_was_not_found", text = want),
+        |n| {
+            tr!(
+                "dashboard.found_buttons_cannot_identify_which_one_to",
+                count = n,
+                text = want
+            )
+        },
+    )
+}
+
+/// 画像まわりのクリックを許すか。押してよいのは削除ボタン（`画像を削除 ` で始まるラベル）だけで、
+/// 並べ替え・アップロード状況を閉じるなど、それ以外は押さない（アイコン・並べ替えに触れない）
+pub fn ensure_image_click_allowed(t: &DashboardText, label: &str) -> Result<()> {
+    if label.trim().starts_with(t.delete_image_prefix.trim_end()) {
+        Ok(())
+    } else {
+        Err(Error::Dashboard(tr!(
+            "dashboard.refusing_to_click_an_image_button_other_than_delete",
+            label = label
+        )))
+    }
+}
+
+/// 画像のアップロードのエラーを示すメッセージ（結果メッセージのうち、失敗を表す語を含むもの）。
+///
+/// 常設の案内通知は除く（`result_messages`）。日本語の語は「失敗」「エラー」「無効」「できません」。
+/// 英語の画面では画像を書かない（`ensure_image_write_supported`）が、同じ判定が読み出しでも呼べるよう英語の語も持つ
+pub fn image_error_messages<S: AsRef<str>>(t: &DashboardText, messages: &[S]) -> Vec<String> {
+    const MARKERS: [&str; 8] = [
+        "失敗",
+        "エラー",
+        "無効",
+        "できません",
+        "error",
+        "fail",
+        "invalid",
+        "unable",
+    ];
+    result_messages(t, messages)
+        .into_iter()
+        .filter(|m| MARKERS.iter().any(|k| contains_ic(m, k)))
+        .collect()
 }

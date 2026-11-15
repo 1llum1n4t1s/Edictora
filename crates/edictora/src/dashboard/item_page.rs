@@ -8,7 +8,7 @@
 //! - 画面の表示言語（日本語 / 英語）は、編集画面を開く・読み込み直すたびに `<html lang>` から 1 回だけ判定し、
 //!   以降はその言語の文言セットだけで要素を探す（`text.rs`）。日本語・英語以外なら止める
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -20,13 +20,16 @@ use crate::dashboard::selectors::{self as sel, ElementInfo};
 use crate::dashboard::text::{DashboardLang, DashboardText};
 use crate::dashboard::urls;
 use crate::dashboard::write_gate::ItemPageState;
-use crate::dashboard::{ListingPage, SubmitConfirm, SubmitDialogInfo, SubmitResult};
+use crate::dashboard::{
+    EditorPage, ImagePage, ListingPage, PageImage, SubmitConfirm, SubmitDialogInfo, SubmitResult,
+};
 use crate::error::{Error, Result};
+use crate::images::ImageSlot;
 use crate::listing::text_diff::first_difference_position;
 use crate::listing::{FieldValues, ListingField};
 use crate::logging::{LogLevel, log};
 use crate::tr;
-use crate::util::{LocalTime, diagnostics_file_name, eq_ic, utf16_len};
+use crate::util::{LocalTime, contains_ic, diagnostics_file_name, eq_ic, utf16_len};
 
 /// 条件確認の間隔
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
@@ -223,6 +226,32 @@ impl<'a> DashboardItemPage<'a> {
         Ok(v.as_str().unwrap_or("").to_string())
     }
 
+    /// 画像の書き込みを許す画面か。日本語の画面だけ許す（英語の画面の文言は実画面で未確認。
+    /// 削除ボタンの aria-label・見出しを推測で押さないため）
+    fn ensure_image_write_supported(&self) -> Result<()> {
+        if self.t()?.lang != DashboardLang::Ja {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.writing_images_is_only_supported_on_a_japanese_dashboard"
+            )));
+        }
+        Ok(())
+    }
+
+    /// 画像のスロット（入力）を特定して返す。画面の描画が遅れることがあるので、見つかるまで少し待つ
+    fn locate_slot(&self, slot: ImageSlot, cancel: &CancelToken) -> Result<ElementInfo> {
+        let t = self.t()?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            cancel.check()?;
+            let inputs = self.collect(kinds::FILE_INPUT, cancel)?;
+            match sel::pick_image_slot(t, &inputs, slot) {
+                Ok(found) => return Ok(found.clone()),
+                Err(e) if Instant::now() >= deadline => return Err(e),
+                Err(_) => cancel.sleep(POLL_INTERVAL)?,
+            }
+        }
+    }
+
     /// ページ側の例外はダッシュボード操作の失敗として扱う。
     /// ページ内スクリプトが固定の印で投げた例外（要素が消えた）は、ここで利用者向けの文に直す
     fn evaluate(&self, expression: &str, cancel: &CancelToken) -> Result<Value> {
@@ -233,7 +262,7 @@ impl<'a> DashboardItemPage<'a> {
     }
 }
 
-impl ListingPage for DashboardItemPage<'_> {
+impl EditorPage for DashboardItemPage<'_> {
     fn open_item(&mut self, item_id: &str, cancel: &CancelToken) -> Result<()> {
         self.item_id = Some(item_id.to_string());
         self.page.prepare_for_input(cancel)?;
@@ -409,6 +438,90 @@ impl ListingPage for DashboardItemPage<'_> {
         )
     }
 
+    fn save_draft(&mut self, cancel: &CancelToken) -> Result<()> {
+        let t = self.t()?;
+        let (save, saved_message) = (t.save_draft_button, t.saved_message);
+        self.page.prepare_for_input(cancel)?;
+
+        // 前回の「保存されました」が残っていると成功を誤認するので、消えるまで待つ
+        let clean = try_poll(
+            || Ok((!sel::has_message(t, &self.messages(cancel)?, saved_message)).then_some(())),
+            Duration::from_secs(10),
+            cancel,
+        )?;
+        if !clean {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_previous_save_message_does_not_go"
+            )));
+        }
+
+        let buttons = self.collect(kinds::BUTTON, cancel)?;
+        let button = sel::pick_button(&buttons, save)?;
+        if button.disabled {
+            return Err(Error::WriteBlocked(tr!(
+                "dashboard.the_button_cannot_be_clicked",
+                save = save
+            )));
+        }
+        self.click(
+            kinds::BUTTON,
+            button.index,
+            &tr!("dashboard.the_button", save = save),
+            cancel,
+        )?;
+
+        let mut messages: Vec<String> = Vec::new();
+        let saved = try_poll(
+            || {
+                messages = self.messages(cancel)?;
+                Ok(sel::has_message(t, &messages, saved_message).then_some(()))
+            },
+            Duration::from_secs(30),
+            cancel,
+        )?;
+        if !saved {
+            let shown = sel::result_messages(t, &messages);
+            let tail = if shown.is_empty() {
+                String::new()
+            } else {
+                let joined = shown.join(" / ");
+                tr!("dashboard.shown", joined = joined)
+            };
+            return Err(Error::Dashboard(tr!(
+                "dashboard.could_not_confirm_the_draft_saved_message",
+                saved_message = saved_message,
+                suffix = tail
+            )));
+        }
+        log(
+            &format!("下書き保存を確認: {}", self.item_label()),
+            LogLevel::Info,
+        );
+        Ok(())
+    }
+
+    fn capture_diagnostics(&mut self, label: &str) -> Option<String> {
+        // 失敗時の記録なので、中断の後でも保存を試みる（新しい合図を使う）
+        let run = || -> Result<String> {
+            std::fs::create_dir_all(&self.diagnostics_dir)?;
+            // ファイル名の規則（yyyyMMdd-HHmmss-<安全化したラベル>.png）は純粋関数にまとめ、util のテストで固めている
+            let name = diagnostics_file_name(&LocalTime::now(), label);
+            let path = self.diagnostics_dir.join(name);
+            let png = self.page.capture_screenshot(&CancelToken::new())?;
+            std::fs::write(&path, png)?;
+            Ok(path.display().to_string())
+        };
+        match run() {
+            Ok(p) => Some(p),
+            Err(e) => {
+                log(&format!("診断用の画面保存に失敗: {e}"), LogLevel::Warning);
+                None
+            }
+        }
+    }
+}
+
+impl ListingPage for DashboardItemPage<'_> {
     fn read_fields(
         &mut self,
         fields: &[ListingField],
@@ -476,68 +589,6 @@ impl ListingPage for DashboardItemPage<'_> {
                 want = want
             )));
         }
-        Ok(())
-    }
-
-    fn save_draft(&mut self, cancel: &CancelToken) -> Result<()> {
-        let t = self.t()?;
-        let (save, saved_message) = (t.save_draft_button, t.saved_message);
-        self.page.prepare_for_input(cancel)?;
-
-        // 前回の「保存されました」が残っていると成功を誤認するので、消えるまで待つ
-        let clean = try_poll(
-            || Ok((!sel::has_message(t, &self.messages(cancel)?, saved_message)).then_some(())),
-            Duration::from_secs(10),
-            cancel,
-        )?;
-        if !clean {
-            return Err(Error::Dashboard(tr!(
-                "dashboard.the_previous_save_message_does_not_go"
-            )));
-        }
-
-        let buttons = self.collect(kinds::BUTTON, cancel)?;
-        let button = sel::pick_button(&buttons, save)?;
-        if button.disabled {
-            return Err(Error::WriteBlocked(tr!(
-                "dashboard.the_button_cannot_be_clicked",
-                save = save
-            )));
-        }
-        self.click(
-            kinds::BUTTON,
-            button.index,
-            &tr!("dashboard.the_button", save = save),
-            cancel,
-        )?;
-
-        let mut messages: Vec<String> = Vec::new();
-        let saved = try_poll(
-            || {
-                messages = self.messages(cancel)?;
-                Ok(sel::has_message(t, &messages, saved_message).then_some(()))
-            },
-            Duration::from_secs(30),
-            cancel,
-        )?;
-        if !saved {
-            let shown = sel::result_messages(t, &messages);
-            let tail = if shown.is_empty() {
-                String::new()
-            } else {
-                let joined = shown.join(" / ");
-                tr!("dashboard.shown", joined = joined)
-            };
-            return Err(Error::Dashboard(tr!(
-                "dashboard.could_not_confirm_the_draft_saved_message",
-                saved_message = saved_message,
-                suffix = tail
-            )));
-        }
-        log(
-            &format!("下書き保存を確認: {}", self.item_label()),
-            LogLevel::Info,
-        );
         Ok(())
     }
 
@@ -688,25 +739,211 @@ impl ListingPage for DashboardItemPage<'_> {
             status_text: status,
         })
     }
+}
 
-    fn capture_diagnostics(&mut self, label: &str) -> Option<String> {
-        // 失敗時の記録なので、中断の後でも保存を試みる（新しい合図を使う）
-        let run = || -> Result<String> {
-            std::fs::create_dir_all(&self.diagnostics_dir)?;
-            // ファイル名の規則（yyyyMMdd-HHmmss-<安全化したラベル>.png）は純粋関数にまとめ、util のテストで固めている
-            let name = diagnostics_file_name(&LocalTime::now(), label);
-            let path = self.diagnostics_dir.join(name);
-            let png = self.page.capture_screenshot(&CancelToken::new())?;
-            std::fs::write(&path, png)?;
-            Ok(path.display().to_string())
+impl ImagePage for DashboardItemPage<'_> {
+    fn read_images(&mut self, slot: ImageSlot, cancel: &CancelToken) -> Result<Vec<PageImage>> {
+        Ok(self.locate_slot(slot, cancel)?.images)
+    }
+
+    fn delete_image(
+        &mut self,
+        slot: ImageSlot,
+        position: usize,
+        cancel: &CancelToken,
+    ) -> Result<()> {
+        self.ensure_image_write_supported()?;
+        let t = self.t()?;
+        self.page.prepare_for_input(cancel)?;
+        let info = self.locate_slot(slot, cancel)?;
+        let before = info.images.len();
+        let Some(target) = info.images.get(position) else {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_image_to_delete_does_not_exist",
+                name = slot.display_name(),
+                position = position + 1,
+                count = before
+            )));
         };
-        match run() {
-            Ok(p) => Some(p),
-            Err(e) => {
-                log(&format!("診断用の画面保存に失敗: {e}"), LogLevel::Warning);
-                None
-            }
+        let alt = target.alt.clone();
+
+        // 削除ボタンはホバーで現れる（普段は 0x0・透明）ので、先に画像の上へマウスを動かす
+        let thumbs = sel::parse_elements(&self.evaluate(
+            &scripts::collect_slot(t, kinds::SLOT_IMAGE, info.index),
+            cancel,
+        )?);
+        let thumb = thumbs.get(position).ok_or_else(|| {
+            Error::Dashboard(tr!(
+                "dashboard.the_image_to_delete_does_not_exist",
+                name = slot.display_name(),
+                position = position + 1,
+                count = thumbs.len()
+            ))
+        })?;
+        self.evaluate(
+            &scripts::scroll_to(t, kinds::SLOT_IMAGE, thumb.index),
+            cancel,
+        )?;
+        cancel.sleep(Duration::from_millis(150))?;
+        let point = self.evaluate(&scripts::point(t, kinds::SLOT_IMAGE, thumb.index), cancel)?;
+        let x = point.get("x").and_then(Value::as_f64).unwrap_or(0.0);
+        let y = point.get("y").and_then(Value::as_f64).unwrap_or(0.0);
+        self.page.hover_at(x, y, cancel)?;
+
+        // 削除ボタンが表示される（大きさを持つ）まで待つ。aria-label が「画像を削除 <alt>」に完全一致するものだけを選ぶ
+        let what = tr!(
+            "dashboard.the_delete_button_of_image",
+            name = slot.display_name(),
+            alt = alt
+        );
+        let button = poll(
+            || {
+                let buttons = sel::parse_elements(&self.evaluate(
+                    &scripts::collect_slot(t, kinds::IMAGE_BUTTON, info.index),
+                    cancel,
+                )?);
+                let b = sel::pick_delete_button(t, &buttons, &alt)?;
+                Ok((b.width > 0 && b.height > 0).then(|| b.clone()))
+            },
+            Duration::from_secs(10),
+            &what,
+            cancel,
+        )?;
+        if button.disabled {
+            return Err(Error::WriteBlocked(tr!(
+                "dashboard.the_image_button_cannot_be_clicked",
+                what = what
+            )));
         }
+        // 押してよいのは削除ボタンだけ（並べ替えなどは押さない）
+        sel::ensure_image_click_allowed(t, &button.label)?;
+        self.click(kinds::IMAGE_BUTTON, button.index, &what, cancel)?;
+
+        // 削除の確認ダイアログ（「この画像を削除してもよろしいですか？」）が出たら、文面を確かめて確定ボタンだけを押す。
+        // 文面が違うダイアログ・複数のダイアログなら、押さずに止める。その後、枚数が 1 枚減るまで待つ
+        let mut dialog: Option<String> = None;
+        let mut confirmed = false;
+        let done = try_poll(
+            || {
+                if !confirmed {
+                    let dialogs = self.dialogs(cancel)?;
+                    if let Some(first) = dialogs.first() {
+                        let known =
+                            dialogs.len() == 1 && contains_ic(first, t.delete_image_confirm_marker);
+                        if !known {
+                            dialog = Some(first.clone());
+                            return Ok(Some(()));
+                        }
+                        let buttons = self.collect(kinds::DIALOG_BUTTON, cancel)?;
+                        let ok = sel::pick_button(&buttons, t.delete_image_confirm_button)?;
+                        if ok.disabled {
+                            return Err(Error::WriteBlocked(tr!(
+                                "dashboard.the_image_button_cannot_be_clicked",
+                                what = t.delete_image_confirm_button
+                            )));
+                        }
+                        self.click(
+                            kinds::DIALOG_BUTTON,
+                            ok.index,
+                            &tr!(
+                                "dashboard.the_button_in_the_delete_image_dialog",
+                                label = t.delete_image_confirm_button
+                            ),
+                            cancel,
+                        )?;
+                        confirmed = true;
+                        return Ok(None);
+                    }
+                }
+                let now = self.locate_slot(slot, cancel)?.images.len();
+                Ok((now + 1 == before).then_some(()))
+            },
+            Duration::from_secs(20),
+            cancel,
+        )?;
+        if let Some(d) = dialog {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.a_dialog_appeared_after_deleting_the_image",
+                text = d
+            )));
+        }
+        if !done {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_image_count_did_not_decrease_after_deleting",
+                name = slot.display_name()
+            )));
+        }
+        Ok(())
+    }
+
+    fn upload_image(&mut self, slot: ImageSlot, path: &Path, cancel: &CancelToken) -> Result<()> {
+        self.ensure_image_write_supported()?;
+        let t = self.t()?;
+        if !path.is_file() {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_image_file_does_not_exist",
+                path = path.display()
+            )));
+        }
+        self.page.prepare_for_input(cancel)?;
+        let info = self.locate_slot(slot, cancel)?;
+        let before = info.images.len();
+        if before >= slot.max_count() {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_slot_is_already_full",
+                name = slot.display_name(),
+                max = slot.max_count()
+            )));
+        }
+        // パスは CDP の引数で渡す（ページ内スクリプトには埋め込まない）
+        let expression = scripts::element(t, kinds::FILE_INPUT, info.index);
+        self.page
+            .set_file_input_files(&expression, &[path.to_path_buf()], cancel)
+            .map_err(|e| match e {
+                Error::JavaScript(m) => Error::Dashboard(sel::page_script_error_message(&m)),
+                other => other,
+            })?;
+
+        // 枚数が 1 枚増え、alt の番号が揃い、エラー表示が無くなるまで待つ（1 枚 60 秒まで）
+        let mut last_error: Option<String> = None;
+        let mut last_count = before;
+        let done = try_poll(
+            || {
+                let now = self.locate_slot(slot, cancel)?;
+                last_count = now.images.len();
+                let errors = sel::image_error_messages(t, &self.messages(cancel)?);
+                if !errors.is_empty() {
+                    last_error = Some(errors.join(" / "));
+                    return Ok(Some(()));
+                }
+                if now.images.len() == before + 1
+                    && sel::ensure_image_alts(t, slot, &now.images).is_ok()
+                {
+                    return Ok(Some(()));
+                }
+                Ok(None)
+            },
+            Duration::from_secs(60),
+            cancel,
+        )?;
+        if let Some(e) = last_error {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_image_upload_showed_an_error",
+                name = slot.display_name(),
+                path = path.display(),
+                error = e
+            )));
+        }
+        if !done {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_image_upload_did_not_finish",
+                name = slot.display_name(),
+                path = path.display(),
+                before = before,
+                now = last_count
+            )));
+        }
+        Ok(())
     }
 }
 

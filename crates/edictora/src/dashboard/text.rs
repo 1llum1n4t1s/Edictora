@@ -94,6 +94,27 @@ pub struct DashboardText {
     pub homepage_url_label: &'static str,
     /// サポート URL 欄のラベル
     pub support_url_label: &'static str,
+
+    // ───── 画像アセット（掲載画像）─────
+    // 日本語は 2026-11-15 に実画面（SearchClock・Vuora）で確認した。英語は実画面で未確認の暫定値
+    // （英語の画面では画像の書き込みを許さず、読み出しも要素が絞れなければ止まる）。
+    /// 全言語向けアセットの見出し（画像の置き場を、見出しの行で見分ける）
+    pub global_assets_heading: &'static str,
+    /// ローカライズ版アセットの見出し
+    pub localized_assets_heading: &'static str,
+    /// スクリーンショットの alt の接頭辞（alt は「スクリーンショット 1」の形。番号は 1 始まり）
+    pub screenshot_alt_prefix: &'static str,
+    /// 小タイルの alt
+    pub small_tile_alt: &'static str,
+    /// マーキーの alt
+    pub marquee_alt: &'static str,
+    /// 画像の削除ボタンの aria-label の接頭辞（`画像を削除 <alt>`。この形以外の画像ボタンは押さない）
+    pub delete_image_prefix: &'static str,
+    /// 画像の削除を押した後に出る確認ダイアログの文面の一部（「この画像を削除してもよろしいですか？…」）。
+    /// これを含むダイアログだけを確認として扱い、別のダイアログなら押さずに止める
+    pub delete_image_confirm_marker: &'static str,
+    /// その確認ダイアログの確定ボタン（前後の空白を除いた完全一致で探す）
+    pub delete_image_confirm_button: &'static str,
 }
 
 impl DashboardText {
@@ -128,6 +149,14 @@ pub const JA: DashboardText = DashboardText {
     official_url_label: "公式 URL",
     homepage_url_label: "ホームページ URL",
     support_url_label: "サポート URL",
+    global_assets_heading: "全言語向けアセット",
+    localized_assets_heading: "ローカライズ版アセット",
+    screenshot_alt_prefix: "スクリーンショット",
+    small_tile_alt: "プロモーション タイル（小）",
+    marquee_alt: "マーキー プロモーション タイル",
+    delete_image_prefix: "画像を削除 ",
+    delete_image_confirm_marker: "この画像を削除してもよろしいですか",
+    delete_image_confirm_button: "削除",
 };
 
 /// 英語表示のダッシュボードの文言。
@@ -159,6 +188,14 @@ pub const EN: DashboardText = DashboardText {
     official_url_label: "Official URL",
     homepage_url_label: "Homepage URL",
     support_url_label: "Support URL",
+    global_assets_heading: "Global assets",
+    localized_assets_heading: "Localized assets",
+    screenshot_alt_prefix: "Screenshot",
+    small_tile_alt: "Small promo tile",
+    marquee_alt: "Marquee promo tile",
+    delete_image_prefix: "Delete image ",
+    delete_image_confirm_marker: "delete this image",
+    delete_image_confirm_button: "Delete",
 };
 
 impl DashboardLang {

@@ -3,7 +3,7 @@
 use edictora::Error;
 use edictora::cancel::CancelToken;
 use edictora::dashboard::write_gate::ItemPageState;
-use edictora::dashboard::{ListingPage, SubmitConfirm, SubmitDialogInfo, SubmitResult};
+use edictora::dashboard::{EditorPage, ListingPage, SubmitConfirm, SubmitDialogInfo, SubmitResult};
 use edictora::listing::*;
 use edictora::services::{self, LocalePushOutcome};
 use edictora::util::eq_ic;
@@ -48,7 +48,7 @@ impl FakeListingPage {
     }
 }
 
-impl ListingPage for FakeListingPage {
+impl EditorPage for FakeListingPage {
     fn open_item(&mut self, item_id: &str, _: &CancelToken) -> edictora::Result<()> {
         self.log.push(format!("open {item_id}"));
         if let Some(m) = &self.open_error {
@@ -91,6 +91,21 @@ impl ListingPage for FakeListingPage {
         Ok(())
     }
 
+    fn save_draft(&mut self, _: &CancelToken) -> edictora::Result<()> {
+        self.log.push("save".to_string());
+        let code = self.current_locale.clone().unwrap();
+        let values = Self::find(&mut self.editing, &code).clone();
+        *Self::find(&mut self.saved, &code) = values;
+        Ok(())
+    }
+
+    fn capture_diagnostics(&mut self, label: &str) -> Option<String> {
+        self.log.push(format!("capture {label}"));
+        self.shot.clone()
+    }
+}
+
+impl ListingPage for FakeListingPage {
     fn read_fields(
         &mut self,
         fields: &[ListingField],
@@ -121,14 +136,6 @@ impl ListingPage for FakeListingPage {
         Ok(())
     }
 
-    fn save_draft(&mut self, _: &CancelToken) -> edictora::Result<()> {
-        self.log.push("save".to_string());
-        let code = self.current_locale.clone().unwrap();
-        let values = Self::find(&mut self.editing, &code).clone();
-        *Self::find(&mut self.saved, &code) = values;
-        Ok(())
-    }
-
     fn submit_for_review(
         &mut self,
         confirm: &mut SubmitConfirm<'_>,
@@ -152,11 +159,6 @@ impl ListingPage for FakeListingPage {
             status_text: Some(self.status.clone()),
         })
     }
-
-    fn capture_diagnostics(&mut self, label: &str) -> Option<String> {
-        self.log.push(format!("capture {label}"));
-        self.shot.clone()
-    }
 }
 
 fn values(pairs: &[(ListingField, &str)]) -> FieldValues {
@@ -177,6 +179,7 @@ fn expected() -> ExpectedItem {
                 ]),
             ),
         ],
+        images: None,
     }
 }
 

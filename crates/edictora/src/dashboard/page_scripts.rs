@@ -35,6 +35,12 @@ pub mod kinds {
     pub const TEXT_INPUT: &str = "textInput";
     pub const DIALOG_BUTTON: &str = "dialogButton";
     pub const DIALOG_CHECKBOX: &str = "dialogCheckbox";
+    /// 画像アセットの `input[type=file]`（非表示でも集める）。`text` はその入力だけを含む最大の祖先の文字列
+    pub const FILE_INPUT: &str = "fileInput";
+    /// 画像 1 枚の `<img>`（スロットの中のもの。`collect_slot` で集める）
+    pub const SLOT_IMAGE: &str = "slotImage";
+    /// 画像まわりの `[role=button][aria-label]`（スロットの中のもの。`collect_slot` で集める）
+    pub const IMAGE_BUTTON: &str = "imageButton";
 }
 
 /// 文言を差し込んだ導入部（画面の言語ごとに 1 回だけ作る）
@@ -66,6 +72,18 @@ fn quote(kind: &str) -> String {
 
 pub fn collect(t: &DashboardText, kind: &str) -> String {
     call(t, &format!("collect({})", quote(kind)))
+}
+
+/// `fileInput` の `index` 番目のスロットの中の要素（`slotImage` / `imageButton`）を集める。
+/// 事前に `collect(FILE_INPUT)` でスロットを集めておくこと
+pub fn collect_slot(t: &DashboardText, kind: &str, slot_index: i32) -> String {
+    call(t, &format!("collectSlot({}, {slot_index})", quote(kind)))
+}
+
+/// 集めた要素そのもの（CDP の `Runtime.callFunctionOn` / `DOM.setFileInputFiles` の対象にする式）。
+/// 値としては返せない（`returnByValue: false` で objectId を得る）
+pub fn element(t: &DashboardText, kind: &str, index: i32) -> String {
+    call(t, &format!("element({}, {index})", quote(kind)))
 }
 
 pub fn scroll_to(t: &DashboardText, kind: &str, index: i32) -> String {

@@ -6,11 +6,18 @@
 //! - ロケールごとに「切替 → 書換 → 全欄照合 → 保存 → 再読込 → 照合」を行う（複数言語をまとめて保存する手順は未検証のため）
 //! - 途中で 1 つでも失敗したら、そのアイテムの残りは行わない（未保存の変更を次の保存に巻き込まないため）
 //! - 最後にもう一度読み込み直して、全対象欄が正本と一致するか確かめる
+//!
+//! 掲載画像（`pull_images` / `diff_images` / `push_images`）は別の手順で、画面操作は [`ImagePage`] だけを受け取る。
+//! `ImagePage` に審査送信は無いので、画像の手順は型の上で審査送信を呼べない。
 
 use crate::cancel::CancelToken;
 use crate::dashboard::write_gate::ensure_allowed;
-use crate::dashboard::{ListingPage, SubmitConfirm, SubmitResult};
+use crate::dashboard::{EditorPage, ImagePage, ListingPage, SubmitConfirm, SubmitResult};
 use crate::error::{Error, Result};
+use crate::images::fetch::ImageFetcher;
+use crate::images::{
+    CurrentImage, ExpectedImages, ExpectedSlot, ImageComparison, ImageSlot, compare_slot,
+};
 use crate::listing::{
     ComparisonStatus, ExpectedItem, ExpectedLocale, FieldValues, ItemSnapshot, ListingField,
     LocaleComparison, LocaleSnapshot, compare, compare_value,
@@ -167,7 +174,7 @@ fn pull_core(
 /// 保存先はエラー文（標準出力の結果）にも含める。標準エラーを捨てて実行されても場所が分かるように。
 /// - 画面のラベル: `pull-<item_id>` または `pull-<item_id>-<locale>`
 fn capture_read_failure(
-    page: &mut dyn ListingPage,
+    page: &mut dyn EditorPage,
     item_id: &str,
     locale: Option<&str>,
     progress: &Progress<'_>,
@@ -238,7 +245,7 @@ pub fn push(
 /// - ログ: `<operation> 失敗 <item_id>: <エラー>（画面: <パス>）`（保存できなければ括弧部分なし）
 /// - 進捗: `失敗時の画面を保存しました: <パス>`（保存できたときだけ）
 fn report_failure(
-    page: &mut dyn ListingPage,
+    page: &mut dyn EditorPage,
     operation: &str,
     item_id: &str,
     error: &Error,
@@ -508,5 +515,521 @@ fn ensure_matches(
             text = bad.join(trs!("cli.name_separator")),
             phase = phase
         )))
+    }
+}
+
+// ───────── 掲載画像 ─────────
+
+/// ダッシュボードから読んだスロット 1 つの現在値
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotReading {
+    pub slot: ImageSlot,
+    /// ローカライズ版のときのロケール
+    pub locale: Option<String>,
+    /// 画像（原本のハッシュつき）。読めなかったら理由
+    pub images: std::result::Result<Vec<CurrentImage>, String>,
+}
+
+/// アイテム 1 件の画像の現在値
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageSnapshot {
+    pub item_id: String,
+    /// ステータス表示（読めなければ None）
+    pub status_text: Option<String>,
+    pub available_locales: Vec<String>,
+    pub slots: Vec<SlotReading>,
+    /// アイテム全体の読み出し失敗の理由（成功なら None）
+    pub error: Option<String>,
+}
+
+/// 画像の書き換え結果
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagePushResult {
+    pub item_id: String,
+    pub item_name: String,
+    /// 置き換えて下書き保存し、読み直して一致を確認したスロット（表示名）
+    pub saved: Vec<String>,
+    /// 差分がなく、何もしなかったスロット（表示名）
+    pub unchanged: Vec<String>,
+    /// 最後に読み直して照合した結果
+    pub final_comparison: Vec<ImageComparison>,
+}
+
+/// 画像の現在値を読む（読み取りのみ）。失敗はアイテム単位のエラーとして返し、他のアイテムは続ける
+pub fn pull_images(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<ImageSnapshot> {
+    progress(&tr!(
+        "services.opening_the_edit_page",
+        display_name = expected.display_name
+    ));
+    match pull_images_core(page, fetcher, expected, progress, cancel) {
+        Ok(s) => Ok(s),
+        Err(Error::LoginRequired) => Err(Error::LoginRequired),
+        Err(e) if e.is_dashboard() => {
+            let shot = capture_read_failure(page, &expected.item_id, None, progress);
+            log(
+                &format!(
+                    "画像の読み出し失敗 {}: {}{}",
+                    expected.item_id,
+                    e,
+                    log_shot_suffix(&shot)
+                ),
+                LogLevel::Warning,
+            );
+            Ok(ImageSnapshot {
+                item_id: expected.item_id.clone(),
+                status_text: None,
+                available_locales: Vec::new(),
+                slots: Vec::new(),
+                error: Some(redact(&format!("{}{}", e.message(), shot_suffix(&shot)))),
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// 読み出して正本と比べる（読み取りのみ）
+pub fn diff_images(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<(ImageSnapshot, Vec<ImageComparison>)> {
+    let snapshot = pull_images(page, fetcher, expected, progress, cancel)?;
+    let rows = compare_images(expected, &snapshot);
+    Ok((snapshot, rows))
+}
+
+/// 画像の現在値と正本を比べる（正本の並び順）。読めなかったスロットは `Error`（比較不能）
+pub fn compare_images(expected: &ExpectedItem, snapshot: &ImageSnapshot) -> Vec<ImageComparison> {
+    let Some(images) = &expected.images else {
+        return Vec::new();
+    };
+    images
+        .slots
+        .iter()
+        .map(|slot| {
+            let reading = snapshot
+                .slots
+                .iter()
+                .find(|r| r.slot == slot.slot && locale_eq(&r.locale, &slot.locale));
+            let mut row = match reading.map(|r| &r.images) {
+                Some(Ok(current)) => {
+                    compare_slot(&expected.item_id, &expected.display_name, slot, current)
+                }
+                other => {
+                    let mut row =
+                        compare_slot(&expected.item_id, &expected.display_name, slot, &[]);
+                    row.status = ComparisonStatus::Error;
+                    row.error = Some(match other {
+                        Some(Err(m)) => m.clone(),
+                        _ => snapshot
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| trs!("services.images_not_read").to_string()),
+                    });
+                    row
+                }
+            };
+            // アイテム全体の読み出し失敗は、どのスロットも同じ理由で比較不能
+            if let Some(e) = &snapshot.error {
+                row.status = ComparisonStatus::Error;
+                row.error = Some(e.clone());
+            }
+            row
+        })
+        .collect()
+}
+
+fn locale_eq(a: &Option<String>, b: &Option<String>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => eq_ic(x, y),
+        _ => false,
+    }
+}
+
+fn pull_images_core(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<ImageSnapshot> {
+    let images = expected.images.clone().unwrap_or_default();
+    page.open_item(&expected.item_id, cancel)?;
+    let state = page.get_state(cancel)?;
+    let available = page.get_locales(cancel)?;
+    ensure_image_targets(&images, &available)?;
+
+    let mut slots = Vec::new();
+    for slot in images.global_slots() {
+        slots.push(read_slot(
+            page,
+            fetcher,
+            slot,
+            &expected.display_name,
+            progress,
+            cancel,
+        )?);
+    }
+    for code in images.localized_locales() {
+        cancel.check()?;
+        page.switch_locale(code, cancel)?;
+        for slot in images
+            .slots
+            .iter()
+            .filter(|s| s.locale.as_deref().is_some_and(|l| eq_ic(l, code)))
+        {
+            slots.push(read_slot(
+                page,
+                fetcher,
+                slot,
+                &expected.display_name,
+                progress,
+                cancel,
+            )?);
+        }
+    }
+    Ok(ImageSnapshot {
+        item_id: expected.item_id.clone(),
+        status_text: state.status_text,
+        available_locales: available,
+        slots,
+        error: None,
+    })
+}
+
+/// 画像の対象にするロケールがダッシュボードにあるか確かめる。
+/// 無ければ（言語が 1 つだけのアイテムを含む）全体を止め、`--image-scope global` か `--locale` を案内する
+/// （一部のロケールだけ黙って飛ばすと、書き換え漏れに気づけないため。テキストの `push` と同じ方針）
+fn ensure_image_targets(images: &ExpectedImages, available: &[String]) -> Result<()> {
+    let wanted = images.localized_locales();
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    if available.len() <= 1 {
+        return Err(Error::Dashboard(tr!(
+            "services.this_item_has_only_one_language_so_localized_screenshots",
+            available = available.join(", ")
+        )));
+    }
+    let missing: Vec<&str> = wanted
+        .iter()
+        .copied()
+        .filter(|c| !available.iter().any(|a| eq_ic(a, c)))
+        .collect();
+    if !missing.is_empty() {
+        return Err(Error::Dashboard(tr!(
+            "services.image_locale_is_not_on_the_dashboard",
+            missing = missing.join(", "),
+            available = available.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// スロット 1 つを読む（画像ごとに原本を取得してハッシュにする）
+fn read_slot(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    slot: &ExpectedSlot,
+    name: &str,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<SlotReading> {
+    progress(&tr!(
+        "services.reading_images",
+        name = name,
+        label = slot.label()
+    ));
+    let images = match read_current(page, fetcher, slot.slot, cancel) {
+        Ok(v) => Ok(v),
+        // 取得できないのは「比較不能」としてそのスロットに記録する（他は続ける）
+        Err(Error::Dashboard(m)) => Err(m),
+        Err(e) => return Err(e),
+    };
+    Ok(SlotReading {
+        slot: slot.slot,
+        locale: slot.locale.clone(),
+        images,
+    })
+}
+
+/// 画面の画像と、その原本のハッシュ。取得に失敗した画像は `sha256` が Err（比較不能）
+fn read_current(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    slot: ImageSlot,
+    cancel: &CancelToken,
+) -> Result<Vec<CurrentImage>> {
+    let mut current = Vec::new();
+    for image in page.read_images(slot, cancel)? {
+        cancel.check()?;
+        let pixel_sha256 = match fetcher.pixel_digest_of(&image.src, cancel) {
+            Ok(h) => Ok(h),
+            Err(Error::Dashboard(m)) => Err(m),
+            Err(e) => return Err(e),
+        };
+        current.push(CurrentImage {
+            alt: image.alt,
+            pixel_sha256,
+        });
+    }
+    Ok(current)
+}
+
+/// 現在の画像が正本と一致するか（比較不能なら `Dashboard` エラー。一致扱いにも常に置換にもしない）
+fn slot_matches(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    slot: &ExpectedSlot,
+    cancel: &CancelToken,
+) -> Result<bool> {
+    let current = read_current(page, fetcher, slot.slot, cancel)?;
+    let row = compare_slot("", "", slot, &current);
+    match row.status {
+        ComparisonStatus::Match => Ok(true),
+        ComparisonStatus::Different => Ok(false),
+        _ => Err(Error::Dashboard(tr!(
+            "services.cannot_compare_images",
+            label = slot.label(),
+            error = row.error.unwrap_or_default()
+        ))),
+    }
+}
+
+/// 差分のある画像を置き換えて下書き保存し、読み直して照合する。
+///
+/// 順序: テキストの push は呼び出し側が済ませる → 編集画面を開く → 書き込み可否 → 全言語向け（小タイル → マーキー →
+/// スクリーンショット。差分のあるスロットだけ全入れ替え）→ 保存 → 読み直して照合 → ロケールごとに
+/// （切替 → 置換 → 保存 → 読み直し → 切替 → 照合）→ 最後に読み直して全対象スロットを再照合。
+/// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時は画面を診断用に保存する
+pub fn push_images(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<ImagePushResult> {
+    match push_images_core(page, fetcher, expected, progress, cancel) {
+        Ok(r) => Ok(r),
+        Err(e) if e.is_dashboard() && e != Error::LoginRequired => {
+            report_failure(page, "push-images", &expected.item_id, &e, progress);
+            Err(e)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn push_images_core(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<ImagePushResult> {
+    let name = &expected.display_name;
+    let images = expected.images.clone().unwrap_or_default();
+    progress(&tr!("services.opening_the_edit_page_2", name = name));
+    page.open_item(&expected.item_id, cancel)?;
+    // 最初の削除の前に書き込み可否を確かめる（審査待ちなどでは何も触らない）
+    ensure_allowed(&page.get_state(cancel)?)?;
+    let available = page.get_locales(cancel)?;
+    ensure_image_targets(&images, &available)?;
+
+    let mut saved: Vec<String> = Vec::new();
+    let mut unchanged: Vec<String> = Vec::new();
+
+    // ── 全言語向け ──
+    let global = images.global_slots();
+    let mut changed = false;
+    for slot in &global {
+        cancel.check()?;
+        progress(&tr!(
+            "services.checking_images",
+            name = name,
+            label = slot.label()
+        ));
+        if slot_matches(page, fetcher, slot, cancel)? {
+            progress(&tr!(
+                "services.images_match_the_source_files",
+                name = name,
+                label = slot.label()
+            ));
+            unchanged.push(slot.label());
+            continue;
+        }
+        replace_slot(page, slot, name, progress, cancel)?;
+        changed = true;
+    }
+    if changed {
+        ensure_allowed(&page.get_state(cancel)?)?;
+        progress(&tr!("services.saving_images_as_draft", name = name));
+        page.save_draft(cancel)?;
+        page.reload(cancel)?;
+        for slot in &global {
+            verify_slot(
+                page,
+                fetcher,
+                slot,
+                trs!("services.post_save_check"),
+                cancel,
+            )?;
+        }
+        for slot in &global {
+            if !unchanged.contains(&slot.label()) {
+                saved.push(slot.label());
+            }
+        }
+        progress(&tr!(
+            "services.images_saved_reloaded_and_confirmed",
+            name = name
+        ));
+    }
+
+    // ── ローカライズ版（ロケールごと）──
+    for code in images.localized_locales() {
+        cancel.check()?;
+        page.switch_locale(code, cancel)?;
+        for slot in images
+            .slots
+            .iter()
+            .filter(|s| s.locale.as_deref().is_some_and(|l| eq_ic(l, code)))
+        {
+            progress(&tr!(
+                "services.checking_images",
+                name = name,
+                label = slot.label()
+            ));
+            if slot_matches(page, fetcher, slot, cancel)? {
+                progress(&tr!(
+                    "services.images_match_the_source_files",
+                    name = name,
+                    label = slot.label()
+                ));
+                unchanged.push(slot.label());
+                continue;
+            }
+            replace_slot(page, slot, name, progress, cancel)?;
+            ensure_allowed(&page.get_state(cancel)?)?;
+            progress(&tr!("services.saving_images_as_draft", name = name));
+            page.save_draft(cancel)?;
+            page.reload(cancel)?;
+            page.switch_locale(code, cancel)?;
+            verify_slot(
+                page,
+                fetcher,
+                slot,
+                trs!("services.post_save_check"),
+                cancel,
+            )?;
+            saved.push(slot.label());
+            progress(&tr!(
+                "services.images_saved_reloaded_and_confirmed",
+                name = name
+            ));
+        }
+    }
+
+    // ── 最後に読み込み直して、全対象スロットを照合する（保存が他のスロットに影響していないか）──
+    let mut final_rows = Vec::new();
+    if !saved.is_empty() {
+        progress(&tr!(
+            "services.reloading_and_checking_all_languages",
+            name = name
+        ));
+        page.reload(cancel)?;
+    }
+    let mut current_locale: Option<&str> = None;
+    for slot in &images.slots {
+        cancel.check()?;
+        if let Some(code) = slot.locale.as_deref()
+            && current_locale != Some(code)
+        {
+            page.switch_locale(code, cancel)?;
+            current_locale = Some(code);
+        }
+        let current = read_current(page, fetcher, slot.slot, cancel)?;
+        let row = compare_slot(&expected.item_id, name, slot, &current);
+        if !saved.is_empty() && row.status != ComparisonStatus::Match {
+            return Err(Error::Dashboard(tr!(
+                "services.images_do_not_match_the_source",
+                text = crate::images::describe(&row)
+            )));
+        }
+        final_rows.push(row);
+    }
+
+    Ok(ImagePushResult {
+        item_id: expected.item_id.clone(),
+        item_name: expected.display_name.clone(),
+        saved,
+        unchanged,
+        final_comparison: final_rows,
+    })
+}
+
+/// スロットを正本どおりに置き換える（未保存）。
+/// 既存を末尾から 1 枚ずつ削除（毎回「枚数が 1 枚減る」を待つ）→ 正本を先頭から 1 枚ずつ追加
+/// （毎回「枚数が 1 枚増える・alt の番号・エラー表示なし」を待つ）→ 保存前に枚数を照合する
+fn replace_slot(
+    page: &mut dyn ImagePage,
+    slot: &ExpectedSlot,
+    name: &str,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<()> {
+    let current = page.read_images(slot.slot, cancel)?;
+    progress(&tr!(
+        "services.replacing_images",
+        name = name,
+        label = slot.label(),
+        current = current.len(),
+        expected = slot.files.len()
+    ));
+    for position in (0..current.len()).rev() {
+        cancel.check()?;
+        page.delete_image(slot.slot, position, cancel)?;
+    }
+    for file in &slot.files {
+        cancel.check()?;
+        page.upload_image(slot.slot, &file.path, cancel)?;
+    }
+    let now = page.read_images(slot.slot, cancel)?;
+    if now.len() != slot.files.len() {
+        return Err(Error::Dashboard(tr!(
+            "services.the_image_count_does_not_match_before_saving",
+            label = slot.label(),
+            now = now.len(),
+            expected = slot.files.len()
+        )));
+    }
+    Ok(())
+}
+
+/// 保存後の照合（原本のハッシュが正本と順序まで一致すること）
+fn verify_slot(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    slot: &ExpectedSlot,
+    phase: &str,
+    cancel: &CancelToken,
+) -> Result<()> {
+    let current = read_current(page, fetcher, slot.slot, cancel)?;
+    let row = compare_slot("", "", slot, &current);
+    match row.status {
+        ComparisonStatus::Match => Ok(()),
+        _ => Err(Error::Dashboard(tr!(
+            "services.the_images_do_not_match_the_source",
+            text = crate::images::describe(&row),
+            phase = phase
+        ))),
     }
 }

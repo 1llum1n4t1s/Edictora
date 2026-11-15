@@ -26,6 +26,7 @@ fn expected() -> ExpectedItem {
             ),
             ExpectedLocale::new("en", values(&[(ListingField::Description, "Desc")])),
         ],
+        images: None,
     }
 }
 

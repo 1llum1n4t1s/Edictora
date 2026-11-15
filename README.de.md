@@ -22,6 +22,7 @@ Es läuft als einzelnes Befehlszeilenwerkzeug (`edictora.exe`), ist in Rust gesc
 - **pull**: liest die aktuellen Werte aus dem Dashboard (Beschreibung, offizielle URL, Homepage-URL und Support-URL). Nur lesend.
 - **diff**: zeigt die Unterschiede zu Ihren Quelldateien. Nur lesend und der Standardbefehl.
 - **push**: schreibt nur die abweichenden Felder um, **speichert sie als Entwurf**, lädt die Seite neu und prüft die gespeicherten Werte anhand Ihrer Quelldateien.
+- **Bilder**: Hat ein Eintrag in der Konfiguration `images`, behandeln `pull`, `diff` und `push` auch seine Store-Bilder (Screenshots, kleine Werbekachel und Marquee). Mit `--only text|images` und `--image-scope all|global|localized` lässt sich das eingrenzen.
 - **submit**: reicht ein Element zur Prüfung ein. Die Einstellung „Nach der Prüfung automatisch veröffentlichen“ wird dabei nicht geändert.
 - **login**: öffnet Chrome mit dem eigenen Profil, damit Sie sich selbst bei Google anmelden können.
 - **update**: lädt eine neuere Version herunter und installiert sie, falls es eine gibt. Das funktioniert nur, wenn Sie Edictora mit Setup installiert haben, und läuft außerdem automatisch bei Ihrer Windows-Anmeldung.
@@ -94,6 +95,36 @@ Ordnen Sie für jedes Element jeder Locale ihre Quelldateien zu. **Felder, die S
 - Beim Extrahieren eines Abschnitts übernimmt Edictora die Zeilen nach der Startüberschrift und vor der Endüberschrift. Es entfernt führende und abschließende Leerzeilen sowie abschließende Leerzeichen und vereinheitlicht die Zeilenenden auf `\n`. Wird eine Überschrift nicht gefunden, bricht es mit einem Fehler ab.
 - Ein URL-Feld ohne Schlüssel wird ignoriert. `""` bedeutet, dass das Feld leer sein soll.
 - Unbekannte Schlüssel (zum Beispiel Tippfehler) sind Fehler. Kommentare und abschließende Kommas sind erlaubt.
+
+#### Store-Bilder (optional)
+
+Fügen Sie einem Eintrag `images` hinzu, um seine Store-Bilder zu verwalten. Wie bei allen anderen Feldern **werden Schlüssel, die Sie weglassen, nie angetastet**. Pfade sind relativ zu `baseDir`.
+
+```jsonc
+"images": {
+  "smallTile": "webstore/images/tile-small.png",            // 440x280
+  "marquee": "webstore/images/tile-marquee.png",            // 1400x560
+  "globalScreenshots": { "dir": "webstore/images/en" },     // or { "files": ["a.png", "b.png"] }
+  "localizedScreenshots": {                                 // zh_CN = zh-CN
+    "ja": { "dir": "webstore/images/ja" },
+    "zh_CN": { "dir": "webstore/images/zh_CN" }
+  }
+}
+```
+
+- `dir` verwendet die `screenshot-*.png` direkt im Ordner in Namensreihenfolge (1–5 Dateien). `files` verwendet die Dateien in der angegebenen Reihenfolge (1–5).
+- Unterstützt wird nur PNG: 24 Bit ohne Alpha, 1280x800 oder 640x400 (Screenshots), 440x280 (kleine Kachel) oder 1400x560 (Marquee). Edictora prüft das sowie, dass sich innerhalb eines Satzes kein Bild wiederholt, bevor Chrome geöffnet wird (Exitcode 2). Das Shop-Symbol wird nicht verwaltet.
+- Ein Eintrag darf `images` ohne `locales` haben (nur Bilder).
+- **Bilder werden anhand ihrer dekodierten Pixel verglichen, nicht anhand der Dateibytes.** Das Dashboard kodiert hochgeladene PNGs neu, die gespeicherte Datei hat also nie dieselben Bytes wie Ihre, die Pixel sind aber identisch. Edictora lädt jedes Bild aus dem Dashboard herunter (das Original `=s0`, nur per HTTPS von `*.googleusercontent.com` und ohne Cookies) und vergleicht die Pixel-Hashes der Reihe nach. Lässt sich ein Bild nicht herunterladen oder dekodieren, lautet das Ergebnis „nicht vergleichbar“: nie „gleich“ und nie „ersetzen“.
+- `push --yes` ersetzt einen Platz komplett (alles löschen, dann der Reihe nach hochladen) nur bei Abweichung, speichert einen Entwurf, lädt neu und prüft erneut. Reihenfolge: kleine Kachel, Marquee, globale Screenshots, dann die lokalisierten Screenshots je Sprache.
+- **Das Löschen eines Bildes wirkt im Dashboard sofort** (es fragt „Das kann nicht rückgängig gemacht werden“, und nach dem Neuladen ohne Speichern blieb der Platz leer). Bricht ein Push mittendrin ab, kann der Entwurf ohne einzelne Bilder zurückbleiben: Führen Sie ihn erneut aus, um ihn abzuschließen. Edictora fasst nie einen Eintrag an, der in Prüfung ist.
+- Ein Eintrag mit nur einer Sprache hat keine lokalisierten Screenshots; verwenden Sie `--image-scope global`. Ist eine Sprache aus `localizedScreenshots` nicht im Dashboard, hält Edictora an, bevor etwas geändert wird: Verwenden Sie `--image-scope global` oder `--locale`.
+- Bilder lassen sich nur schreiben, solange das Dashboard auf Japanisch angezeigt wird (die englischen Bezeichnungen sind nicht verifiziert).
+
+```powershell
+edictora diff --only images --item <id>                                  # Images only (read-only)
+edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
 
 ### 2. Anmelden
 
@@ -213,6 +244,7 @@ Wenn Sie ein MCP-Gateway verwenden (etwa Toolport), registrieren Sie denselben B
 - Felder und Schaltflächen werden über Beschriftung, Rolle und Text gefunden, nie über CSS-Klassennamen. Trifft eine Suche nicht genau ein Element, bricht Edictora ab.
 - Chrome wird ohne Automatisierungs-Flags gestartet und sauber beendet. **Das Profil wird nie gelöscht.**
 - Bei einem Fehler aufgenommene Screenshots werden unter `%LOCALAPPDATA%\Edictora.Data\diagnostics` gespeichert, nie in Ihrem Repository.
+- Bild-Updates ersetzen nur die Plätze, die abweichen. Sie fassen weder das Shop-Symbol an noch ordnen sie Bilder um, und sie können nie zur Prüfung einreichen (der Bildcode hat keinen Weg, das aufzurufen).
 
 ## Speicherorte der Dateien
 

@@ -259,3 +259,147 @@ fn 中断されたら応答待ちをやめる() {
     client.close();
     server.join().unwrap();
 }
+
+#[test]
+fn ファイル入力へファイルを選ぶ_パスはcdpの引数で渡し解放する() {
+    // 式は returnByValue: false で評価して objectId を得て、DOM.setFileInputFiles へ渡し、終わったら解放する。
+    // パスはページ内スクリプトに埋め込まれず、CDP の引数だけに入る
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let seen2 = seen.clone();
+    let (url, server) = fake_server(move |mut ws| {
+        while let Some(cmd) = read_command(&mut ws) {
+            let id = cmd["id"].clone();
+            let result = match cmd["method"].as_str().unwrap() {
+                "Runtime.evaluate" => {
+                    json!({ "result": { "type": "object", "objectId": "OBJ-1" } })
+                }
+                _ => json!({}),
+            };
+            seen2.lock().unwrap().push(cmd);
+            send_json(&mut ws, json!({ "id": id, "result": result }));
+        }
+    });
+
+    let client = CdpClient::connect(&url).unwrap();
+    let page = CdpPage::new(client.clone(), "S1".to_string(), "T1".to_string());
+    let path = std::path::PathBuf::from(r"D:\images\screenshot-01.png");
+    page.set_file_input_files(
+        "window.__edictora.element(\"fileInput\", 2)",
+        std::slice::from_ref(&path),
+        &CancelToken::new(),
+    )
+    .unwrap();
+    client.close();
+    server.join().unwrap();
+
+    let seen = seen.lock().unwrap();
+    let methods: Vec<&str> = seen.iter().map(|c| c["method"].as_str().unwrap()).collect();
+    assert_eq!(
+        methods,
+        vec![
+            "Runtime.evaluate",
+            "DOM.setFileInputFiles",
+            "Runtime.releaseObjectGroup"
+        ]
+    );
+    assert_eq!(seen[0]["params"]["returnByValue"], false);
+    assert!(
+        !seen[0]["params"]["expression"]
+            .as_str()
+            .unwrap()
+            .contains("screenshot-01")
+    );
+    assert_eq!(seen[1]["params"]["objectId"], "OBJ-1");
+    assert_eq!(
+        seen[1]["params"]["files"],
+        json!([r"D:\images\screenshot-01.png"])
+    );
+    assert_eq!(seen[1]["sessionId"], "S1");
+    assert_eq!(
+        seen[2]["params"]["objectGroup"],
+        seen[0]["params"]["objectGroup"]
+    );
+}
+
+#[test]
+fn ファイル入力の式が要素を返さなければ選ばずに失敗して解放する() {
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen2 = seen.clone();
+    let (url, server) = fake_server(move |mut ws| {
+        while let Some(cmd) = read_command(&mut ws) {
+            let id = cmd["id"].clone();
+            seen2
+                .lock()
+                .unwrap()
+                .push(cmd["method"].as_str().unwrap().to_string());
+            // objectId の無い結果（要素でなく値が返った）
+            send_json(
+                &mut ws,
+                json!({ "id": id, "result": { "result": { "type": "undefined" } } }),
+            );
+        }
+    });
+    let client = CdpClient::connect(&url).unwrap();
+    let page = CdpPage::new(client.clone(), "S1".to_string(), "T1".to_string());
+    let r = page.set_file_input_files(
+        "1",
+        &[std::path::PathBuf::from("a.png")],
+        &CancelToken::new(),
+    );
+    assert!(matches!(r, Err(Error::Cdp(_))), "{r:?}");
+    client.close();
+    server.join().unwrap();
+    // DOM.setFileInputFiles は呼ばない
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec!["Runtime.evaluate", "Runtime.releaseObjectGroup"]
+    );
+}
+
+#[test]
+fn ページ内で例外が出たらjavascriptエラーで選ばない() {
+    let (url, server) = fake_server(|mut ws| {
+        while let Some(cmd) = read_command(&mut ws) {
+            let id = cmd["id"].clone();
+            send_json(
+                &mut ws,
+                json!({ "id": id, "result": { "exceptionDetails": { "text": "Uncaught", "exception": { "description": "Error: EDICTORA_ELEMENT_GONE:fileInput" } } } }),
+            );
+        }
+    });
+    let client = CdpClient::connect(&url).unwrap();
+    let page = CdpPage::new(client.clone(), "S1".to_string(), "T1".to_string());
+    let r = page.set_file_input_files(
+        "x",
+        &[std::path::PathBuf::from("a.png")],
+        &CancelToken::new(),
+    );
+    assert!(
+        matches!(&r, Err(Error::JavaScript(m)) if m.contains("EDICTORA_ELEMENT_GONE")),
+        "{r:?}"
+    );
+    client.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn ホバーはマウス移動だけでクリックしない() {
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let seen2 = seen.clone();
+    let (url, server) = fake_server(move |mut ws| {
+        while let Some(cmd) = read_command(&mut ws) {
+            let id = cmd["id"].clone();
+            seen2.lock().unwrap().push(cmd);
+            send_json(&mut ws, json!({ "id": id, "result": {} }));
+        }
+    });
+    let client = CdpClient::connect(&url).unwrap();
+    let page = CdpPage::new(client.clone(), "S1".to_string(), "T1".to_string());
+    page.hover_at(10.0, 20.0, &CancelToken::new()).unwrap();
+    client.close();
+    server.join().unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0]["params"]["type"], "mouseMoved");
+    assert_eq!(seen[0]["params"]["x"], 10.0);
+}

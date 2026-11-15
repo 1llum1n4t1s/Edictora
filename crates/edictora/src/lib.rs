@@ -4,6 +4,7 @@
 //! C# 版（2026-11-13 に廃止。ソースは Git 履歴のコミット `b1adbc4` で参照できる）からの移植。構成:
 //! - [`config`] — 設定ファイルの読込と検証・正本の区間切り出し
 //! - [`listing`] — 欄の定義・正本と現在値の比較・行差分
+//! - [`images`] — 掲載画像（スクリーンショット・小タイル・マーキー）の正本の検証・ハッシュ比較
 //! - [`cdp`] — Chrome DevTools Protocol クライアント（localhost の WebSocket のみ）
 //! - [`chrome`] — Chrome の検出と起動（プロファイルは削除しない）
 //! - [`dashboard`] — ダッシュボード操作（要素の特定・書き込み可否・1 操作ずつの実装）
@@ -25,6 +26,7 @@ pub mod config;
 pub mod dashboard;
 pub mod error;
 pub mod i18n;
+pub mod images;
 pub mod install;
 pub mod listing;
 pub mod logging;

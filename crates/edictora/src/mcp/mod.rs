@@ -46,7 +46,7 @@ pub fn is_mcp_command<S: AsRef<str>>(args: &[S]) -> bool {
 
 /// initialize で返す、サーバーの使い方の案内（クライアントが AI に渡す文言なので英語に統一する）
 const INSTRUCTIONS: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, and support URL) \
-with the source files in each extension repository and fixes them in bulk. The CWS API cannot read or write store listings, \
+with the source files in each extension repository and fixes them in bulk. Store images (screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The CWS API cannot read or write store listings, \
 so Edictora drives the Developer Dashboard with a dedicated Chrome profile running without a window (headless). \
 To view or fix store listings, first call edictora_list_items to check the items and languages, review the differences with edictora_diff, \
 then use edictora_push (confirm: true saves as draft) and edictora_submit (confirm: true submits for review, one item at a time). \
@@ -75,7 +75,23 @@ fn target_properties() -> Map<String, Value> {
         json!({
             "type": "array",
             "items": { "type": "string" },
-            "description": "Target locales (e.g. ja, en, pt-BR). Omit for all locales in the config file"
+            "description": "Target locales (e.g. ja, en, pt-BR). Omit for all locales in the config file. Also selects the languages of localized screenshots"
+        }),
+    );
+    m.insert(
+        "only".into(),
+        json!({
+            "type": "string",
+            "enum": ["text", "images"],
+            "description": "What to process: text (description and URLs) or images (store images: screenshots, small tile, marquee). Omit for both"
+        }),
+    );
+    m.insert(
+        "imageScope".into(),
+        json!({
+            "type": "string",
+            "enum": ["all", "global", "localized"],
+            "description": "Which images: all (default), global (small tile, marquee, global screenshots), or localized (localized screenshots only). Use global for items with a single language"
         }),
     );
     m
@@ -152,7 +168,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "edictora_diff",
             "Edictora: store listing differences",
-            "Chrome Web Store (CWS) store listing description and URLs: reads the current values from the Developer Dashboard \
+            "Chrome Web Store (CWS) store listing description, URLs, and images (screenshots, small tile, marquee): reads the current values from the Developer Dashboard \
                  and shows the differences from the source files in each repository (read-only. Chrome runs without a window and does not appear on screen). \
                  Differences are not a failure (exit code 3).",
             target_properties(),
@@ -170,8 +186,8 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "edictora_push",
             "Edictora: save store listing to match source files",
-            "Chrome Web Store (CWS) store listing description update: updates only the fields that differ from the source files, saves as draft, \
-                 then reloads and verifies. Without confirm: true it shows the differences and stops. If the item cannot be written (for example, pending review) \
+            "Chrome Web Store (CWS) store listing description and image update: updates only the fields and images that differ from the source files, saves as draft, \
+                 then reloads and verifies (images are replaced whole slot by slot; only=images / imageScope narrow it). Without confirm: true it shows the differences and stops. If the item cannot be written (for example, pending review) \
                  it stops without changing anything (exit code 4). Does not submit for review (use edictora_submit).",
             push_props,
             &[],
@@ -208,8 +224,8 @@ pub fn build_cli_args(
     };
     let allowed: &[&str] = match name {
         "edictora_list_items" => &[],
-        "edictora_diff" | "edictora_pull" => &["items", "locales"],
-        "edictora_push" => &["items", "locales", "confirm"],
+        "edictora_diff" | "edictora_pull" => &["items", "locales", "only", "imageScope"],
+        "edictora_push" => &["items", "locales", "only", "imageScope", "confirm"],
         "edictora_submit" => &["item", "confirm"],
         _ => {
             return Err(ArgumentError(format!("Unknown tool: {name}")));
@@ -285,6 +301,29 @@ pub fn build_cli_args(
     for locale in strings("locales")? {
         cli.push("--locale".into());
         cli.push(valid_locale(&locale)?);
+    }
+    // 対象の種類と画像の範囲（CLI の --only / --image-scope）。値は列挙に限る（他の値は CLI のオプションと解釈させない）
+    for (key, flag, allowed) in [
+        ("only", "--only", &["text", "images"][..]),
+        (
+            "imageScope",
+            "--image-scope",
+            &["all", "global", "localized"][..],
+        ),
+    ] {
+        match args.get(key) {
+            None | Some(Value::Null) => {}
+            Some(Value::String(v)) if allowed.contains(&v.trim()) => {
+                cli.push(flag.into());
+                cli.push(v.trim().to_string());
+            }
+            Some(_) => {
+                return Err(ArgumentError(format!(
+                    "{key} must be one of: {}",
+                    allowed.join(", ")
+                )));
+            }
+        }
     }
     if name == "edictora_push" && confirm {
         cli.push("--yes".into());
@@ -392,6 +431,25 @@ fn list_items(paths: &AppPaths) -> Value {
             item.item_id,
             item.base_directory.display()
         ));
+        if let Some(images) = &item.images {
+            let mut slots = Vec::new();
+            if images.small_tile.is_some() {
+                slots.push("smallTile".to_string());
+            }
+            if images.marquee.is_some() {
+                slots.push("marquee".to_string());
+            }
+            if let Some(g) = &images.global_screenshots {
+                slots.push(format!("globalScreenshots ({} files)", g.len()));
+            }
+            for (code, files) in &images.localized_screenshots {
+                slots.push(format!(
+                    "localizedScreenshots[{code}] ({} files)",
+                    files.len()
+                ));
+            }
+            text.push_str(&format!("  - images: {}\n", slots.join(", ")));
+        }
         for locale in &item.locales {
             let mut fields = Vec::new();
             if let Some(d) = &locale.description {

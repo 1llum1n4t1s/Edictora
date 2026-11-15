@@ -9,6 +9,7 @@
 //! - `locales` は書いた順を保つ（push の処理順と出力の順番が変わらないように）
 //! - 「キーがない（null）」と「空文字」を区別する。URL 欄はキーなし＝対象外、`""`＝空欄が正本
 
+pub mod images;
 pub mod section;
 
 use std::collections::{BTreeMap, HashSet};
@@ -28,6 +29,7 @@ use crate::util::{
     strip_json_comments_and_trailing_commas,
 };
 use crate::{tr, trs};
+pub use images::ImagesConfig;
 
 // ───────── 検証済みの設定 ─────────
 
@@ -62,8 +64,10 @@ pub struct ItemConfig {
     pub display_name: String,
     /// 相対パスの基準（絶対パス）
     pub base_directory: PathBuf,
-    /// ロケールごとの正本（設定ファイルに書いた順）
+    /// ロケールごとの正本（設定ファイルに書いた順）。`images` だけを使うアイテムでは空になりうる
     pub locales: Vec<LocaleConfig>,
+    /// 掲載画像の正本（`images` を書いたアイテムだけ。書いていなければ画像は対象外）
+    pub images: Option<ImagesConfig>,
 }
 
 /// ロケール 1 件の正本（検証済み）
@@ -128,6 +132,8 @@ struct ItemConfigDto {
     base_dir: Option<String>,
     /// ロケールコード → そのロケールの正本（書いた順を保つ）
     locales: Option<OrderedLocales>,
+    /// 掲載画像の正本（任意。書いたスロットだけが対象）
+    images: Option<images::ImagesDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,14 +336,20 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
         )));
     }
 
+    // locales か images の少なくとも一方が要る（画像だけを管理するアイテムも許す）
     let entries = match dto.locales {
         Some(OrderedLocales(entries)) if !entries.is_empty() => entries,
+        _ if dto.images.is_some() => Vec::new(),
         _ => {
             return Err(Error::Config(tr!(
                 "config.specify_at_least_one_entry_in_locales",
                 place = place
             )));
         }
+    };
+    let images = match dto.images {
+        Some(images_dto) => Some(images::parse_images(images_dto, &place, &base_dir)?),
+        None => None,
     };
 
     let mut locales = Vec::new();
@@ -382,6 +394,7 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
         display_name,
         base_directory: base_dir,
         locales,
+        images,
     })
 }
 
@@ -502,7 +515,7 @@ fn resolve_profile(
 }
 
 /// %LOCALAPPDATA% などの環境変数を展開する（空白だけなら None）
-fn expand(value: Option<&str>) -> Option<String> {
+pub(crate) fn expand(value: Option<&str>) -> Option<String> {
     match value {
         Some(v) if !v.trim().is_empty() => Some(expand_env(v.trim())),
         _ => None,

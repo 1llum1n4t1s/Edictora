@@ -128,6 +128,80 @@ impl CdpPage {
             .unwrap_or(Value::Null))
     }
 
+    /// ビューポート座標 (x, y) へマウスを動かす（ホバーで現れるボタンを出すため。クリックはしない）
+    pub fn hover_at(&self, x: f64, y: f64, cancel: &CancelToken) -> Result<()> {
+        self.mouse("mouseMoved", x, y, 0, cancel)
+    }
+
+    /// `expression` が返す `input[type=file]` に、ファイルを選んだ扱いにする（`DOM.setFileInputFiles`）。
+    ///
+    /// 式は要素そのものを返す（`returnByValue: false` で objectId を得る）。パスは CDP の引数で渡し、
+    /// ページ内スクリプトには埋め込まない。objectId は使い終えたら `Runtime.releaseObjectGroup` で解放する。
+    /// 非表示の入力でも選べる。ファイルの存在確認は呼び出し側（Chrome は存在しないパスをエラーにする）
+    pub fn set_file_input_files(
+        &self,
+        expression: &str,
+        files: &[std::path::PathBuf],
+        cancel: &CancelToken,
+    ) -> Result<()> {
+        const GROUP: &str = "edictora-file-input";
+        let result = self.send(
+            "Runtime.evaluate",
+            Some(json!({
+                "expression": expression,
+                "returnByValue": false,
+                "awaitPromise": false,
+                "userGesture": false,
+                "objectGroup": GROUP,
+            })),
+            Duration::from_secs(20),
+            cancel,
+        )?;
+        if let Some(ex) = result.get("exceptionDetails") {
+            let text = ex
+                .get("exception")
+                .and_then(|e| e.get("description"))
+                .and_then(Value::as_str)
+                .or_else(|| ex.get("text").and_then(Value::as_str))
+                .unwrap_or(crate::trs!("cdp.unknown_error"));
+            let _ = self.release_object_group(GROUP, cancel);
+            return Err(Error::JavaScript(crate::tr!(
+                "cdp.the_in_page_script_failed",
+                text = text
+            )));
+        }
+        let object_id = result
+            .get("result")
+            .and_then(|r| r.get("objectId"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let Some(object_id) = object_id else {
+            let _ = self.release_object_group(GROUP, cancel);
+            return Err(Error::Cdp(
+                crate::trs!("cdp.the_file_input_element_was_not_returned").to_string(),
+            ));
+        };
+        let paths: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
+        let set = self.send(
+            "DOM.setFileInputFiles",
+            Some(json!({ "files": paths, "objectId": object_id })),
+            Duration::from_secs(30),
+            cancel,
+        );
+        let _ = self.release_object_group(GROUP, cancel);
+        set.map(|_| ())
+    }
+
+    fn release_object_group(&self, group: &str, cancel: &CancelToken) -> Result<()> {
+        self.send(
+            "Runtime.releaseObjectGroup",
+            Some(json!({ "objectGroup": group })),
+            DEFAULT_TIMEOUT,
+            cancel,
+        )
+        .map(|_| ())
+    }
+
     /// ビューポート座標 (x, y) を左クリックする（実際の入力イベントとして届く）
     pub fn click_at(&self, x: f64, y: f64, cancel: &CancelToken) -> Result<()> {
         self.mouse("mouseMoved", x, y, 0, cancel)?;

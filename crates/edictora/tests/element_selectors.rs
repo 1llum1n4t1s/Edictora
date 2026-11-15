@@ -794,3 +794,259 @@ fn covered_error_message_画面の外の印を文に直す() {
         "保存ボタンが他の要素に覆われていて押せません（中心にあった要素: （要素なし: 中心が画面の外））"
     );
 }
+
+// ───────── 画像アセット（掲載画像）─────────
+
+/// 実画面（2026-11-15、Vuora・SearchClock）の `input[type=file]` 1 つ分。text はその入力を含む枠の文字列
+fn file_input(index: i32, text: &str, images: &[(&str, &str)]) -> ElementInfo {
+    ElementInfo {
+        index,
+        tag: "input".to_string(),
+        r#type: "file".to_string(),
+        accept: ".png,.jpg,.jpeg".to_string(),
+        text: text.to_string(),
+        images: images
+            .iter()
+            .map(|(alt, src)| edictora::dashboard::PageImage {
+                alt: alt.to_string(),
+                src: src.to_string(),
+            })
+            .collect(),
+        ..ElementInfo::default()
+    }
+}
+
+const ICON: &str = "ショップ アイコン\n128x128 ピクセル\nアイコンが画像に関するガイドラインに沿っているか確認してください";
+const LOCALIZED: &str = "ローカライズ版アセット\nローカライズ版プロモーション動画\nYouTube 動画の URL を入力してください。\nローカライズ版スクリーンショット\n指定できるのは 5 枚までです\n1280x800 または 640x400\nJPEG または 24 ビット PNG（アルファなし）\n少なくとも 1 枚指定してください";
+const GLOBAL: &str = "全言語向けアセット\n全言語向けプロモーション動画\nYouTube 動画の URL を入力してください。\n全言語向けスクリーンショット\n指定できるのは 5 枚までです\n1280x800 または 640x400\nJPEG または 24 ビット PNG（アルファなし）\n少なくとも 1 枚指定してください";
+const TILE: &str =
+    "プロモーション タイル（小）\n440×280 キャンバス\nJPEG または 24 ビット PNG（アルファなし）";
+const MARQUEE: &str = "マーキー プロモーション タイル\n1400×560 キャンバス\nJPEG または 24 ビット PNG（アルファなし）";
+
+/// 複数言語のアイテムの 5 つの入力（アイコン・ローカライズ版・全言語向け・小タイル・マーキー）
+fn multi_language_inputs() -> Vec<ElementInfo> {
+    vec![
+        file_input(
+            0,
+            ICON,
+            &[(
+                "ショップ アイコン",
+                "https://lh3.googleusercontent.com/a=s128-rw",
+            )],
+        ),
+        file_input(
+            1,
+            LOCALIZED,
+            &[(
+                "スクリーンショット 1",
+                "https://lh3.googleusercontent.com/l1=w160-h100-rw",
+            )],
+        ),
+        file_input(
+            2,
+            GLOBAL,
+            &[
+                (
+                    "スクリーンショット 1",
+                    "https://lh3.googleusercontent.com/g1=w160-h100-rw",
+                ),
+                (
+                    "スクリーンショット 2",
+                    "https://lh3.googleusercontent.com/g2=w160-h100-rw",
+                ),
+            ],
+        ),
+        file_input(
+            3,
+            TILE,
+            &[(
+                "プロモーション タイル（小）",
+                "https://lh3.googleusercontent.com/t=w158-h100-rw",
+            )],
+        ),
+        file_input(
+            4,
+            MARQUEE,
+            &[(
+                "マーキー プロモーション タイル",
+                "https://lh3.googleusercontent.com/m=w258-h100-rw",
+            )],
+        ),
+    ]
+}
+
+#[test]
+fn 画像の置き場を寸法と見出しで1つに絞る() {
+    use edictora::images::ImageSlot::*;
+    let inputs = multi_language_inputs();
+    let pick = |slot| pick_image_slot(&JA, &inputs, slot).map(|i| i.index);
+    assert_eq!(pick(SmallTile).unwrap(), 3);
+    assert_eq!(pick(Marquee).unwrap(), 4);
+    // 同じ寸法のスクリーンショットは、見出しの行（全言語向けアセット / ローカライズ版アセット）で分ける
+    assert_eq!(pick(GlobalScreenshots).unwrap(), 2);
+    assert_eq!(pick(LocalizedScreenshots).unwrap(), 1);
+}
+
+#[test]
+fn 言語が1つのアイテムにはローカライズ版の置き場が無いので止まる() {
+    use edictora::images::ImageSlot::*;
+    // SearchClock: アイコン・全言語向け・小タイル・マーキーの 4 つ
+    let inputs = vec![
+        file_input(0, ICON, &[]),
+        file_input(1, GLOBAL, &[]),
+        file_input(2, TILE, &[]),
+        file_input(3, MARQUEE, &[]),
+    ];
+    assert!(matches!(
+        pick_image_slot(&JA, &inputs, LocalizedScreenshots),
+        Err(Error::Dashboard(_))
+    ));
+    assert_eq!(
+        pick_image_slot(&JA, &inputs, GlobalScreenshots)
+            .unwrap()
+            .index,
+        1
+    );
+}
+
+#[test]
+fn 置き場が1つに絞れなければ止める() {
+    use edictora::images::ImageSlot::*;
+    // 同じ置き場が 2 つ
+    let mut inputs = multi_language_inputs();
+    inputs.push(file_input(5, TILE, &[]));
+    assert!(matches!(
+        pick_image_slot(&JA, &inputs, SmallTile),
+        Err(Error::Dashboard(m)) if m.contains("2")
+    ));
+    // 見出しが無いスクリーンショットは候補にしない（全言語向けかローカライズ版か分からない）
+    let headless = vec![file_input(
+        0,
+        "スクリーンショット\n1280x800 または 640x400",
+        &[],
+    )];
+    assert!(pick_image_slot(&JA, &headless, GlobalScreenshots).is_err());
+    assert!(pick_image_slot(&JA, &headless, LocalizedScreenshots).is_err());
+    // PNG を受け付けない入力・無効な入力は候補にしない
+    let mut jpeg_only = multi_language_inputs();
+    jpeg_only[3].accept = ".jpg".to_string();
+    assert!(pick_image_slot(&JA, &jpeg_only, SmallTile).is_err());
+    let mut disabled = multi_language_inputs();
+    disabled[4].disabled = true;
+    assert!(pick_image_slot(&JA, &disabled, Marquee).is_err());
+    // 寸法の表記は × と x の両方を受ける
+    let x = vec![file_input(
+        0,
+        "プロモーション タイル（小）\n440x280 キャンバス",
+        &[],
+    )];
+    assert!(pick_image_slot(&JA, &x, SmallTile).is_ok());
+}
+
+#[test]
+fn 画像のaltの並びを確かめる() {
+    use edictora::dashboard::PageImage;
+    use edictora::images::ImageSlot::*;
+    let img = |alt: &str| PageImage {
+        alt: alt.to_string(),
+        src: String::new(),
+    };
+    assert_eq!(
+        expected_image_alt(&JA, GlobalScreenshots, 2),
+        "スクリーンショット 3"
+    );
+    assert_eq!(
+        expected_image_alt(&JA, SmallTile, 0),
+        "プロモーション タイル（小）"
+    );
+    assert_eq!(
+        expected_image_alt(&JA, Marquee, 0),
+        "マーキー プロモーション タイル"
+    );
+
+    let ok = [img("スクリーンショット 1"), img("スクリーンショット 2")];
+    assert!(ensure_image_alts(&JA, LocalizedScreenshots, &ok).is_ok());
+    let swapped = [img("スクリーンショット 2"), img("スクリーンショット 1")];
+    assert!(ensure_image_alts(&JA, GlobalScreenshots, &swapped).is_err());
+    assert!(ensure_image_alts(&JA, Marquee, &[img("スクリーンショット 1")]).is_err());
+    assert!(ensure_image_alts(&JA, SmallTile, &[]).is_ok());
+}
+
+fn button(index: i32, label: &str) -> ElementInfo {
+    ElementInfo {
+        index,
+        tag: "div".to_string(),
+        label: label.to_string(),
+        ..ElementInfo::default()
+    }
+}
+
+#[test]
+fn 削除ボタンはaria_labelの完全一致だけを選ぶ() {
+    let buttons = vec![
+        button(0, "画像を削除 スクリーンショット 1"),
+        button(1, "画像を左に移動して並べ替え: スクリーンショット 1"),
+        button(2, "画像を右に移動して並べ替え: スクリーンショット 1"),
+        button(3, "画像を削除 スクリーンショット 2"),
+        button(4, "画像アップロードのステータスを閉じる"),
+    ];
+    assert_eq!(
+        pick_delete_button(&JA, &buttons, "スクリーンショット 2")
+            .unwrap()
+            .index,
+        3
+    );
+    // 無い alt・部分一致（「スクリーンショット 1」は「…1」だけに当たる）
+    assert!(pick_delete_button(&JA, &buttons, "スクリーンショット 9").is_err());
+    assert_eq!(
+        pick_delete_button(&JA, &buttons, "スクリーンショット 1")
+            .unwrap()
+            .index,
+        0
+    );
+    // 同じラベルが 2 つなら止める（スロットの外のボタンが混ざった場合）
+    let mut dup = buttons.clone();
+    dup.push(button(5, "画像を削除 スクリーンショット 2"));
+    assert!(pick_delete_button(&JA, &dup, "スクリーンショット 2").is_err());
+}
+
+#[test]
+fn 画像まわりで押してよいのは削除ボタンだけ() {
+    assert!(ensure_image_click_allowed(&JA, "画像を削除 スクリーンショット 1").is_ok());
+    for label in [
+        "画像を左に移動して並べ替え: スクリーンショット 1",
+        "画像を右に移動して並べ替え: スクリーンショット 1",
+        "画像アップロードのステータスを閉じる",
+        "ショップ アイコンを削除",
+        "",
+    ] {
+        assert!(ensure_image_click_allowed(&JA, label).is_err(), "{label}");
+    }
+}
+
+#[test]
+fn アップロードのエラー表示を見分ける() {
+    let messages = [
+        "ガイドやヒントが必要な場合は…（常設の案内。除外される）エラー",
+        "画像をアップロードしました",
+        "画像のアップロードに失敗しました",
+    ];
+    let errors = image_error_messages(&JA, &messages);
+    assert_eq!(errors, vec!["画像のアップロードに失敗しました".to_string()]);
+    assert!(image_error_messages(&JA, &["画像をアップロードしました"]).is_empty());
+}
+
+#[test]
+fn 収集結果から画像の情報を読む() {
+    let json = serde_json::json!([{
+        "index": 2, "tag": "input", "type": "file", "text": "全言語向けアセット",
+        "accept": ".png,.jpg,.jpeg",
+        "images": [{ "alt": "スクリーンショット 1", "src": "https://lh3.googleusercontent.com/x=w160" }],
+        "width": 0, "height": 48
+    }]);
+    let parsed = parse_elements(&json);
+    assert_eq!(parsed[0].accept, ".png,.jpg,.jpeg");
+    assert_eq!(parsed[0].images.len(), 1);
+    assert_eq!(parsed[0].images[0].alt, "スクリーンショット 1");
+    assert_eq!((parsed[0].width, parsed[0].height), (0, 48));
+}

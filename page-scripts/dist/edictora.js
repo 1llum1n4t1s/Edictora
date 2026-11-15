@@ -72,9 +72,28 @@
       dialogCheckbox: () => {
         const d = allDialogs();
         return d.length === 1 ? [...d[0].querySelectorAll("input[type=checkbox], [role=checkbox]")] : [];
+      },
+      fileInput: () => [...document.querySelectorAll("input[type=file]")],
+      slotImage: () => [],
+      imageButton: () => []
+    };
+    const slotRoot = (input) => {
+      let cur = input;
+      let best = input;
+      while (cur.parentElement && cur.parentElement !== document.body) {
+        const p = cur.parentElement;
+        if (p.querySelectorAll("input[type=file]").length > 1)
+          break;
+        best = p;
+        cur = p;
       }
+      return best;
     };
     const store = {};
+    const slotSources = {
+      slotImage: (root) => realImages(root),
+      imageButton: (root) => [...root.querySelectorAll("[role=button][aria-label], button[aria-label]")]
+    };
     const info = (el, i) => {
       const f = el;
       return {
@@ -89,6 +108,42 @@
         checked: f.type === "checkbox" ? !!f.checked : el.getAttribute("role") === "checkbox" ? el.getAttribute("aria-checked") === "true" : null
       };
     };
+    const realImages = (root) => [...root.querySelectorAll("img")].filter((m) => (m.getAttribute("src") || "").trim() !== "");
+    const fileInfo = (el, i) => {
+      const root = slotRoot(el);
+      return {
+        index: i,
+        tag: "input",
+        text: text(root),
+        label: "",
+        disabled: !!el.disabled,
+        readOnly: false,
+        type: "file",
+        expanded: null,
+        checked: null,
+        accept: el.getAttribute("accept") || "",
+        images: realImages(root).map((m) => ({
+          alt: m.getAttribute("alt") || "",
+          src: m.currentSrc || m.getAttribute("src") || ""
+        }))
+      };
+    };
+    const slotInfo = (el, i) => {
+      const r = el.getBoundingClientRect();
+      return {
+        index: i,
+        tag: el.tagName.toLowerCase(),
+        text: el.tagName === "IMG" ? "" : text(el),
+        label: el.tagName === "IMG" ? el.getAttribute("alt") || "" : el.getAttribute("aria-label") || "",
+        disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
+        readOnly: false,
+        type: "",
+        expanded: el.getAttribute("aria-expanded"),
+        checked: null,
+        width: Math.round(r.width),
+        height: Math.round(r.height)
+      };
+    };
     const get = (kind, i) => {
       const el = (store[kind] || [])[i];
       if (!el || !el.isConnected)
@@ -99,8 +154,20 @@
       collect: (kind) => {
         const els = sources[kind]();
         store[kind] = els;
-        return els.map(info);
+        return kind === "fileInput" ? els.map(fileInfo) : els.map(info);
       },
+      collectSlot: (kind, slotIndex) => {
+        const input = (store.fileInput || [])[slotIndex];
+        if (!input || !input.isConnected)
+          throw new Error("EDICTORA_ELEMENT_GONE:fileInput");
+        const pick = slotSources[kind];
+        if (!pick)
+          throw new Error("EDICTORA_ELEMENT_GONE:" + kind);
+        const els = pick(slotRoot(input));
+        store[kind] = els;
+        return els.map(slotInfo);
+      },
+      element: (kind, i) => get(kind, i),
       scrollTo: (kind, i) => {
         get(kind, i).scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
         return true;

@@ -7,13 +7,14 @@ use std::collections::BTreeMap;
 use crate::config::section::extract_source;
 use crate::config::{ItemConfig, normalize_locale_code};
 use crate::error::{Error, Result};
+use crate::images::{ExpectedImages, ExpectedSlot, ImageScope, ImageSlot, build_expected_slot};
 use crate::util::{eq_ic, format_n0, utf16_len};
 use crate::{tr, trs};
 
 /// Edictora が読み書きする掲載情報の欄。
 ///
 /// ダッシュボードの「ストアの掲載情報」で編集できる欄のうち、テキストで正本を持てるものだけを扱う。
-/// カテゴリ・画像・プロモーション動画は対象外。設定ファイルに書かれていない欄は、
+/// カテゴリ・プロモーション動画・アイコンは対象外（掲載画像は `images` モジュールが別に扱う）。設定ファイルに書かれていない欄は、
 /// 読み出し・比較・書き換えのどれにも使わない。並び順（Ord）は処理・表示の順番と同じ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ListingField {
@@ -108,8 +109,10 @@ pub struct ExpectedItem {
     pub item_id: String,
     /// 表示名
     pub display_name: String,
-    /// ロケールごとの正本
+    /// ロケールごとの正本（テキスト）。`--only images` や画像だけのアイテムでは空
     pub locales: Vec<ExpectedLocale>,
+    /// 掲載画像の正本（対象にするスロットだけ。`build_expected` では None で、`select_targets` が足す）
+    pub images: Option<ExpectedImages>,
 }
 
 impl ExpectedItem {
@@ -173,7 +176,68 @@ pub fn build_expected(item: &ItemConfig) -> Result<ExpectedItem> {
         item_id: item.item_id.clone(),
         display_name: item.display_name.clone(),
         locales,
+        images: None,
     })
+}
+
+/// 設定のアイテムから画像の正本を作る（`scope` とロケールで絞ったスロットだけを検証する。誤りは `Config` エラー）。
+///
+/// 処理順は 小タイル → マーキー → 全言語向けスクリーンショット → ローカライズ版（設定に書いたロケール順）。
+/// `images` を書いていないアイテムは None。`locales` が空でなければ、ローカライズ版はそのロケールだけにする
+pub fn build_expected_images(
+    item: &ItemConfig,
+    scope: ImageScope,
+    locales: &[String],
+) -> Result<Option<ExpectedImages>> {
+    let Some(images) = &item.images else {
+        return Ok(None);
+    };
+    let place = format!("{} ({})", item.display_name, item.item_id);
+    let mut slots: Vec<ExpectedSlot> = Vec::new();
+    if scope.includes(ImageSlot::SmallTile)
+        && let Some(path) = &images.small_tile
+    {
+        slots.push(build_expected_slot(
+            ImageSlot::SmallTile,
+            None,
+            std::slice::from_ref(path),
+            &format!("{place} images.smallTile"),
+        )?);
+    }
+    if scope.includes(ImageSlot::Marquee)
+        && let Some(path) = &images.marquee
+    {
+        slots.push(build_expected_slot(
+            ImageSlot::Marquee,
+            None,
+            std::slice::from_ref(path),
+            &format!("{place} images.marquee"),
+        )?);
+    }
+    if scope.includes(ImageSlot::GlobalScreenshots)
+        && let Some(paths) = &images.global_screenshots
+    {
+        slots.push(build_expected_slot(
+            ImageSlot::GlobalScreenshots,
+            None,
+            paths,
+            &format!("{place} images.globalScreenshots"),
+        )?);
+    }
+    if scope.includes(ImageSlot::LocalizedScreenshots) {
+        for (code, paths) in &images.localized_screenshots {
+            if !locales.is_empty() && !locales.iter().any(|l| eq_ic(l, code)) {
+                continue;
+            }
+            slots.push(build_expected_slot(
+                ImageSlot::LocalizedScreenshots,
+                Some(code),
+                paths,
+                &format!("{place} images.localizedScreenshots.{code}"),
+            )?);
+        }
+    }
+    Ok(Some(ExpectedImages { slots }))
 }
 
 /// ダッシュボードから読み出したロケール 1 件の現在値

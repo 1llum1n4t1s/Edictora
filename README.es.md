@@ -22,6 +22,7 @@ Funciona como una única herramienta de línea de comandos (`edictora.exe`). Est
 - **pull**: lee los valores actuales del panel (descripción, URL oficial, URL de la página principal y URL de asistencia). Solo lectura.
 - **diff**: muestra las diferencias con sus archivos de origen. Solo lectura y es el comando predeterminado.
 - **push**: reescribe solo los campos que difieren, **los guarda como borrador**, vuelve a cargar la página y comprueba los valores guardados con sus archivos de origen.
+- **Imágenes**: si un elemento tiene `images` en la configuración, `pull`, `diff` y `push` también tratan sus imágenes de la ficha (capturas de pantalla, mosaico promocional pequeño y marquee). Acótelas con `--only text|images` y `--image-scope all|global|localized`.
 - **submit**: envía un elemento a revisión. No cambia el ajuste «publicar automáticamente tras la revisión».
 - **login**: abre Chrome con el perfil dedicado para que inicie sesión en Google usted mismo.
 - **update**: descarga e instala una versión más reciente, si la hay. Solo funciona si instaló Edictora con Setup, y también se ejecuta automáticamente cuando inicia sesión en Windows.
@@ -94,6 +95,36 @@ Para cada elemento, asocie cada configuración regional (locale) a sus archivos 
 - Cuando se extrae una sección, Edictora toma las líneas posteriores al encabezado inicial y anteriores al encabezado final. Elimina las líneas en blanco iniciales y finales y los espacios en blanco finales, y normaliza los saltos de línea a `\n`. Si no se encuentra un encabezado, se detiene con un error.
 - Un campo de URL sin clave se ignora. `""` significa que el campo debe estar vacío.
 - Las claves desconocidas (por ejemplo, erratas) son errores. Se permiten comentarios y comas finales.
+
+#### Imágenes de la ficha (opcional)
+
+Añada `images` a un elemento para gestionar sus imágenes. Como en el resto de campos, **las claves que no escriba no se tocan nunca**. Las rutas son relativas a `baseDir`.
+
+```jsonc
+"images": {
+  "smallTile": "webstore/images/tile-small.png",            // 440x280
+  "marquee": "webstore/images/tile-marquee.png",            // 1400x560
+  "globalScreenshots": { "dir": "webstore/images/en" },     // or { "files": ["a.png", "b.png"] }
+  "localizedScreenshots": {                                 // zh_CN = zh-CN
+    "ja": { "dir": "webstore/images/ja" },
+    "zh_CN": { "dir": "webstore/images/zh_CN" }
+  }
+}
+```
+
+- `dir` usa los archivos `screenshot-*.png` que están directamente en la carpeta, por orden de nombre (1–5 archivos). `files` usa los archivos en el orden en que los escriba (1–5).
+- Solo se admite PNG de 24 bits sin alfa, de 1280x800 o 640x400 (capturas), 440x280 (mosaico pequeño) o 1400x560 (marquee). Edictora lo comprueba, y que no se repita ninguna imagen dentro de un conjunto, antes de abrir Chrome (código de salida 2). El icono de la tienda no se gestiona.
+- Un elemento puede tener `images` sin `locales` (solo imágenes).
+- **Las imágenes se comparan por sus píxeles decodificados, no por los bytes del archivo.** El panel vuelve a codificar los PNG que se suben, así que el archivo guardado nunca tiene los mismos bytes que el suyo, aunque los píxeles sean idénticos. Edictora descarga cada imagen del panel (el original `=s0`, solo por HTTPS desde `*.googleusercontent.com` y sin cookies) y compara los hashes de píxeles en orden. Si una imagen no se puede descargar o decodificar, el resultado es «no se puede comparar»: nunca «coincide» ni «reemplazar».
+- `push --yes` reemplaza una ubicación entera (borra todo y sube en orden) solo si difiere, guarda un borrador, recarga y vuelve a comprobar. El orden es: mosaico pequeño, marquee, capturas globales y, después, las capturas localizadas de cada idioma.
+- **Borrar una imagen surte efecto de inmediato en el panel** (pregunta «no se puede deshacer» y, al recargar sin guardar, la ubicación seguía vacía). Si un push se interrumpe a medias, el borrador puede quedar sin algunas imágenes: vuelva a ejecutarlo para terminar. Edictora nunca toca un elemento pendiente de revisión.
+- Un elemento con un solo idioma no tiene capturas localizadas; use `--image-scope global`. Si un idioma de `localizedScreenshots` no está en el panel, Edictora se detiene antes de cambiar nada: use `--image-scope global` o `--locale`.
+- La escritura de imágenes solo funciona con el panel en japonés (los textos en inglés no están verificados).
+
+```powershell
+edictora diff --only images --item <id>                                  # Images only (read-only)
+edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
 
 ### 2. Iniciar sesión
 
@@ -213,6 +244,7 @@ Si usa una pasarela MCP (como Toolport), registre en ella el mismo comando (stdi
 - Los campos y los botones se encuentran por etiqueta, rol y texto, nunca por nombres de clase CSS. Si una búsqueda no coincide con exactamente un elemento, Edictora se detiene.
 - Chrome se inicia sin indicadores de automatización y se cierra de forma limpia. **El perfil nunca se elimina.**
 - Las capturas de pantalla tomadas al fallar se guardan en `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca en su repositorio.
+- Las actualizaciones de imágenes reemplazan solo las ubicaciones que difieren. No tocan el icono de la tienda ni reordenan imágenes, y nunca pueden enviar a revisión (el código de imágenes no tiene forma de llamarlo).
 
 ## Dónde se guardan los archivos
 

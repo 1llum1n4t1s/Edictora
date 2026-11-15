@@ -22,6 +22,7 @@ Il s'exécute sous la forme d'un unique outil en ligne de commande (`edictora.ex
 - **pull** : lit les valeurs actuelles du tableau de bord (description, URL officielle, URL de la page d'accueil et URL d'assistance). Lecture seule.
 - **diff** : affiche les différences avec vos fichiers sources. Lecture seule, et commande par défaut.
 - **push** : réécrit uniquement les champs qui diffèrent, **les enregistre en brouillon**, puis recharge la page et compare les valeurs enregistrées à vos fichiers sources.
+- **Images** : si un élément a `images` dans la configuration, `pull`, `diff` et `push` gèrent aussi ses images de fiche (captures d'écran, petite tuile promotionnelle et marquee). Limitez-les avec `--only text|images` et `--image-scope all|global|localized`.
 - **submit** : envoie un élément pour examen. Il ne modifie pas le paramètre « publier automatiquement après examen ».
 - **login** : ouvre Chrome avec le profil dédié pour que vous puissiez vous connecter vous-même à Google.
 - **update** : télécharge et installe une version plus récente, s'il y en a une. Cela ne fonctionne que si vous avez installé Edictora avec Setup, et la commande s'exécute aussi automatiquement à l'ouverture de votre session Windows.
@@ -94,6 +95,36 @@ Pour chaque élément, associez chaque locale à ses fichiers sources. **Les cha
 - Lorsqu'une section est extraite, Edictora prend les lignes situées après le titre de début et avant le titre de fin. Il supprime les lignes vides au début et à la fin ainsi que les espaces en fin de ligne, et normalise les fins de ligne en `\n`. Si un titre est introuvable, il s'arrête avec une erreur.
 - Un champ d'URL sans clé est ignoré. `""` signifie que le champ doit être vide.
 - Les clés inconnues (comme les fautes de frappe) sont des erreurs. Les commentaires et les virgules finales sont autorisés.
+
+#### Images de la fiche (facultatif)
+
+Ajoutez `images` à un élément pour gérer ses images. Comme pour les autres champs, **les clés que vous n'écrivez pas ne sont jamais touchées**. Les chemins sont relatifs à `baseDir`.
+
+```jsonc
+"images": {
+  "smallTile": "webstore/images/tile-small.png",            // 440x280
+  "marquee": "webstore/images/tile-marquee.png",            // 1400x560
+  "globalScreenshots": { "dir": "webstore/images/en" },     // or { "files": ["a.png", "b.png"] }
+  "localizedScreenshots": {                                 // zh_CN = zh-CN
+    "ja": { "dir": "webstore/images/ja" },
+    "zh_CN": { "dir": "webstore/images/zh_CN" }
+  }
+}
+```
+
+- `dir` utilise les fichiers `screenshot-*.png` situés directement dans le dossier, par ordre de nom (1 à 5 fichiers). `files` utilise les fichiers dans l'ordre où vous les écrivez (1 à 5).
+- Seul le PNG est pris en charge : 24 bits sans alpha, 1280x800 ou 640x400 pour les captures, 440x280 pour la petite tuile et 1400x560 pour le marquee. Edictora le vérifie, ainsi qu'une éventuelle image en double dans un même jeu, avant d'ouvrir Chrome (code de sortie 2). L'icône de la boutique n'est pas gérée.
+- Un élément peut avoir `images` sans `locales` (images seulement).
+- **Les images sont comparées par leurs pixels décodés, pas par les octets du fichier.** Le tableau de bord ré-encode les PNG téléversés : le fichier stocké n'a jamais les mêmes octets que le vôtre, mais les pixels sont identiques. Edictora télécharge chaque image du tableau de bord (l'original `=s0`, en HTTPS uniquement depuis `*.googleusercontent.com`, sans cookie) et compare les empreintes des pixels dans l'ordre. Si une image ne peut pas être téléchargée ou décodée, le résultat est « comparaison impossible » : jamais « identique » ni « remplacer ».
+- `push --yes` remplace un emplacement entier (tout supprimer, puis téléverser dans l'ordre) uniquement s'il diffère, enregistre un brouillon, recharge et vérifie à nouveau. Ordre : petite tuile, marquee, captures globales, puis les captures localisées de chaque langue.
+- **La suppression d'une image prend effet immédiatement sur le tableau de bord** (il demande « cette action est irréversible » et, après rechargement sans enregistrer, l'emplacement restait vide). Si un push s'arrête en cours de route, le brouillon peut rester privé de certaines images : relancez-le pour terminer. Edictora ne touche jamais un élément en attente d'examen.
+- Un élément à une seule langue n'a pas de captures localisées ; utilisez `--image-scope global`. Si une langue de `localizedScreenshots` n'est pas sur le tableau de bord, Edictora s'arrête avant de rien modifier : utilisez `--image-scope global` ou `--locale`.
+- L'écriture d'images ne fonctionne que lorsque le tableau de bord est en japonais (les libellés anglais ne sont pas vérifiés).
+
+```powershell
+edictora diff --only images --item <id>                                  # Images only (read-only)
+edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
 
 ### 2. Se connecter
 
@@ -213,6 +244,7 @@ Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même comma
 - Les champs et les boutons sont trouvés par leur libellé, leur rôle et leur texte, jamais par des noms de classes CSS. Si une recherche ne correspond pas à exactement un élément, Edictora s'arrête.
 - Chrome est démarré sans indicateurs d'automatisation et fermé proprement. **Le profil n'est jamais supprimé.**
 - Les captures d'écran prises en cas d'échec sont enregistrées dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, jamais dans votre dépôt.
+- Les mises à jour d'images ne remplacent que les emplacements qui diffèrent. Elles ne touchent ni l'icône de la boutique ni l'ordre des images, et ne peuvent jamais soumettre à l'examen (le code des images n'a aucun moyen de l'appeler).
 
 ## Où les fichiers sont stockés
 
