@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use edictora::chrome::{ChromeLaunchOptions, build_args};
+use edictora::chrome::{ChromeLaunchOptions, build_args, seed_local_state};
 
 /// テストの入力にするプロファイルのパス（実プロファイルではない架空の場所）
 const PROFILE: &str = r"C:\profiles\edictora";
@@ -80,4 +80,72 @@ fn find_chromeはパニックせず見つかれば実在するファイルを返
                 .ends_with("chrome.exe")
         );
     }
+}
+
+// ───────── Local State のシード（Windows アカウントのロック防止） ─────────
+
+/// テストごとに別の空ディレクトリを cargo のテスト用領域に作る（実プロファイルには触れない）
+fn fresh_profile(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("seed-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn read_local_state(dir: &std::path::Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(dir.join("Local State")).unwrap()).unwrap()
+}
+
+#[test]
+fn seed_local_stateは新規プロファイルへ空パスワードではない印を書く() {
+    // 守る契約: need_recheck が false になる値を書く（LogonUser を呼ばせない）。二度目は書かない（冪等）
+    let dir = fresh_profile("new");
+    assert!(seed_local_state(&dir).unwrap());
+    let json = read_local_state(&dir);
+    assert_eq!(json["password_manager"]["os_password_blank"], false);
+    assert_eq!(
+        json["password_manager"]["os_password_last_changed"],
+        "9223372036854775000"
+    );
+    assert!(!seed_local_state(&dir).unwrap(), "同じ値なら書き換えない");
+    assert!(
+        !dir.join("Local State.edictora-tmp").exists(),
+        "一時ファイルを残さない"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn seed_local_stateは既存のキーを保つ() {
+    // 守る契約: ログイン済みプロファイルの他の設定を消さない
+    let dir = fresh_profile("merge");
+    std::fs::write(
+        dir.join("Local State"),
+        r#"{"browser":{"enabled_labs_experiments":["x"]},"password_manager":{"other":1,"os_password_blank":true}}"#,
+    )
+    .unwrap();
+    assert!(seed_local_state(&dir).unwrap());
+    let json = read_local_state(&dir);
+    assert_eq!(json["browser"]["enabled_labs_experiments"][0], "x");
+    assert_eq!(json["password_manager"]["other"], 1);
+    assert_eq!(json["password_manager"]["os_password_blank"], false);
+    assert_eq!(
+        json["password_manager"]["os_password_last_changed"],
+        "9223372036854775000"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn seed_local_stateは壊れたlocal_stateに触らない() {
+    // 守る契約: JSON として読めないファイルは上書きしない（壊さない）
+    let dir = fresh_profile("broken");
+    std::fs::write(dir.join("Local State"), "{ not json").unwrap();
+    assert!(!seed_local_state(&dir).unwrap());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("Local State")).unwrap(),
+        "{ not json"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -6,5 +6,7 @@
 pub mod launcher;
 pub mod locator;
 
-pub use launcher::{ChromeInstance, ChromeLaunchOptions, build_args, launch_or_attach, probe};
+pub use launcher::{
+    ChromeInstance, ChromeLaunchOptions, build_args, launch_or_attach, probe, seed_local_state,
+};
 pub use locator::find_chrome;

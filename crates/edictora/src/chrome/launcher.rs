@@ -4,6 +4,7 @@
 //! - Chrome の標準出力・標準エラーは捨てる（Chrome のログ行が CLI の標準エラーに漏れないように）
 //! - 終了は CDP の `Browser.close` で正常終了させる（Cookie を確実に書き出すため）。応答しないときだけプロセスを止める
 //! - **プロファイルは絶対に削除しない**（旧 ExtWeigh の ChromeInstance は削除していたが、その経路を持たない）
+//! - **起動前に `Local State` へ「OS パスワードは空ではない」を書く**（[`seed_local_state`]）。Windows アカウントのロック防止
 //! - DevTools の確認（`/json/version`）は localhost への素の HTTP/1.1 で行う（HTTP crate は使わない）
 
 use std::io::{Read, Write};
@@ -64,6 +65,65 @@ pub fn build_args(options: &ChromeLaunchOptions) -> Vec<String> {
     }
     args.push(options.start_url.clone());
     args
+}
+
+/// `Local State` に書く `password_manager.os_password_last_changed`。int64 の上限近い値（Chromium の int64 pref は文字列で保存する）。
+const OS_PASSWORD_LAST_CHANGED: &str = "9223372036854775000";
+
+/// 起動前に user-data-dir の `Local State` へ「OS パスワードは確認済みで、空ではない」を書く。
+/// Windows アカウントのロック防止（2026-11-15 に Puppeteer の並列起動で実害が出た）。
+///
+/// 理由: Chromium は Windows で新しいプロファイルごとに「OS ユーザーのパスワードが空か」を確かめるため、
+/// 空パスワードで LogonUser を呼ぶ（chrome/browser/password_manager/password_manager_util_win.cc の
+/// CheckBlankPasswordWithPrefs）。空でないアカウントではこれがログオン失敗（Security 4625）として数えられ、
+/// 失敗が重なるとアカウントがロックされる。永続プロファイルでも、作成直後の初回起動で 1 回起きる。
+/// 再確認の要否（need_recheck）は `pref_last_changed > 0 && last_changed <= pref_last_changed` で決まるので、
+/// `os_password_last_changed` に int64 上限近い値を入れておけば LogonUser は呼ばれない。
+///
+/// 保全:
+/// - 既存の `Local State` の他のキーは保つ（`password_manager` の中の他のキーも保つ）
+/// - 既に同じ値なら書かない（Chrome が開いたままのプロファイルに触れない）
+/// - 既存の `Local State` が JSON として読めない・オブジェクトでないときは触らない（壊さない）
+/// - 一時ファイルへ書いてから置き換える（書き込み途中で Chrome が読んでも欠けた内容を見せない）
+///
+/// 書き込んだら true、変更不要・触らない場合は false。Preferences（パスワードマネージャーの設定）は
+/// 利用者のログイン済みプロファイルなので変えない。
+pub fn seed_local_state(user_data_dir: &Path) -> std::io::Result<bool> {
+    let path = user_data_dir.join("Local State");
+    let mut root = match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(v @ Value::Object(_)) => v,
+            _ => return Ok(false),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Value::Object(Default::default()),
+        Err(e) => return Err(e),
+    };
+    let Some(obj) = root.as_object_mut() else {
+        return Ok(false);
+    };
+    let section = obj
+        .entry("password_manager")
+        .or_insert_with(|| Value::Object(Default::default()));
+    let Some(section) = section.as_object_mut() else {
+        return Ok(false);
+    };
+    let blank_ok = section.get("os_password_blank") == Some(&Value::Bool(false));
+    let changed_ok = section
+        .get("os_password_last_changed")
+        .and_then(Value::as_str)
+        == Some(OS_PASSWORD_LAST_CHANGED);
+    if blank_ok && changed_ok {
+        return Ok(false);
+    }
+    section.insert("os_password_blank".to_string(), Value::Bool(false));
+    section.insert(
+        "os_password_last_changed".to_string(),
+        Value::String(OS_PASSWORD_LAST_CHANGED.to_string()),
+    );
+    let tmp = user_data_dir.join("Local State.edictora-tmp");
+    std::fs::write(&tmp, serde_json::to_vec(&root)?)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(true)
 }
 
 /// 起動済み（または既に起動していた）Chrome
@@ -138,7 +198,15 @@ pub fn launch_or_attach(
         });
     }
 
-    // 2) 新しく起動する。前回のポートファイルが残っていても読まないよう、起動時刻より新しいものだけを採る
+    // 2) 新しく起動する。先に Local State をシードする（Windows アカウントのロック防止。理由は seed_local_state）。
+    //    失敗しても起動は続ける（初回の確認が 1 回走るだけで、致命的ではない）
+    if let Err(e) = seed_local_state(&options.user_data_dir) {
+        log(
+            &format!("Chrome の Local State を準備できませんでした（起動は続けます）: {e}"),
+            LogLevel::Warning,
+        );
+    }
+    // 前回のポートファイルが残っていても読まないよう、起動時刻より新しいものだけを採る
     let launched_at = SystemTime::now() - Duration::from_secs(1);
     let mut process = Command::new(&options.chrome_path)
         .args(build_args(options))
