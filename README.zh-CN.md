@@ -1,0 +1,270 @@
+<p align="center">
+  <img src="icon/app_icon.png" alt="Edictora 图标" width="128">
+</p>
+
+# Edictora
+
+[English](README.md) | [日本語](README.ja.md) | 简体中文 | [繁體中文](README.zh-TW.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Português (Brasil)](README.pt-BR.md)
+
+**一款 Windows 工具，可根据保存在各扩展程序仓库中的源文件，批量读取、比较并更新您的 Chrome Web Store 商品详情（说明和 URL）。**
+
+公开的 Chrome Web Store（CWS）API（v2）无法读取或写入商品详情，Chrome 也不允许扩展程序操作 CWS 页面。
+因此 Edictora 通过 Chrome DevTools Protocol（CDP）驱动使用专用配置文件的 Chrome 实例，并以与真人相同的输入方式编辑开发者信息中心。
+它是一个单一的命令行工具（`edictora.exe`），使用 Rust 编写，不需要 .NET 或 Node.js 等运行时。
+
+> [!IMPORTANT]
+> Edictora 依赖开发者信息中心的页面布局。它是在信息中心以**日语**显示的情况下验证的。
+> 英语信息中心也能识别，但英语的界面标签尚未在真实屏幕上验证。
+> 如果 Edictora 找不到某个字段或按钮（例如信息中心改版之后），它会在不做任何更改的情况下停止。
+
+## 功能
+
+- **pull**：从信息中心读取当前值（说明、官方 URL、主页 URL 和支持 URL）。只读。
+- **diff**：显示与源文件的差异。只读，也是默认命令。
+- **push**：仅重写有差异的字段，并**保存为草稿**，然后重新加载页面，将保存的值与源文件进行核对。
+- **submit**：将一个项目提交审核。不会更改“审核后自动发布”设置。
+- **login**：使用专用配置文件打开 Chrome，让您自行登录 Google。
+- **update**：如有新版本，则下载并安装。仅在您通过 Setup 安装 Edictora 时有效，并且会在您登录 Windows 时自动运行。
+
+## 显示语言
+
+Edictora 的消息、差异输出和帮助文本提供九种语言：日语、英语、简体中文、繁体中文、韩语、西班牙语、法语、德语和巴西葡萄牙语。
+
+- 默认情况下，Edictora 按以下顺序决定语言：环境变量 `EDICTORA_LANGUAGE`，然后是 `LC_ALL`、`LC_MESSAGES` 和 `LANG`（空值、`C` 和 `POSIX` 会被跳过），最后是 Windows 显示语言。如果都没有给出受支持的语言，则使用英语。
+- 要明确指定语言，请将 `EDICTORA_LANGUAGE` 设置为 `ja`、`en`、`zh-CN`、`zh-TW`、`ko`、`es`、`fr`、`de` 或 `pt-BR` 之一。旧名称 `EDICTORA_LANG` 仍会被读取，但 `EDICTORA_LANGUAGE` 优先。
+- `edictora mcp` 无论显示语言是什么，始终以英语回答，因为它的工具说明和响应是由 AI 代理读取的。
+- 这与开发者信息中心的语言（日语或英语）以及您商品详情的 `locales` 无关。
+- 日志文件供作者排查问题使用，因此其中的固定消息保持为日语。日志中包含的错误消息则遵循显示语言。
+
+## 安装与更新
+
+运行 `Edictora-win-Setup.exe`（Velopack 安装程序）。它无需管理员权限，会安装到 `%LOCALAPPDATA%\Edictora`。
+
+- 安装后，`edictora` 可在任何新打开的命令提示符或 PowerShell 窗口中使用，因为 Setup 会把 `%LOCALAPPDATA%\Edictora\current` 添加到您的用户 `Path`。
+- 当您登录 Windows 时，`edictora-updater.exe` 会在无窗口状态下运行。如果 `https://edictora.kagayoi.com` 上有更新的版本，它会下载该版本，检查其大小和哈希值，然后进行安装。
+  - 它以 `Edictora Updater` 为名注册在 HKCU 的 `Run` 下，因此您可以在任务管理器的“启动应用”中将其关闭。
+  - 结果会写入日志。
+- 要手动更新，请运行 `edictora update`。它会向标准错误输出报告；当您已是最新版本或更新已开始时以退出码 0 退出，失败时以退出码 1 退出。在 `edictora` 退出后，Update.exe 会替换文件。
+- Portable 版（`Edictora-win-Portable.zip`）不会在登录时自动更新，也不会把自己添加到 `Path`。要更新它，请在您解压的文件夹中运行 `current\edictora.exe update`。从源代码构建的可执行文件不会自行更新。
+- 当 `login`、`pull`、`diff`、`push` 或 `submit` 正在运行时，绝不会应用更新。Edictora 会先完成下载，稍后再应用更新。
+  - 如果在应用更新期间运行这些命令之一，它会在不打开 Chrome 的情况下以退出码 1 退出。请稍候，然后重新运行。
+  - 更新进程退出后，Update.exe 还需要几秒钟来替换文件，Edictora 无法保护这段间隙。更新之后，请稍等片刻再运行命令。
+- 卸载会移除 `%LOCALAPPDATA%\Edictora` 以及 `Run` 和 `Path` 条目。您的数据（`%LOCALAPPDATA%\Edictora.Data`）和设置（`%APPDATA%\Edictora`）会被保留，如果不再需要，请自行删除。
+
+## 系统要求
+
+- Windows 10 或 Windows 11（x86_64）
+- Google Chrome。Edictora 会自动查找它，您也可以在配置文件中设置 `chromePath`，或传入 `--chrome`。
+- CWS 开发者账号
+- 如果从源代码构建，需要 Rust 1.100.0（在 `rust-toolchain.toml` 中固定）。只有在修改页面内脚本时才需要 Bun。
+
+## 使用方法
+
+### 1. 编写配置文件
+
+默认位置是 `%APPDATA%\Edictora\config.json`；您可以用 `--config` 更改。
+对于每个项目，将每个语言区域映射到它的源文件。**您省略的字段绝不会被读取、比较或写入。**
+
+```jsonc
+{
+  // Optional. Defaults to %LOCALAPPDATA%\Edictora.Data\chrome-profile
+  "profileDir": "%LOCALAPPDATA%\\Edictora.Data\\chrome-profile",
+  "items": [
+    {
+      "itemId": "abcdefghijklmnopabcdefghijklmnop",   // 32-character CWS item ID
+      "name": "Replace Translator",                     // Optional (for display)
+      "baseDir": "D:\\Dev\\ReplaceTranslator",          // Optional (base for relative paths; defaults to the config file's folder)
+      "locales": {
+        "en": {
+          "description": {
+            "file": "webstore/store-listing.en.txt",
+            "sectionStart": "^■ Description",           // Start after this heading line
+            "sectionEnd": "^■ Category"                 // Stop before this heading line
+          },
+          "homepageUrl": "https://example.com/",
+          "supportUrl": "https://example.com/support"
+        }
+      }
+    }
+  ]
+}
+```
+
+- 如果只给出 `description.file`，则整个文件都会用作说明。
+- 提取区段时，Edictora 取起始标题之后、结束标题之前的行。它会去除首尾的空行和行尾空白，并将换行符统一为 `\n`。如果找不到标题，则报错停止。
+- 没有键的 URL 字段会被忽略。`""` 表示该字段应为空。
+- 未知的键（例如拼写错误）会报错。允许使用注释和尾随逗号。
+
+### 2. 登录
+
+```powershell
+edictora login
+```
+
+Chrome 会使用专用配置文件打开。请在其中登录 Google 并打开开发者信息中心。
+- 一旦 Edictora 看到信息中心，就会把登录状态保存在配置文件中并退出。
+- 默认最多等待 10 分钟。可用 `--wait <minutes>` 设置为 1–120 分钟。
+- Edictora 绝不会处理您的密码或验证码；这些都由您自己输入。
+
+### 3. 比较与更新
+
+```powershell
+edictora diff                                   # Show differences for all items (read-only)
+edictora pull --item <id>                       # Show current values (read-only)
+edictora push --item <id> --locale en           # Show differences and stop (no --yes, so nothing is written)
+edictora push --item <id> --locale en --yes     # Rewrite differing fields, save as draft, verify
+edictora submit --item <id> --yes               # Submit one item for review
+```
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 成功（无差异） |
+| 1 | 运行时错误（信息中心操作失败、验证不一致等） |
+| 2 | 参数或配置无效（不会打开 Chrome） |
+| 3 | 发现差异（`diff`，或未带 `--yes` 的 `push`） |
+| 4 | 写入已中止（审核中，或无法确定状态） |
+| 5 | 需要登录 |
+| 130 | 已中断（Ctrl+C） |
+
+进度输出到标准错误，结果输出到标准输出。
+
+`pull`、`diff`、`push` 和 `submit` 在无窗口（无头）状态下运行 Chrome，因此 Chrome 绝不会跳到您的工作窗口前面。
+如果想观看运行过程，请添加 `--show-browser`。`login` 始终显示窗口，因为需要您手动操作。
+
+> [!WARNING]
+> `--show-browser` 供人观看屏幕时使用。通过 AI 代理或脚本运行 Edictora 时请勿使用：Chrome 窗口会弹出到用户的屏幕上，而且 AI 本来也看不到它。
+> 要查明失败原因，请使用错误消息和失败时保存的截图。
+> - 错误消息包含覆盖元素、元素的边界以及视口大小。
+> - 截图保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，错误消息会显示路径。当 `pull` 或 `diff` 读取信息中心失败时，也会保存截图。
+
+### 4. 从 AI 代理使用（MCP）
+
+`edictora mcp` 是通过标准输入输出运行的 MCP 服务器。把它注册到 Claude Code、Codex 或其他客户端后，AI 在编辑您的商品详情时就能找到并使用 Edictora。
+
+**如果 Claude Code 和 Codex 的官方 CLI（`claude` 和 `codex`）在 `PATH` 中，Setup 会自动把 Edictora 注册到这两者。** 卸载时只会移除指向 Edictora 的注册。
+- 如果安装时缺少某个 CLI，或注册没有及时完成，Edictora 会在您下次登录时重试。之后才安装 CLI 的情况也一样。
+- 如果您在注册添加之后自行移除了它，Edictora 不会再次添加。
+
+对于 Portable 版，或这两者之外的客户端（例如 Claude Desktop 或网关），请使用下面的某种方法注册一次。
+请以绝对路径给出已安装的 exe：
+- Setup 版：`%LOCALAPPDATA%\Edictora\current\edictora.exe`。自动更新替换文件时，此路径保持不变。
+- Portable 版：您解压的文件夹中的 `current\edictora.exe`。
+
+使用 `PATH` 中的 `edictora` 也可以，但在安装之前启动的客户端看不到新的 `PATH`，所以使用绝对路径更稳妥。
+
+**Claude Code**（适用于所有项目）
+
+```powershell
+claude mcp add --scope user edictora -- "$env:LOCALAPPDATA\Edictora\current\edictora.exe" mcp
+```
+
+**Codex**
+
+```powershell
+codex mcp add edictora -- "$env:LOCALAPPDATA\Edictora\current\edictora.exe" mcp
+```
+
+或者把它添加到 `%USERPROFILE%\.codex\config.toml`（请替换 `<username>`）：
+
+```toml
+[mcp_servers.edictora]
+command = 'C:\Users\<username>\AppData\Local\Edictora\current\edictora.exe'
+args = ["mcp"]
+```
+
+**Claude Desktop 以及其他使用 JSON 文件配置的客户端**（请替换 `<username>`）：
+
+```json
+{
+  "mcpServers": {
+    "edictora": {
+      "command": "C:\\Users\\<username>\\AppData\\Local\\Edictora\\current\\edictora.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+如果您使用 MCP 网关（例如 Toolport），请在网关上注册相同的命令（stdio，参数为 `mcp`）。
+
+| 工具 | 功能 |
+|---|---|
+| `edictora_list_items` | 显示配置文件涵盖的内容（项目、语言区域、源文件）。不会打开浏览器。 |
+| `edictora_diff` | 显示与源文件的差异（只读） |
+| `edictora_pull` | 显示当前值（只读） |
+| `edictora_push` | 重写有差异的字段并保存为草稿。未带 `confirm: true` 时，只显示差异并停止（试运行）。 |
+| `edictora_submit` | 将一个项目提交审核。必须提供 `item` 和 `confirm: true`。 |
+
+- 这些工具运行与 CLI 相同的代码，具有相同的保护措施和退出码。每个结果都以退出码及其含义开头。发现差异（3）不被视为错误。
+- 客户端无法选择显示浏览器（`--show-browser`）、运行 `login`，也无法设置配置文件或 chrome.exe。Chrome 始终在无窗口状态下运行。
+- 如果您的登录已过期，工具会请您在终端中运行 `edictora login`。登录由您自己完成。
+- 调用按顺序逐个运行。您可以用 `notifications/cancelled` 取消正在运行的调用。
+- 对所有项目执行 `diff` 可能需要几分钟，因此请给您的客户端设置较宽裕的超时时间。
+
+## 保护措施
+
+- 默认情况下 Edictora 只显示差异，不做任何更改。只有 `push --yes` 才会写入，只有 `submit --item <id> --yes` 才会提交审核。
+- 保存草稿和提交审核是互相独立的操作。提交一次只处理一个项目；没有批量提交。
+- 保存之前，Edictora 会检查每个重写的字段是否与源文件完全一致。保存之后，它会重新加载页面并再次检查。如果有任何不一致，就不保存，或者报错停止。
+- 对每个语言区域，Edictora 依次切换语言、重写字段、验证、保存，然后重新加载并再次验证。如果某个语言区域失败，该项目其余的部分会被跳过。
+  - 不会跨语言区域回滚：失败之前已保存的语言区域会作为草稿保留。
+  - 在您将项目提交审核之前，不会有任何内容公开。
+- 当无法确认项目状态可以安全编辑时（例如“审核中”），Edictora 不会写入。它绝不会取消审核。
+- 字段和按钮通过标签、角色和文本查找，绝不使用 CSS 类名。如果一次查找没有恰好匹配一个元素，Edictora 就会停止。
+- Chrome 不带自动化标志启动，并会被正常关闭。**配置文件绝不会被删除。**
+- 失败时截取的屏幕截图保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，绝不会保存到您的仓库中。
+
+## 文件存放位置
+
+| 内容 | 位置 |
+|---|---|
+| 配置文件（源文件映射） | `%APPDATA%\Edictora\config.json` |
+| Chrome 配置文件（包含您的登录状态） | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
+| 日志（包括更新结果） | `%LOCALAPPDATA%\Edictora.Data\logs` |
+| 失败时的截图 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| 应用本身（通过 Setup 安装时） | `%LOCALAPPDATA%\Edictora`（卸载时整体移除） |
+
+数据保存在 `Edictora.Data` 中，与应用分开，这样卸载时就不会同时删除您已登录的 Chrome 配置文件。旧位置的数据（例如 `%LOCALAPPDATA%\Edictora\chrome-profile`）不会自动迁移。
+
+Chrome 配置文件包含您的登录 Cookie。请勿分享它，不再需要时请自行删除。
+发布者 ID（信息中心 URL 的一部分）在日志中会被遮蔽。
+
+## 构建
+
+主程序使用 Rust 编写（`crates/edictora/`）。
+
+```powershell
+cargo build --release          # target\release\edictora.exe and edictora-updater.exe (Bun not needed)
+cargo test
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+```
+
+在信息中心页面内运行的脚本位于 `page-scripts/`（Bun + TypeScript）。生成的 `page-scripts/dist/edictora.js` 会嵌入 exe 中，因此只有在修改这些脚本时才需要 Bun。
+
+```powershell
+cd page-scripts
+bun install --frozen-lockfile   # install dependencies (TypeScript only)
+bun run typecheck      # type-check
+bun run build          # regenerate dist/edictora.js
+bun run check          # check that dist/edictora.js is up to date
+```
+
+**`sectionStart` / `sectionEnd` 中的正则表达式**：Edictora 使用 Rust 的 `regex` crate，因此不支持先行断言、后行断言（`(?=…)`、`(?!…)`、`(?<=…)`、`(?<!…)`）和反向引用（`\1`）；它们会在加载配置时导致错误。像 `^■ Description` 这样的普通模式可以照常使用。
+
+测试时，您可以覆盖：
+- 本地数据根目录，用 `EDICTORA_LOCAL_ROOT`（默认 `%LOCALAPPDATA%\Edictora.Data`）
+- 漫游根目录，用 `EDICTORA_ROAMING_ROOT`（默认 `%APPDATA%\Edictora`）
+- 更新源，用 `EDICTORA_UPDATE_URL`（默认 `https://edictora.kagayoi.com`；明文 `http://` 仅允许用于 `127.0.0.1`）
+
+Velopack 包同时包含 `edictora.exe`（主 exe）和 `edictora-updater.exe`。
+- 更新不使用 velopack crate：Edictora 自己通过 WinHTTP（Windows 内置的 HTTP API）获取源、下载并验证包。
+- 安装、替换文件和卸载交给 Velopack 的 Setup.exe 和 Update.exe。
+
+## 分发
+
+发布版本由 Cloudflare R2 在 `https://edictora.kagayoi.com` 提供（Velopack 渠道 `win`）。发布流程请参阅 [docs/release.md](docs/release.md)。
+
+## 许可证
+
+请参阅 [LICENSE](LICENSE)。隐私方面请参阅 [PRIVACY_POLICY.md](PRIVACY_POLICY.md)。
