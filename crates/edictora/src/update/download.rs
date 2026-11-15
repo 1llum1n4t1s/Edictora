@@ -49,15 +49,16 @@ impl VerifyError {
         match self {
             VerifyError::Size { expected, actual } => {
                 crate::tr!(
-                    "サイズが一致しません（フィード {expected} バイト、実際 {actual} バイト）",
-                    "Size mismatch (feed: {expected} bytes, actual: {actual} bytes)"
+                    "update.size_mismatch_feed_bytes_actual_bytes",
+                    expected = expected,
+                    actual = actual
                 )
             }
             VerifyError::Checksum { algorithm } => {
-                crate::tr!("{algorithm} が一致しません", "{algorithm} mismatch")
+                crate::tr!("update.mismatch", algorithm = algorithm)
             }
             VerifyError::Io(m) => {
-                crate::tr!("ファイルを読めません: {m}", "Cannot read the file: {m}")
+                crate::tr!("update.cannot_read_the_file", detail = m)
             }
         }
     }
@@ -98,22 +99,21 @@ pub fn ensure_package(
 ) -> Result<PathBuf> {
     if !is_safe_file_name(&asset.file_name) {
         return Err(update_err(crate::tr!(
-            "フィードのファイル名が正しくありません: {}",
-            "Invalid file name in the feed: {}",
-            asset.file_name
+            "update.invalid_file_name_in_the_feed",
+            file_name = asset.file_name
         )));
     }
     std::fs::create_dir_all(packages_dir).map_err(|e| {
         update_err(crate::tr!(
-            "パッケージの置き場を作れません（{}）: {e}",
-            "Cannot create the package folder ({}): {e}",
-            packages_dir.display()
+            "update.cannot_create_the_package_folder",
+            packages_dir = packages_dir.display(),
+            error = e
         ))
     })?;
     let _lock = LockFile::try_acquire(&packages_dir.join(VELOPACK_LOCK_FILE)).map_err(|e| {
         update_err(crate::tr!(
-            "パッケージの置き場が使用中です（別の更新処理が動いている可能性があります）: {e}",
-            "The package folder is in use (another update may be running): {e}"
+            "update.the_package_folder_is_in_use_another",
+            error = e
         ))
     })?;
 
@@ -124,23 +124,21 @@ pub fn ensure_package(
         match verify_package(&final_path, asset) {
             Ok(()) => {
                 progress(&crate::tr!(
-                    "ダウンロード済みのパッケージを使います: {}",
-                    "Using the already downloaded package: {}",
-                    asset.file_name
+                    "update.using_the_already_downloaded_package",
+                    file_name = asset.file_name
                 ));
                 return Ok(final_path);
             }
             Err(e) => {
                 progress(&crate::tr!(
-                    "ダウンロード済みのパッケージが一致しないため取り直します（{}）",
-                    "The downloaded package does not match, so it will be downloaded again ({})",
-                    e.message()
+                    "update.the_downloaded_package_does_not_match_so",
+                    error = e.message()
                 ));
                 std::fs::remove_file(&final_path).map_err(|e| {
                     update_err(crate::tr!(
-                        "一致しないパッケージを消せません（{}）: {e}",
-                        "Cannot delete the mismatched package ({}): {e}",
-                        final_path.display()
+                        "update.cannot_delete_the_mismatched_package",
+                        final_path = final_path.display(),
+                        error = e
                     ))
                 })?;
             }
@@ -157,10 +155,9 @@ pub fn ensure_package(
     .collect::<Vec<_>>();
 
     progress(&crate::tr!(
-        "パッケージをダウンロードしています: {}（{} バイト）",
-        "Downloading the package: {} ({} bytes)",
-        asset.file_name,
-        asset.size
+        "update.downloading_the_package_bytes",
+        file_name = asset.file_name,
+        size = asset.size
     ));
     let downloaded = download_to(&partial_path, source, asset, cancel);
     if let Err(e) = downloaded {
@@ -170,16 +167,15 @@ pub fn ensure_package(
     if let Err(e) = verify_package(&partial_path, asset) {
         let _ = std::fs::remove_file(&partial_path);
         return Err(update_err(crate::tr!(
-            "ダウンロードしたパッケージの検証に失敗したため適用しません: {}",
-            "The downloaded package failed verification, so it will not be applied: {}",
-            e.message()
+            "update.the_downloaded_package_failed_verification_so_it",
+            error = e.message()
         )));
     }
     std::fs::rename(&partial_path, &final_path).map_err(|e| {
         update_err(crate::tr!(
-            "ダウンロードしたパッケージを改名できません（{}）: {e}",
-            "Cannot rename the downloaded package ({}): {e}",
-            final_path.display()
+            "update.cannot_rename_the_downloaded_package",
+            final_path = final_path.display(),
+            error = e
         ))
     })?;
 
@@ -220,10 +216,9 @@ fn download_to(
     .map_err(|e| http_error(e, DOWNLOAD_TOTAL_TIMEOUT))?;
     if response.status != 200 {
         return Err(update_err(crate::tr!(
-            "パッケージを取得できませんでした（HTTP {}）: {}",
-            "Could not fetch the package (HTTP {}): {}",
-            response.status,
-            asset.file_name
+            "update.could_not_fetch_the_package_http",
+            status = response.status,
+            file_name = asset.file_name
         )));
     }
     Ok(())

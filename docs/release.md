@@ -14,7 +14,7 @@ EdictoraのWindows配布物は、Rust版CLI `edictora.exe` と自動更新用の
 | インストーラー | `Edictora-win-Setup.exe`（固定名。毎回キャッシュをpurge）、`Edictora-<VERSION>-win-Setup.exe`（版付き、不変） |
 | Portable | `Edictora-win-Portable.zip`（固定名。毎回キャッシュをpurge）、`Edictora-<VERSION>-win-Portable.zip`（版付き、不変） |
 | フィード | `releases.win.json`（クライアントが読む）、`assets.win.json`、`RELEASES`（旧形式）。すべて固定名で毎回purge |
-| パッケージの中身 | `edictora.exe`・`edictora-updater.exe`（署名済み）、`LICENSE`、`README.md`、`PRIVACY_POLICY.md`。Velopackが `Update.exe`（nupkgでは `Squirrel.exe`）と実行スタブを加える |
+| パッケージの中身 | `edictora.exe`・`edictora-updater.exe`（署名済み）、`LICENSE`、`README.md`（英語の正本。各言語版 `README.*.md` は同梱しない）、`PRIVACY_POLICY.md`。Velopackが `Update.exe`（nupkgでは `Squirrel.exe`）と実行スタブを加える |
 
 インストール先は `%LOCALAPPDATA%\Edictora`（packIdで決まる。一度配布したらpackIdは変えない）で、アプリのデータは `%LOCALAPPDATA%\Edictora.Data` に分けて置きます。
 

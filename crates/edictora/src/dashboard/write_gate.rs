@@ -75,10 +75,7 @@ pub fn evaluate(state: &ItemPageState) -> WriteDecision {
     let status = match state.status_text.as_deref() {
         Some(s) if !s.trim().is_empty() => s.trim(),
         _ => {
-            return deny(tr!(
-                "アイテムのステータスを読み取れません。安全のため書き込みを止めます",
-                "Cannot read the item status. Stopping the write to be safe"
-            ));
+            return deny(tr!("dashboard.cannot_read_the_item_status_stopping_the"));
         }
     };
 
@@ -87,8 +84,8 @@ pub fn evaluate(state: &ItemPageState) -> WriteDecision {
         .any(|k| contains_ic(status, k))
     {
         return deny(tr!(
-            "ステータスが「{status}」のため書き込みません（審査の取り消しはしません）",
-            "Not writing because the status is \"{status}\" (the review is never cancelled)"
+            "dashboard.not_writing_because_the_status_is_the",
+            status = status
         ));
     }
     let unconfirmed = UNCONFIRMED_LOOKALIKE_KEYWORDS
@@ -100,20 +97,18 @@ pub fn evaluate(state: &ItemPageState) -> WriteDecision {
             .any(|k| contains_ic(status, k))
     {
         return deny(tr!(
-            "ステータス「{status}」は書き込みを確認済みの状態ではないため、安全のため止めます",
-            "Stopping to be safe because writing has not been verified for the status \"{status}\""
+            "dashboard.stopping_to_be_safe_because_writing_has",
+            status = status
         ));
     }
     if !state.description_found {
         return deny(tr!(
-            "説明欄が見つからないため書き込みを止めます",
-            "Stopping the write because the description field was not found"
+            "dashboard.stopping_the_write_because_the_description_field"
         ));
     }
     if !state.description_editable {
         return deny(tr!(
-            "説明欄が編集できない状態のため書き込みを止めます",
-            "Stopping the write because the description field cannot be edited"
+            "dashboard.stopping_the_write_because_the_description_field_2"
         ));
     }
     // ボタンの文言は画面の言語で違うが、この判定は画面の言語を受け取らない（`ensure_allowed` の署名を保つため）。
@@ -121,14 +116,14 @@ pub fn evaluate(state: &ItemPageState) -> WriteDecision {
     let save = crate::dashboard::text::JA.save_draft_button;
     if !state.save_button_found {
         return deny(tr!(
-            "「{save}」ボタンが見つからないため書き込みを止めます",
-            "Stopping the write because the save-draft button was not found"
+            "dashboard.stopping_the_write_because_the_save_draft",
+            save = save
         ));
     }
     if !state.save_button_enabled {
         return deny(tr!(
-            "「{save}」ボタンが押せない状態のため書き込みを止めます",
-            "Stopping the write because the save-draft button cannot be clicked"
+            "dashboard.stopping_the_write_because_the_save_draft_2",
+            save = save
         ));
     }
     WriteDecision {

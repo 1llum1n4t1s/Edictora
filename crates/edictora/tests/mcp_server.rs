@@ -5,7 +5,7 @@
 //! - 画面表示・ログイン・プロファイル指定をツールから選べない（今回の --show-browser 騒ぎの再発防止）
 //! - 書き込み（push / submit）は confirm: true が無ければ実行しない
 //! - 標準出力は 1 行 1 メッセージの JSON-RPC だけ
-//! - 検索で見つかるよう、説明に Chrome Web Store・掲載情報などの語が入っている
+//! - 検索で見つかるよう、説明に Chrome Web Store・store listing・description などの英語の語が入っている（AI が読む文言は英語に統一）
 
 use edictora::cancel::CancelToken;
 use edictora::dashboard::browser::{DashboardBrowser, DashboardBrowserOptions};
@@ -158,22 +158,24 @@ fn tools_list_書き込みは破壊的_読み出しは読み取り専用と示�
 #[test]
 fn tools_list_検索で見つかる語を説明に含める() {
     // 2026-11-15、AI が Edictora に気付かず、期限切れの CWS メタデータ API を探していた。
-    // 「chrome web store listing description」「掲載情報」などで引っかかるようにする
+    // 「chrome web store listing description」などで引っかかるようにする（AI が読む説明は英語に統一）
     for t in tool_definitions() {
         let d = t["description"].as_str().unwrap();
         assert!(d.contains("Chrome Web Store"), "{}", t["name"]);
         assert!(
-            d.contains("掲載情報") || d.contains("審査"),
+            d.contains("store listing") || d.contains("submit for review"),
             "{}",
             t["name"]
         );
+        // 英語に統一する（日本語を混ぜない）
+        assert!(d.is_ascii(), "{}: {d}", t["name"]);
     }
     let diff = tool_definitions()
         .into_iter()
         .find(|t| t["name"] == "edictora_diff")
         .unwrap();
     let d = diff["description"].as_str().unwrap();
-    assert!(d.contains("listing") && d.contains("description") && d.contains("説明文"));
+    assert!(d.contains("listing") && d.contains("description"));
 }
 
 #[test]
@@ -185,7 +187,7 @@ fn tools_call_スキーマに無い引数はエラーにしてchromeを開かな
     let result = &by_id(&replies, 1)["result"];
     assert_eq!(result["isError"], true);
     assert!(
-        text_of(result).contains("show_browser は使えません"),
+        text_of(result).contains("Argument show_browser is not allowed"),
         "{result}"
     );
 }
@@ -203,8 +205,8 @@ fn tools_call_設定が無ければ終了コード2でchromeを開かない() {
     let result = &by_id(&replies, 1)["result"];
     assert_eq!(result["isError"], true);
     let text = text_of(result);
-    assert!(text.starts_with("終了コード: 2"), "{text}");
-    assert!(text.contains("Chrome は開いていません"), "{text}");
+    assert!(text.starts_with("Exit code: 2"), "{text}");
+    assert!(text.contains("Chrome was not opened"), "{text}");
 }
 
 #[test]
@@ -328,21 +330,21 @@ fn build_cli_args_値にオプションを紛れ込ませられない() {
     // 値として渡した --yes / --show-browser が、CLI のオプションとして効いてはいけない
     // （confirm を経ずに書き込む・画面を出す、の迂回を防ぐ）。MCP の入口で形式を確かめて止める
     let err = |name: &str, v: Value| build_cli_args(name, &v).unwrap_err().0;
-    assert!(err("edictora_diff", json!({ "items": ["--show-browser"] })).contains("アイテム ID"));
+    assert!(err("edictora_diff", json!({ "items": ["--show-browser"] })).contains("Item IDs"));
     assert!(
         err(
             "edictora_push",
             json!({ "items": [ITEM], "locales": ["--yes"] })
         )
-        .contains("ロケール")
+        .contains("Locales")
     );
-    assert!(err("edictora_push", json!({ "items": ["--yes"] })).contains("アイテム ID"));
+    assert!(err("edictora_push", json!({ "items": ["--yes"] })).contains("Item IDs"));
     assert!(
         err(
             "edictora_submit",
             json!({ "item": "--show-browser", "confirm": true })
         )
-        .contains("アイテム ID")
+        .contains("Item IDs")
     );
 }
 
@@ -370,9 +372,9 @@ fn tool_result_from_cli_差分ありは失敗にせず_ログインが必要な�
     let diff = tool_result_from_cli(3, "[ja] 差分あり\n", "読み出しています…\n");
     assert_eq!(diff["isError"], false);
     let text = text_of(&diff);
-    assert!(text.starts_with("終了コード: 3"));
-    assert!(text.contains("--- 結果 ---\n[ja] 差分あり"));
-    assert!(text.contains("--- 進捗・エラー ---\n読み出しています…"));
+    assert!(text.starts_with("Exit code: 3"));
+    assert!(text.contains("--- Result ---\n[ja] 差分あり"));
+    assert!(text.contains("--- Progress and errors ---\n読み出しています…"));
 
     assert_eq!(tool_result_from_cli(0, "ok", "")["isError"], false);
     for code in [1, 2, 4, 130] {
@@ -397,14 +399,14 @@ fn is_mcp_command_mcpだけを受け付ける() {
 }
 
 /// 本物の exe を `mcp` で起動し、表示言語を固定してメッセージを送る（入力を閉じると受け付け済みを返して終わる）。
-/// テスト内で i18n::init を呼ぶとこのテストバイナリ全体の言語が変わるため、英語は exe の起動で確かめる
+/// MCP は AI が読む出力なので、表示言語の環境変数に関わらず英語になることを exe の起動で確かめる
 fn exchange_exe(dir_name: &str, lang: &str, messages: &[Value]) -> Vec<Value> {
     use std::io::Write;
     use std::process::{Command, Stdio};
     let dir = work_dir(dir_name);
     let mut child = Command::new(env!("CARGO_BIN_EXE_edictora"))
         .arg("mcp")
-        .env(edictora::i18n::LANG_ENV, lang)
+        .env(edictora::i18n::LANGUAGE_ENV, lang)
         .env(edictora::app_paths::LOCAL_ROOT_ENV, dir.join("local"))
         .env(edictora::app_paths::ROAMING_ROOT_ENV, dir.join("roaming"))
         .env_remove("VELOPACK_FIRSTRUN")
@@ -431,7 +433,7 @@ fn exchange_exe(dir_name: &str, lang: &str, messages: &[Value]) -> Vec<Value> {
 }
 
 #[test]
-fn exe_英語表示でも説明に検索で見つかる語を含める() {
+fn exe_説明に検索で見つかる英語の語を含める() {
     let replies = exchange_exe(
         "mcp-exe-en",
         "en",
@@ -469,9 +471,26 @@ fn exe_英語表示でも説明に検索で見つかる語を含める() {
 }
 
 #[test]
-fn exe_日本語表示の説明はライブラリと同じ() {
-    // CI（英語の OS）でも EDICTORA_LANG=ja なら日本語の説明を返す
-    let replies = exchange_exe("mcp-exe-ja", "ja", &[request(1, "tools/list", json!({}))]);
-    let tools = by_id(&replies, 1)["result"]["tools"].clone();
-    assert_eq!(tools, Value::Array(tool_definitions()));
+fn exe_表示言語が日本語でもmcpの説明は英語でライブラリと同じ() {
+    // 人向けの表示言語を ja にしても、AI が読むツール定義・案内は英語のまま（9 言語化の対象外）
+    for (dir, lang) in [("mcp-exe-ja", "ja"), ("mcp-exe-de", "de")] {
+        let replies = exchange_exe(
+            dir,
+            lang,
+            &[
+                request(
+                    1,
+                    "initialize",
+                    json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "t", "version": "0" } }),
+                ),
+                request(2, "tools/list", json!({})),
+            ],
+        );
+        let instructions = by_id(&replies, 1)["result"]["instructions"]
+            .as_str()
+            .unwrap();
+        assert!(instructions.is_ascii(), "{lang}: {instructions}");
+        let tools = by_id(&replies, 2)["result"]["tools"].clone();
+        assert_eq!(tools, Value::Array(tool_definitions()), "{lang}");
+    }
 }

@@ -64,17 +64,18 @@ impl DashboardBrowser {
         options: &DashboardBrowserOptions,
         cancel: &CancelToken,
     ) -> Result<DashboardBrowser> {
-        let chrome_path = options.chrome_path.clone().or_else(find_chrome).ok_or_else(|| {
-            Error::Dashboard(tr!(
-                "Chrome が見つかりません。設定ファイルの chromePath か --chrome で chrome.exe を指定してください。",
-                "Chrome was not found. Specify chrome.exe with chromePath in the config file or with --chrome."
-            ))
-        })?;
+        let chrome_path = options
+            .chrome_path
+            .clone()
+            .or_else(find_chrome)
+            .ok_or_else(|| {
+                Error::Dashboard(tr!("dashboard.chrome_was_not_found_specify_chrome_exe"))
+            })?;
         if !chrome_path.is_file() {
             let shown = chrome_path.display();
             return Err(Error::Dashboard(tr!(
-                "chrome.exe がありません: {shown}",
-                "chrome.exe does not exist: {shown}"
+                "dashboard.chrome_exe_does_not_exist",
+                shown = shown
             )));
         }
 
@@ -119,8 +120,7 @@ impl DashboardBrowser {
     pub fn ensure_logged_in(&mut self, cancel: &CancelToken) -> Result<()> {
         if !self.is_connected() {
             return Err(Error::Dashboard(tr!(
-                "Chrome との接続が切れています。開き直してください。",
-                "The connection to Chrome was lost. Open it again."
+                "dashboard.the_connection_to_chrome_was_lost_open"
             )));
         }
         self.get_page(cancel)?;
@@ -146,8 +146,7 @@ impl DashboardBrowser {
             cancel.sleep(Duration::from_millis(500))?;
         }
         Err(Error::Dashboard(tr!(
-            "ダッシュボードに到達できませんでした（30 秒）。login を実行してログイン状態を確認してください。",
-            "Could not reach the dashboard (30 seconds). Run login to check the sign-in state."
+            "dashboard.could_not_reach_the_dashboard_30_seconds"
         )))
     }
 
@@ -167,43 +166,33 @@ impl DashboardBrowser {
                 cancel,
             )?;
         }
-        progress(&tr!(
-            "開いた Chrome で Google にログインし、デベロッパー ダッシュボードを表示してください。",
-            "Sign in to Google in the opened Chrome and display the Developer Dashboard."
-        ));
+        progress(&tr!("dashboard.sign_in_to_google_in_the_opened"));
 
         let deadline = Instant::now() + timeout;
         let mut announced = false;
         while Instant::now() < deadline {
             if !self.is_connected() {
                 return Err(Error::Dashboard(tr!(
-                    "Chrome が閉じられたため、ログインの確認を中止しました。",
-                    "Stopped waiting for sign-in because Chrome was closed."
+                    "dashboard.stopped_waiting_for_sign_in_because_chrome"
                 )));
             }
             let (dashboard_url, on_login_page) = self.scan_targets(cancel)?;
             if let Some(pid) = urls::try_parse_publisher_id(dashboard_url.as_deref()) {
                 self.publisher_id = Some(pid);
-                progress(&tr!(
-                    "ダッシュボードへのログインを確認しました。",
-                    "Confirmed sign-in to the dashboard."
-                ));
+                progress(&tr!("dashboard.confirmed_sign_in_to_the_dashboard"));
                 log("login: ダッシュボード到達を確認", LogLevel::Info);
                 return Ok(());
             }
             if !announced && on_login_page {
-                progress(&tr!(
-                    "Google のログイン画面を表示しています。ログインが終わるまで待っています…",
-                    "The Google sign-in page is shown. Waiting until you finish signing in…"
-                ));
+                progress(&tr!("dashboard.the_google_sign_in_page_is_shown"));
                 announced = true;
             }
             cancel.sleep(Duration::from_secs(1))?;
         }
         let minutes = timeout.as_secs() / 60;
         Err(Error::Dashboard(tr!(
-            "ログインの完了を {minutes} 分待ちましたが、ダッシュボードに到達しませんでした。",
-            "Waited {minutes} minutes for sign-in to finish, but the dashboard was not reached."
+            "dashboard.waited_minutes_for_sign_in_to_finish",
+            minutes = minutes
         )))
     }
 
@@ -216,8 +205,7 @@ impl DashboardBrowser {
                 self.diagnostics_directory.clone(),
             )),
             _ => Err(Error::Dashboard(tr!(
-                "先に ensure_logged_in でログインを確認してください",
-                "Check the sign-in with ensure_logged_in first"
+                "dashboard.check_the_sign_in_with_ensure_logged"
             ))),
         }
     }
@@ -286,12 +274,7 @@ impl DashboardBrowser {
         let session_id = attach
             .get("sessionId")
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                Error::Dashboard(tr!(
-                    "タブへの接続に失敗しました",
-                    "Failed to attach to the tab"
-                ))
-            })?
+            .ok_or_else(|| Error::Dashboard(tr!("dashboard.failed_to_attach_to_the_tab")))?
             .to_string();
 
         let page = CdpPage::new(self.client.clone(), session_id, target_id);
@@ -354,9 +337,7 @@ impl DashboardBrowser {
             .get("targetId")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| {
-                Error::Dashboard(tr!("タブを作れませんでした", "Could not create a tab"))
-            })
+            .ok_or_else(|| Error::Dashboard(tr!("dashboard.could_not_create_a_tab")))
     }
 
     /// 終了する。自分で起動した Chrome は Browser.close で正常終了させる（プロファイルは残す）。

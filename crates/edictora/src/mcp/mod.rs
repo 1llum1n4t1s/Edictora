@@ -35,7 +35,6 @@ use crate::cancel::CancelToken;
 use crate::cli::{BrowserOpener, CliApp, exit_codes};
 use crate::config;
 use crate::logging::{LogLevel, log, redact};
-use crate::{tr, trs};
 
 /// 対応するプロトコルの版（新しい順）。クライアントの要求が含まれていればそれを、無ければ先頭を返す
 pub const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -45,17 +44,8 @@ pub fn is_mcp_command<S: AsRef<str>>(args: &[S]) -> bool {
     args.len() == 1 && args[0].as_ref().eq_ignore_ascii_case("mcp")
 }
 
-/// initialize で返す、サーバーの使い方の案内（クライアントが AI に渡す）
-const INSTRUCTIONS: &str = "Edictora は Chrome Web Store（CWS）の掲載情報（ストアの説明文・公式 URL・ホームページ URL・サポート URL）を、\
-各拡張機能リポジトリの正本ファイルと比べて一括で直すツールです。CWS API には掲載情報の読み書きが無いため、\
-専用プロファイルの Chrome をウィンドウなし（ヘッドレス）で動かしてデベロッパー ダッシュボードを操作します。\
-掲載情報を見る・直すときは、まず edictora_list_items で対象と言語を確かめ、edictora_diff で差分を見てから、\
-edictora_push（confirm: true で下書き保存）と edictora_submit（confirm: true で審査送信、1 件ずつ）を使ってください。\
-書き込みと審査送信は利用者に確認してから行ってください。ログインが必要と返ったら、利用者に端末で `edictora login` を実行してもらってください。\
-失敗したときは、結果のエラー文（覆っていた要素・画面の大きさを含む）と、失敗時の画面（%LOCALAPPDATA%\\Edictora.Data\\diagnostics）で原因を調べてください。";
-
-/// initialize で返す案内（英語表示用。内容は [`INSTRUCTIONS`] と同じに保つ）
-const INSTRUCTIONS_EN: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, and support URL) \
+/// initialize で返す、サーバーの使い方の案内（クライアントが AI に渡す文言なので英語に統一する）
+const INSTRUCTIONS: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, and support URL) \
 with the source files in each extension repository and fixes them in bulk. The CWS API cannot read or write store listings, \
 so Edictora drives the Developer Dashboard with a dedicated Chrome profile running without a window (headless). \
 To view or fix store listings, first call edictora_list_items to check the items and languages, review the differences with edictora_diff, \
@@ -64,9 +54,9 @@ Ask the user before writing or submitting for review. If sign-in is required, as
 When something fails, investigate with the error message in the result (it includes the covering element and the viewport size) \
 and the failure screenshots (%LOCALAPPDATA%\\Edictora.Data\\diagnostics).";
 
-/// 表示言語に合わせた案内（サーバー起動時の言語で返す）
+/// 案内（英語のみ）
 fn instructions() -> &'static str {
-    trs!(INSTRUCTIONS, INSTRUCTIONS_EN)
+    INSTRUCTIONS
 }
 
 /// 対象の指定（アイテムとロケール）の共通スキーマ
@@ -77,10 +67,7 @@ fn target_properties() -> Map<String, Value> {
         json!({
             "type": "array",
             "items": { "type": "string" },
-            "description": trs!(
-                "対象アイテム ID（32 文字の小文字英字）。省略すると設定ファイルの全アイテム",
-                "Target item IDs (32 lowercase letters). Omit for all items in the config file"
-            )
+            "description": "Target item IDs (32 lowercase letters). Omit for all items in the config file"
         }),
     );
     m.insert(
@@ -88,10 +75,7 @@ fn target_properties() -> Map<String, Value> {
         json!({
             "type": "array",
             "items": { "type": "string" },
-            "description": trs!(
-                "対象ロケール（例: ja, en, pt-BR）。省略すると設定ファイルの全ロケール",
-                "Target locales (e.g. ja, en, pt-BR). Omit for all locales in the config file"
-            )
+            "description": "Target locales (e.g. ja, en, pt-BR). Omit for all locales in the config file"
         }),
     );
     m
@@ -136,10 +120,7 @@ pub fn tool_definitions() -> Vec<Value> {
         "confirm".into(),
         json!({
             "type": "boolean",
-            "description": trs!(
-                "true のときだけ書き換えて下書き保存する。false・省略なら差分を表示して止まる（CLI の --yes）。利用者の承認を得てから true にすること",
-                "Only when true, updates the fields and saves as draft. If false or omitted, shows the differences and stops (the CLI's --yes). Set it to true only after the user approves"
-            )
+            "description": "Only when true, updates the fields and saves as draft. If false or omitted, shows the differences and stops (the CLI's --yes). Set it to true only after the user approves"
         }),
     );
     let mut submit_props = Map::new();
@@ -147,99 +128,60 @@ pub fn tool_definitions() -> Vec<Value> {
         "item".into(),
         json!({
             "type": "string",
-            "description": trs!(
-                "審査に送信するアイテム ID（1 件だけ）",
-                "The item ID to submit for review (exactly one)"
-            )
+            "description": "The item ID to submit for review (exactly one)"
         }),
     );
     submit_props.insert(
         "confirm".into(),
         json!({
             "type": "boolean",
-            "description": trs!(
-                "審査に送信する確認。true が必須（利用者の承認を得てから true にすること）",
-                "Confirmation to submit for review. Must be true (set it to true only after the user approves)"
-            )
+            "description": "Confirmation to submit for review. Must be true (set it to true only after the user approves)"
         }),
     );
 
     vec![
         tool(
             "edictora_list_items",
-            trs!(
-                "Edictora: 対象アイテムの一覧",
-                "Edictora: list target items"
-            ),
-            trs!(
-                "Chrome Web Store (CWS) store listing / 掲載情報: Edictora の設定ファイルに登録された拡張機能（アイテム ID・名前）と、\
-                 ロケールごとの正本ファイル・対象欄を表示する。ブラウザは開かない。掲載情報を扱う前に最初に呼ぶ。",
-                "Chrome Web Store (CWS) store listing description and URLs: shows the extensions registered in the Edictora config file (item ID and name) \
-                 and, for each locale, the source files and target fields. Does not open a browser. Call this first before working with store listings."
-            ),
+            "Edictora: list target items",
+            "Chrome Web Store (CWS) store listing description and URLs: shows the extensions registered in the Edictora config file (item ID and name) \
+                 and, for each locale, the source files and target fields. Does not open a browser. Call this first before working with store listings.",
             Map::new(),
             &[],
             true,
         ),
         tool(
             "edictora_diff",
-            trs!(
-                "Edictora: 掲載情報の差分",
-                "Edictora: store listing differences"
-            ),
-            trs!(
-                "Chrome Web Store (CWS) store listing description / 掲載情報・ストアの説明文・URL: デベロッパー ダッシュボードの現在値を読み出し、\
-                 各リポジトリの正本ファイルとの差分を表示する（読み取りのみ。Chrome はウィンドウなしで動き、画面に出ない）。\
-                 差分があっても失敗ではない（終了コード 3）。",
-                "Chrome Web Store (CWS) store listing description and URLs: reads the current values from the Developer Dashboard \
+            "Edictora: store listing differences",
+            "Chrome Web Store (CWS) store listing description and URLs: reads the current values from the Developer Dashboard \
                  and shows the differences from the source files in each repository (read-only. Chrome runs without a window and does not appear on screen). \
-                 Differences are not a failure (exit code 3)."
-            ),
+                 Differences are not a failure (exit code 3).",
             target_properties(),
             &[],
             true,
         ),
         tool(
             "edictora_pull",
-            trs!(
-                "Edictora: 掲載情報の現在値",
-                "Edictora: current store listing"
-            ),
-            trs!(
-                "Chrome Web Store (CWS) store listing / 掲載情報: ダッシュボードにある説明文・URL の現在値をそのまま表示する（読み取りのみ。Chrome は画面に出ない）。",
-                "Chrome Web Store (CWS) store listing description and URLs: shows the current values on the dashboard as they are (read-only. Chrome does not appear on screen)."
-            ),
+            "Edictora: current store listing",
+            "Chrome Web Store (CWS) store listing description and URLs: shows the current values on the dashboard as they are (read-only. Chrome does not appear on screen).",
             target_properties(),
             &[],
             true,
         ),
         tool(
             "edictora_push",
-            trs!(
-                "Edictora: 掲載情報を正本に合わせて保存",
-                "Edictora: save store listing to match source files"
-            ),
-            trs!(
-                "Chrome Web Store (CWS) store listing description update / 掲載情報・説明文の更新: 正本ファイルと違う欄だけを書き換えて下書き保存し、\
-                 読み直して照合する。confirm: true が無ければ差分を表示して止まる。審査待ちなど書き込めない状態なら何もせずに止まる（終了コード 4）。\
-                 審査への送信はしない（edictora_submit を使う）。",
-                "Chrome Web Store (CWS) store listing description update: updates only the fields that differ from the source files, saves as draft, \
+            "Edictora: save store listing to match source files",
+            "Chrome Web Store (CWS) store listing description update: updates only the fields that differ from the source files, saves as draft, \
                  then reloads and verifies. Without confirm: true it shows the differences and stops. If the item cannot be written (for example, pending review) \
-                 it stops without changing anything (exit code 4). Does not submit for review (use edictora_submit)."
-            ),
+                 it stops without changing anything (exit code 4). Does not submit for review (use edictora_submit).",
             push_props,
             &[],
             false,
         ),
         tool(
             "edictora_submit",
-            trs!("Edictora: 審査に送信", "Edictora: submit for review"),
-            trs!(
-                "Chrome Web Store (CWS) submit for review / 審査に送信: 1 件のアイテムを審査に送信する（取り消しはできない）。\
-                 item と confirm: true が必須。「自動的に公開する」の設定は変えない。",
-                "Chrome Web Store (CWS) store listing submit for review: submits one item for review (cannot be undone) after its description and URLs are saved. \
-                 item and confirm: true are required. Does not change the publish-automatically setting."
-            ),
+            "Edictora: submit for review",
+            "Chrome Web Store (CWS) store listing submit for review: submits one item for review (cannot be undone) after its description and URLs are saved. \
+                 item and confirm: true are required. Does not change the publish-automatically setting.",
             submit_props,
             &["item", "confirm"],
             false,
@@ -261,13 +203,7 @@ pub fn build_cli_args(
         Value::Null => &empty,
         Value::Object(m) => m,
         _ => {
-            return Err(ArgumentError(
-                trs!(
-                    "arguments はオブジェクトで指定してください",
-                    "arguments must be an object"
-                )
-                .to_string(),
-            ));
+            return Err(ArgumentError("arguments must be an object".to_string()));
         }
     };
     let allowed: &[&str] = match name {
@@ -276,19 +212,15 @@ pub fn build_cli_args(
         "edictora_push" => &["items", "locales", "confirm"],
         "edictora_submit" => &["item", "confirm"],
         _ => {
-            return Err(ArgumentError(tr!(
-                "ツール {name} はありません",
-                "Unknown tool: {name}"
-            )));
+            return Err(ArgumentError(format!("Unknown tool: {name}")));
         }
     };
     // スキーマに無い引数は黙って無視しない（show_browser などを渡されても効かないことを、はっきり返す）
     if let Some(unknown) = args.keys().find(|k| !allowed.contains(&k.as_str())) {
-        return Err(ArgumentError(tr!(
-            "引数 {unknown} は使えません（使える引数: {}）。画面の表示・ログイン・プロファイルの指定はこのツールからはできません",
+        return Err(ArgumentError(format!(
             "Argument {unknown} is not allowed (allowed: {}). Showing the browser, signing in, and choosing a profile are not available from this tool",
             if allowed.is_empty() {
-                trs!("なし", "none").to_string()
+                "none".to_string()
             } else {
                 allowed.join(", ")
             }
@@ -301,31 +233,19 @@ pub fn build_cli_args(
             Some(Value::Array(a)) => a
                 .iter()
                 .map(|v| {
-                    v.as_str().map(str::to_string).ok_or_else(|| {
-                        ArgumentError(tr!(
-                            "{key} は文字列の配列で指定してください",
-                            "{key} must be an array of strings"
-                        ))
-                    })
+                    v.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| ArgumentError(format!("{key} must be an array of strings")))
                 })
                 .collect(),
-            Some(_) => Err(ArgumentError(tr!(
-                "{key} は文字列の配列で指定してください",
-                "{key} must be an array of strings"
-            ))),
+            Some(_) => Err(ArgumentError(format!("{key} must be an array of strings"))),
         }
     };
     let confirm = match args.get("confirm") {
         None | Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,
         Some(_) => {
-            return Err(ArgumentError(
-                trs!(
-                    "confirm は true か false で指定してください",
-                    "confirm must be true or false"
-                )
-                .to_string(),
-            ));
+            return Err(ArgumentError("confirm must be true or false".to_string()));
         }
     };
 
@@ -340,20 +260,13 @@ pub fn build_cli_args(
                 Some(Value::String(s)) if !s.trim().is_empty() => valid_item(s)?,
                 _ => {
                     return Err(ArgumentError(
-                        trs!(
-                            "item に審査へ送信するアイテム ID を 1 件指定してください",
-                            "Specify exactly one item ID to submit for review in item"
-                        )
-                        .to_string(),
+                        "Specify exactly one item ID to submit for review in item".to_string(),
                     ));
                 }
             };
             if !confirm {
                 return Err(ArgumentError(
-                    trs!(
-                        "審査に送信するには confirm: true が必要です（利用者の承認を得てから指定してください）",
-                        "Submitting for review requires confirm: true (set it only after the user approves)"
-                    )
+                    "Submitting for review requires confirm: true (set it only after the user approves)"
                     .to_string(),
                 ));
             }
@@ -387,8 +300,7 @@ fn valid_item(value: &str) -> std::result::Result<String, ArgumentError> {
     if config::is_valid_item_id(v) {
         Ok(v.to_string())
     } else {
-        Err(ArgumentError(tr!(
-            "アイテム ID は 32 文字の CWS アイテム ID（a〜p の小文字）で指定してください: {v}",
+        Err(ArgumentError(format!(
             "Item IDs must be 32-character CWS item IDs (lowercase a-p): {v}"
         )))
     }
@@ -400,8 +312,7 @@ fn valid_locale(value: &str) -> std::result::Result<String, ArgumentError> {
     if config::is_valid_locale_code(&v) {
         Ok(v)
     } else {
-        Err(ArgumentError(tr!(
-            "ロケールは ja・en・pt-BR のような形式で指定してください: {}",
+        Err(ArgumentError(format!(
             "Locales must look like ja, en, or pt-BR: {}",
             value.trim()
         )))
@@ -411,53 +322,35 @@ fn valid_locale(value: &str) -> std::result::Result<String, ArgumentError> {
 /// 終了コードの意味（結果の先頭に書く）
 fn exit_code_meaning(code: i32) -> &'static str {
     match code {
-        exit_codes::SUCCESS => trs!("成功", "success"),
-        exit_codes::DIFFERENCES => trs!(
-            "差分あり（失敗ではありません）",
-            "differences found (not a failure)"
-        ),
-        exit_codes::USAGE => trs!(
-            "引数・設定の誤り（Chrome は開いていません）",
-            "invalid arguments or config (Chrome was not opened)"
-        ),
-        exit_codes::BLOCKED => trs!(
-            "書き込みを中止（審査待ち・状態を判定できないなど。何も変更していません）",
+        exit_codes::SUCCESS => "success",
+        exit_codes::DIFFERENCES => "differences found (not a failure)",
+        exit_codes::USAGE => "invalid arguments or config (Chrome was not opened)",
+        exit_codes::BLOCKED => {
             "write aborted (pending review, state could not be determined, etc. Nothing was changed)"
-        ),
-        exit_codes::LOGIN_REQUIRED => trs!("ログインが必要", "sign-in required"),
-        exit_codes::CANCELLED => trs!("中断", "cancelled"),
-        _ => trs!("失敗", "failure"),
+        }
+        exit_codes::LOGIN_REQUIRED => "sign-in required",
+        exit_codes::CANCELLED => "cancelled",
+        _ => "failure",
     }
 }
 
 /// CLI の実行結果を MCP のツールの結果にする（純粋関数）
 pub fn tool_result_from_cli(code: i32, stdout: &str, stderr: &str) -> Value {
     let is_error = !matches!(code, exit_codes::SUCCESS | exit_codes::DIFFERENCES);
-    let mut text = tr!(
-        "終了コード: {code}（{}）\n",
-        "Exit code: {code} ({})\n",
-        exit_code_meaning(code)
-    );
+    let mut text = format!("Exit code: {code} ({})\n", exit_code_meaning(code));
     if code == exit_codes::LOGIN_REQUIRED {
-        text.push_str(trs!(
-            "ダッシュボードへのログインが切れています。このツールからはログインできません。\
-             利用者に、端末で `edictora login` を実行して Chrome でログインしてもらってから、もう一度呼んでください。\n",
-            "The dashboard sign-in has expired. This tool cannot sign in. \
-             Ask the user to run `edictora login` in a terminal and sign in with Chrome, then call this tool again.\n"
-        ));
+        text.push_str("The dashboard sign-in has expired. This tool cannot sign in. \
+             Ask the user to run `edictora login` in a terminal and sign in with Chrome, then call this tool again.\n");
     }
     let stdout = stdout.trim_end();
     let stderr = stderr.trim_end();
     if !stdout.is_empty() {
-        text.push_str(trs!("\n--- 結果 ---\n", "\n--- Result ---\n"));
+        text.push_str("\n--- Result ---\n");
         text.push_str(stdout);
         text.push('\n');
     }
     if !stderr.is_empty() {
-        text.push_str(trs!(
-            "\n--- 進捗・エラー ---\n",
-            "\n--- Progress and errors ---\n"
-        ));
+        text.push_str("\n--- Progress and errors ---\n");
         text.push_str(stderr);
         text.push('\n');
     }
@@ -480,23 +373,20 @@ fn list_items(paths: &AppPaths) -> Value {
     let config = match config::load(None, None, None, true, paths) {
         Ok(c) => c,
         Err(e) => {
-            return tool_error(&tr!(
-                "設定ファイルを読めませんでした: {}\n設定ファイルの場所: {}",
+            return tool_error(&format!(
                 "Could not read the config file: {}\nConfig file location: {}",
                 redact(&e.message()),
                 paths.default_config_path().display()
             ));
         }
     };
-    let mut text = tr!(
-        "設定ファイル: {}\nアイテム: {} 件\n",
+    let mut text = format!(
         "Config file: {}\nItems: {}\n",
         config.source_path.display(),
         config.items.len()
     );
     for item in &config.items {
-        text.push_str(&tr!(
-            "\n- {}（{}）\n  リポジトリ: {}\n",
+        text.push_str(&format!(
             "\n- {} ({})\n  Repository: {}\n",
             item.display_name,
             item.item_id,
@@ -505,11 +395,7 @@ fn list_items(paths: &AppPaths) -> Value {
         for locale in &item.locales {
             let mut fields = Vec::new();
             if let Some(d) = &locale.description {
-                fields.push(tr!(
-                    "説明文 ← {}",
-                    "Description <- {}",
-                    d.file_path.display()
-                ));
+                fields.push(format!("Description <- {}", d.file_path.display()));
             }
             for field in locale.urls.keys() {
                 fields.push(field.name().to_string());
@@ -518,9 +404,9 @@ fn list_items(paths: &AppPaths) -> Value {
                 "  - {}: {}\n",
                 locale.code,
                 if fields.is_empty() {
-                    trs!("（対象欄なし）", "(no target fields)").to_string()
+                    "(no target fields)".to_string()
                 } else {
-                    fields.join(trs!("、", ", "))
+                    fields.join(", ")
                 }
             ));
         }
@@ -616,10 +502,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
                     tool_result_from_cli(
                         exit_codes::CANCELLED,
                         "",
-                        trs!(
-                            "実行前に取り消されました。",
-                            "Cancelled before it started."
-                        ),
+                        "Cancelled before it started.",
                     )
                 } else {
                     // 想定外の panic で作業スレッドが止まると、以後の呼び出しに応答が返らず、
@@ -629,10 +512,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
                     }))
                     .unwrap_or_else(|_| {
                         log(&format!("MCP: {} の実行中に内部エラー", job.name), LogLevel::Error);
-                        tool_error(trs!(
-                            "内部エラーで実行できませんでした（詳細はログ: %LOCALAPPDATA%\\Edictora.Data\\logs）",
-                            "Could not run because of an internal error (see the logs: %LOCALAPPDATA%\\Edictora.Data\\logs)"
-                        ))
+                        tool_error("Could not run because of an internal error (see the logs: %LOCALAPPDATA%\\Edictora.Data\\logs)")
                     })
                 };
                 worker_running
@@ -655,11 +535,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
                 Err(_) => {
                     send(
                         &writer,
-                        &error_response(
-                            &Value::Null,
-                            -32700,
-                            trs!("JSON として読めません", "Cannot parse as JSON"),
-                        ),
+                        &error_response(&Value::Null, -32700, "Cannot parse as JSON"),
                     );
                     continue;
                 }
@@ -668,14 +544,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
                 // 2025-06-18 で一括送信（配列）は廃止。古いクライアントにも 1 件ずつ送ってもらう
                 send(
                     &writer,
-                    &error_response(
-                        &Value::Null,
-                        -32600,
-                        trs!(
-                            "1 件ずつのオブジェクトで送ってください",
-                            "Send one request object at a time"
-                        ),
-                    ),
+                    &error_response(&Value::Null, -32600, "Send one request object at a time"),
                 );
                 continue;
             };
@@ -721,10 +590,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
                                 "capabilities": { "tools": { "listChanged": false } },
                                 "serverInfo": {
                                     "name": "edictora",
-                                    "title": trs!(
-                                        "Edictora（Chrome Web Store 掲載情報）",
-                                        "Edictora (Chrome Web Store listings)"
-                                    ),
+                                    "title": "Edictora (Chrome Web Store listings)",
                                     "version": env!("CARGO_PKG_VERSION")
                                 },
                                 "instructions": instructions()
@@ -749,11 +615,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
                     {
                         send(
                             &writer,
-                            &error_response(
-                                &id,
-                                -32602,
-                                &tr!("ツール {name} はありません", "Unknown tool: {name}"),
-                            ),
+                            &error_response(&id, -32602, &format!("Unknown tool: {name}")),
                         );
                         continue;
                     }
@@ -777,11 +639,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
                 }
                 _ => send(
                     &writer,
-                    &error_response(
-                        &id,
-                        -32601,
-                        &tr!("メソッド {method} はありません", "Unknown method: {method}"),
-                    ),
+                    &error_response(&id, -32601, &format!("Unknown method: {method}")),
                 ),
             }
         }

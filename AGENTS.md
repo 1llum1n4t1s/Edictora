@@ -28,7 +28,7 @@ crates/edictora/
 │  ├─ services.rs     … pull・diff・push・submit の手順と中止判断
 │  ├─ cli/            … args.rs（引数解析）/ mod.rs（実行と終了コード）/ diff_formatter.rs
 │  ├─ mcp/mod.rs      … MCP サーバー（`edictora mcp`、標準入出力の JSON-RPC）。ツールの中身は CliApp::run を呼ぶだけ
-│  ├─ i18n.rs         … 利用者向け出力の表示言語（ja / en）。`tr!` / `trs!` で日英を呼び出し箇所に並べる
+│  ├─ i18n.rs         … 利用者向け出力の表示言語（9 言語）と辞書の引き方。`tr!` / `trs!` でキーを参照する。辞書は `locales/<タグ>.json`
 │  ├─ logging.rs      … %LOCALAPPDATA%\Edictora.Data\logs。publisherId を伏せる
 │  ├─ app_paths.rs / error.rs / cancel.rs（Ctrl+C）/ util.rs
 └─ tests/             … 結合テスト（ブラウザ不要。CDP は 127.0.0.1 の偽サーバー）とフィクスチャ
@@ -73,7 +73,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 ## コーディング規約
 
 - コメント・コミットメッセージは **日本語**。コメントは目的・設計意図・制約を多めに書く
-- 利用者に見せる出力（CLI の進捗・結果・エラー、差分、ヘルプ、MCP のツール説明）は日英併記の `tr!` / `trs!`（`i18n.rs`）で書く。表示言語は `EDICTORA_LANG`（ja / en）→ OS の表示言語、`init` 前は日本語（既存テストは日本語の文言を確かめる）。ログの定型文は日本語のまま。README は `README.md`（日本語）と `README.en.md`（英語）の両方を揃える
+- 人が読む文言（CLI の進捗・結果・エラー、差分、ヘルプ）は 9 言語（ja・en・zh-CN・zh-TW・ko・es・fr・de・pt-BR）で、`crates/edictora/src/locales/<タグ>.json` の辞書に持ち、`tr!("キー", 名前 = 値)` / `trs!("キー")`（`i18n.rs`）で参照する。プレースホルダーは `{name}` で全言語同じ集合、辞書に無いキーは英語。表示言語は `EDICTORA_LANGUAGE`（旧名 `EDICTORA_LANG` も読む。優先は前者）→ `LC_ALL` → `LC_MESSAGES` → `LANG` → OS の表示言語 → 英語。**人が読む文言を足したら、9 言語の辞書を同時に更新し、整合テスト（`tests/localization.rs`: キー集合・プレースホルダーの一致、参照キーが辞書にあること、未使用キーが無いこと）を通す**。`cargo test` は `.cargo/config.toml` で `EDICTORA_LANGUAGE=ja` に固定される（日本語の文言を確かめるテストのため）。AI が読む文言（MCP のツール名・説明・スキーマ・AI へ返す応答とエラー）は英語に統一し辞書を通さない（`edictora mcp` はプロセスの言語を英語に固定する）。利用者のデータ（掲載文）と識別子・コマンド・設定キー・OS や外部 API のエラー原文は訳さない。ログの定型文は日本語のまま。ダッシュボードの画面文言（`dashboard/text.rs`）と設定の `locales`（ストアの掲載言語）は UI 言語とは別。**README は英語の `README.md` を正本とし、`README.ja.md`・`README.zh-CN.md`・`README.zh-TW.md`・`README.ko.md`・`README.es.md`・`README.fr.md`・`README.de.md`・`README.pt-BR.md` を置く（先頭に 9 言語の切替行）。README を変えたら全言語版を同時に直す**。リリースのパッケージに同梱するのは英語の `README.md` だけ
 - 依存は最小限（`serde` / `serde_json` / `regex` / `tungstenite`（同期・TLS なし・`handshake` のみ）、テスト専用に `sha2`）。HTTP/TLS crate は使わない（DevTools の確認は localhost への素の HTTP/1.1）。**外部への HTTPS（自動更新の `edictora.kagayoi.com`）は、crate を足さず WinHTTP を FFI で直接使い、`net/winhttp.rs` に集める**（リダイレクト無効・操作ごとのタイムアウトと全体の期限・ワーカースレッドで実行し Ctrl+C で抜ける・応答の上限・平文は 127.0.0.1 のテストだけ）。Ctrl+C・レジストリ・ローカル時刻・環境変数展開・ハッシュ（CNG）・WM_SETTINGCHANGE は Windows API を直接宣言して使う
 - CDP は入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答待ちの間もイベントを配る
 - `AppPaths` は値として注入する。テストは `target/tmp` 配下を根にし、実プロファイル・実設定を解決しない。CLI のテストはブラウザを開く関数に「呼ばれたら panic」を渡す

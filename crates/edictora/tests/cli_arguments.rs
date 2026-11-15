@@ -215,13 +215,13 @@ fn run_未知のオプションはブラウザを開かず終了コード2() {
 }
 
 /// 本物の exe を、表示言語を環境変数で固定して起動する（保存先は作業フォルダーの下。Chrome は開かない）。
-/// ライブラリのテストは i18n::init を呼ばない（呼ぶと同じテストバイナリ全体の言語が変わる）ので、
-/// 英語の出力は exe を起動して確かめる
+/// ライブラリのテストの言語は `.cargo/config.toml` の `EDICTORA_LANGUAGE=ja` で日本語に固定されているので、
+/// ほかの言語の出力は exe を起動して確かめる
 fn run_exe(dir_name: &str, lang: &str, args: &[&str]) -> (i32, String, String) {
     let dir = work_dir(dir_name);
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_edictora"))
         .args(args)
-        .env(edictora::i18n::LANG_ENV, lang)
+        .env(edictora::i18n::LANGUAGE_ENV, lang)
         .env(edictora::app_paths::LOCAL_ROOT_ENV, dir.join("local"))
         .env(edictora::app_paths::ROAMING_ROOT_ENV, dir.join("roaming"))
         // Velopack の初回起動の印が親から漏れても、引数ありなので通常の CLI として動くが、念のため消す
@@ -237,7 +237,7 @@ fn run_exe(dir_name: &str, lang: &str, args: &[&str]) -> (i32, String, String) {
 }
 
 #[test]
-fn exe_ヘルプはedictora_langがenなら英語() {
+fn exe_ヘルプはedictora_languageがenなら英語() {
     let (code, output, _) = run_exe("cli-help-en", "en", &["--help"]);
     assert_eq!(code, 0);
     assert!(output.contains("Usage:"), "{output}");
@@ -247,15 +247,15 @@ fn exe_ヘルプはedictora_langがenなら英語() {
 }
 
 #[test]
-fn exe_ヘルプはedictora_langがjaなら日本語() {
+fn exe_ヘルプはedictora_languageがjaなら日本語() {
     // CI（英語の OS）でも日本語になることを確かめる
     let (code, output, _) = run_exe("cli-help-ja", "ja", &["--help"]);
     assert_eq!(code, 0);
-    assert_eq!(output.trim_end(), edictora::cli::args::HELP_TEXT);
+    assert_eq!(output.trim_end(), edictora::cli::args::help_text());
 }
 
 #[test]
-fn exe_引数の誤りはedictora_langがenなら英語で終了コード2() {
+fn exe_引数の誤りはedictora_languageがenなら英語で終了コード2() {
     let (code, _, err) = run_exe("cli-usage-en", "en", &["frobnicate"]);
     assert_eq!(code, 2);
     assert!(
@@ -269,4 +269,65 @@ fn exe_引数の誤りはedictora_langがenなら英語で終了コード2() {
         err.starts_with("エラー: 不明なコマンドです: frobnicate"),
         "{err}"
     );
+}
+
+/// 環境変数を明示して exe を起動する（言語の判定順の確認用。親から言語の変数が漏れないよう先に全部消す）
+fn run_exe_env(dir_name: &str, envs: &[(&str, &str)], args: &[&str]) -> (i32, String, String) {
+    let dir = work_dir(dir_name);
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_edictora"));
+    command
+        .args(args)
+        .env(edictora::app_paths::LOCAL_ROOT_ENV, dir.join("local"))
+        .env(edictora::app_paths::ROAMING_ROOT_ENV, dir.join("roaming"))
+        .env_remove("VELOPACK_FIRSTRUN")
+        .env_remove("VELOPACK_RESTART");
+    for name in [
+        edictora::i18n::LANGUAGE_ENV,
+        edictora::i18n::LEGACY_LANGUAGE_ENV,
+        "LC_ALL",
+        "LC_MESSAGES",
+        "LANG",
+    ] {
+        command.env_remove(name);
+    }
+    for (name, value) in envs {
+        command.env(name, value);
+    }
+    let output = command.output().expect("edictora を起動できません");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn exe_旧名のedictora_langも読み_新名が優先される() {
+    // 旧名だけ: 英語
+    let (_, _, err) = run_exe_env("cli-legacy-en", &[("EDICTORA_LANG", "en")], &["frobnicate"]);
+    assert!(err.starts_with("Error: Unknown command"), "{err}");
+    // 両方あれば EDICTORA_LANGUAGE（日本語）が優先される
+    let (_, _, err) = run_exe_env(
+        "cli-legacy-both",
+        &[("EDICTORA_LANG", "en"), ("EDICTORA_LANGUAGE", "ja")],
+        &["frobnicate"],
+    );
+    assert!(err.starts_with("エラー: "), "{err}");
+}
+
+#[test]
+fn exe_言語の判定はedictora_languageからlc_allからlangの順で未対応は英語() {
+    let unknown = |dir: &str, envs: &[(&str, &str)]| run_exe_env(dir, envs, &["frobnicate"]).2;
+    // EDICTORA_LANGUAGE は LC_ALL・LANG より優先
+    let err = unknown(
+        "cli-order-1",
+        &[("EDICTORA_LANGUAGE", "en"), ("LC_ALL", "ja_JP.UTF-8")],
+    );
+    assert!(err.starts_with("Error: "), "{err}");
+    // LC_ALL は LANG より優先、C は未設定扱いで次へ進む
+    let err = unknown("cli-order-2", &[("LC_ALL", "C"), ("LANG", "ja_JP.UTF-8")]);
+    assert!(err.starts_with("エラー: "), "{err}");
+    // 未対応の言語（イタリア語）は英語
+    let err = unknown("cli-order-3", &[("LANG", "it_IT.UTF-8")]);
+    assert!(err.starts_with("Error: "), "{err}");
 }

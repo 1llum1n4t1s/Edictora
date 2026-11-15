@@ -152,8 +152,8 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
             "update" => CliCommandKind::Update,
             _ => {
                 return Err(Error::Usage(tr!(
-                    "不明なコマンドです: {first}（--help で使い方を表示）",
-                    "Unknown command: {first} (run --help for usage)"
+                    "cli.unknown_command_run_help_for_usage",
+                    first = first
                 )));
             }
         };
@@ -166,10 +166,7 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
     while index < args.len() {
         let arg = args[index];
         if !arg.starts_with("--") {
-            return Err(Error::Usage(tr!(
-                "余分な引数です: {arg}",
-                "Unexpected argument: {arg}"
-            )));
+            return Err(Error::Usage(tr!("cli.unexpected_argument", arg = arg)));
         }
 
         // --name=value 形式にも対応する
@@ -180,8 +177,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
 
         if !kind.allowed_options().contains(&name.as_str()) {
             return Err(Error::Usage(tr!(
-                "{command_name} では {name} は使えません（--help で使い方を表示）",
-                "{name} cannot be used with {command_name} (run --help for usage)"
+                "cli.cannot_be_used_with_run_help_for",
+                name = name,
+                command_name = command_name
             )));
         }
 
@@ -193,24 +191,15 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                         index += 1;
                     }
                     _ => {
-                        return Err(Error::Usage(tr!(
-                            "{name} の値がありません",
-                            "{name} requires a value"
-                        )));
+                        return Err(Error::Usage(tr!("cli.requires_a_value", name = name)));
                     }
                 }
             }
             if value.as_deref().is_none_or(|v| v.trim().is_empty()) {
-                return Err(Error::Usage(tr!(
-                    "{name} の値が空です",
-                    "The value of {name} is empty"
-                )));
+                return Err(Error::Usage(tr!("cli.the_value_of_is_empty", name = name)));
             }
         } else if value.is_some() {
-            return Err(Error::Usage(tr!(
-                "{name} は値を取りません",
-                "{name} does not take a value"
-            )));
+            return Err(Error::Usage(tr!("cli.does_not_take_a_value", name = name)));
         }
 
         let v = value.unwrap_or_default();
@@ -222,8 +211,8 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                 let id = v.trim().to_lowercase();
                 if !is_valid_item_id(&id) {
                     return Err(Error::Usage(tr!(
-                        "--item は 32 文字の CWS アイテム ID で指定してください: {v}",
-                        "--item must be a 32-character CWS item ID: {v}"
+                        "cli.item_must_be_a_32_character_cws",
+                        value = v
                     )));
                 }
                 if !cmd.item_ids.contains(&id) {
@@ -234,8 +223,8 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                 let code = normalize_locale_code(&v);
                 if !is_valid_locale_code(&code) {
                     return Err(Error::Usage(tr!(
-                        "--locale のロケールコードが正しくありません: {v}",
-                        "Invalid locale code for --locale: {v}"
+                        "cli.invalid_locale_code_for_locale",
+                        value = v
                     )));
                 }
                 if !cmd.locale_codes.iter().any(|c| eq_ic(c, &code)) {
@@ -252,13 +241,7 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                     .ok()
                     .filter(|m| (1..=120).contains(m))
                     .ok_or_else(|| {
-                        Error::Usage(
-                            trs!(
-                                "--wait は 1〜120 の分数で指定してください",
-                                "--wait must be a number of minutes from 1 to 120"
-                            )
-                            .to_string(),
-                        )
+                        Error::Usage(trs!("cli.wait_must_be_a_number_of_minutes").to_string())
                     })?;
                 cmd.login_wait = Some(Duration::from_secs(minutes as u64 * 60));
             }
@@ -273,29 +256,17 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
         // 審査送信は取り返しがつかないので、複数アイテムの一括送信はさせない
         if cmd.item_ids.is_empty() {
             return Err(Error::Usage(
-                trs!(
-                    "submit には --item <アイテム ID> を 1 件指定してください",
-                    "submit requires exactly one --item <item ID>"
-                )
-                .to_string(),
+                trs!("cli.submit_requires_exactly_one_item_item_id").to_string(),
             ));
         }
         if cmd.item_ids.len() > 1 {
             return Err(Error::Usage(
-                trs!(
-                    "submit は 1 件ずつ実行してください（--item は 1 つだけ指定できます）",
-                    "Run submit for one item at a time (only one --item is allowed)"
-                )
-                .to_string(),
+                trs!("cli.run_submit_for_one_item_at_a").to_string(),
             ));
         }
         if !cmd.yes {
             return Err(Error::Usage(
-                trs!(
-                    "submit は審査に送信します。実行するには --yes を付けてください",
-                    "submit sends the item for review. Add --yes to run it"
-                )
-                .to_string(),
+                trs!("cli.submit_sends_the_item_for_review_add").to_string(),
             ));
         }
     }
@@ -306,107 +277,15 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
 fn set_once(slot: &mut Option<String>, value: String, name: &str) -> Result<()> {
     if slot.is_some() {
         return Err(Error::Usage(tr!(
-            "{name} が 2 回指定されています",
-            "{name} is specified more than once"
+            "cli.is_specified_more_than_once",
+            name = name
         )));
     }
     *slot = Some(value);
     Ok(())
 }
 
-/// 使い方（日本語。表示には言語を選ぶ [`help_text`] を使う）
-pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を正本ファイルと一括で比較・更新するツール
-
-使い方:
-  edictora login   [--config <file>] [--profile <dir>] [--chrome <exe>] [--wait <分>]
-  edictora pull    [--item <id>]... [--locale <code>]... [共通オプション]
-  edictora diff    [--item <id>]... [--locale <code>]... [共通オプション]   （既定のコマンド）
-  edictora push    [--item <id>]... [--locale <code>]... --yes [共通オプション]
-  edictora submit  --item <id> --yes [共通オプション]
-  edictora update
-  edictora mcp
-
-コマンド:
-  login    専用プロファイルの Chrome を開き、手動ログインしてダッシュボードに着くまで待ちます
-  pull     ダッシュボードの現在値を表示します（読み取りのみ）
-  diff     正本との差分を表示します（読み取りのみ）
-  push     差分のある欄だけを書き換えて下書き保存し、読み直して照合します。--yes が無ければ差分を表示して止まります
-  submit   1 件のアイテムを審査に送信します（「自動的に公開する」の設定は変更しません）
-  update   新しい版があればダウンロードし、終了後に差し替えます（Velopack の Setup・Portable 版のとき。
-           Setup で入れたときはログオン時にも自動で行います。Portable 版は自動更新を登録しません。
-           pull などの実行中は適用を後に回します。https://edictora.kagayoi.com に接続します）
-  mcp      AI エージェント向けの MCP サーバー（標準入出力）として動きます。list_items / diff / pull / push / submit を
-           ツールとして公開します（画面の表示・login・プロファイルの指定はツールから選べません）
-
-共通オプション:
-  --config <file>   設定ファイル（既定: %APPDATA%\Edictora\config.json）
-  --profile <dir>   Chrome プロファイル（既定: 設定ファイルの profileDir、なければ %LOCALAPPDATA%\Edictora.Data\chrome-profile）
-  --chrome <exe>    chrome.exe の場所（既定: 設定ファイルの chromePath、なければ自動検出）
-  --item <id>       対象アイテム（複数可。省略時は設定ファイルの全アイテム）
-  --locale <code>   対象ロケール（複数可。例: ja, en）
-  --show-browser    Chrome のウィンドウを表示して操作する（既定はウィンドウなしで動き、作業中に前面へ出てこない）。
-                    人が目で見るためのもの。AI エージェントや自動実行では付けないこと（利用者の画面にウィンドウが出る。
-                    失敗の原因はエラー文と、失敗時に保存する画面 %LOCALAPPDATA%\Edictora.Data\diagnostics で調べる）
-  --wait <分>       login で待つ時間（既定 10 分）。login は常にウィンドウを表示します
-  --help            この説明を表示
-  --version         バージョンを表示
-
-終了コード:
-  0  成功（差分なし。update では最新・更新の開始）
-  1  実行時エラー（画面操作の失敗・照合の不一致・更新の失敗・更新の適用中など）
-  2  引数・設定の誤り
-  3  差分あり（diff、または --yes なしの push）
-  4  書き込みを中止（審査待ち・状態を判定できない）
-  5  ログインが必要（login を実行してください）
-  130 中断（Ctrl+C）";
-
-/// 使い方（英語表示用。内容は [`HELP_TEXT`] と同じに保つ）
-pub const HELP_TEXT_EN: &str = r"Edictora - compare and update Chrome Web Store listings against source files in bulk
-
-Usage:
-  edictora login   [--config <file>] [--profile <dir>] [--chrome <exe>] [--wait <minutes>]
-  edictora pull    [--item <id>]... [--locale <code>]... [common options]
-  edictora diff    [--item <id>]... [--locale <code>]... [common options]   (default command)
-  edictora push    [--item <id>]... [--locale <code>]... --yes [common options]
-  edictora submit  --item <id> --yes [common options]
-  edictora update
-  edictora mcp
-
-Commands:
-  login    Opens Chrome with the dedicated profile and waits until you sign in manually and reach the dashboard
-  pull     Shows the current values on the dashboard (read-only)
-  diff     Shows the differences from the source files (read-only)
-  push     Updates only the fields that differ, saves as draft, then reloads and verifies. Without --yes it shows the differences and stops
-  submit   Submits one item for review (does not change the publish-automatically setting)
-  update   Downloads a newer version if available and replaces the app after it exits (Velopack Setup or Portable builds.
-           Setup builds also update automatically at sign-in. Portable builds do not register automatic updates.
-           Applying is postponed while pull and other commands are running. Connects to https://edictora.kagayoi.com)
-  mcp      Runs as an MCP server (stdio) for AI agents. Exposes list_items / diff / pull / push / submit
-           as tools (showing the browser, login, and choosing a profile are not available from the tools)
-
-Common options:
-  --config <file>   Config file (default: %APPDATA%\Edictora\config.json)
-  --profile <dir>   Chrome profile (default: profileDir in the config file, otherwise %LOCALAPPDATA%\Edictora.Data\chrome-profile)
-  --chrome <exe>    Location of chrome.exe (default: chromePath in the config file, otherwise detected automatically)
-  --item <id>       Target item (repeatable. Default: all items in the config file)
-  --locale <code>   Target locale (repeatable. e.g. ja, en)
-  --show-browser    Show the Chrome window while working (by default it runs without a window and never comes to the front).
-                    Meant for people watching. Do not use it from AI agents or automation (a window appears on the user's screen.
-                    Investigate failures with the error message and the screenshots saved at %LOCALAPPDATA%\Edictora.Data\diagnostics)
-  --wait <minutes>  How long login waits (default 10 minutes). login always shows the window
-  --help            Show this help
-  --version         Show the version
-
-Exit codes:
-  0  Success (no differences. For update: up to date, or the update has started)
-  1  Runtime error (page operation failed, verification mismatch, update failed, an update is being applied, etc.)
-  2  Invalid arguments or config
-  3  Differences found (diff, or push without --yes)
-  4  Write aborted (pending review, or the state could not be determined)
-  5  Sign-in required (run login)
-  130 Cancelled (Ctrl+C)";
-
 /// 表示言語に合わせた使い方
 pub fn help_text() -> &'static str {
-    trs!(HELP_TEXT, HELP_TEXT_EN)
+    trs!("cli.help")
 }

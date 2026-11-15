@@ -11,36 +11,28 @@ use crate::{tr, trs};
 pub fn format(row: &LocaleComparison) -> String {
     let mut out = String::new();
     if let Some(err) = &row.error {
-        out.push_str(&tr!(
-            "[{}] エラー: {err}\n",
-            "[{}] Error: {err}\n",
-            row.locale
-        ));
+        out.push_str(&tr!("cli.error", locale = row.locale, error = err));
         return out;
     }
 
     for field in &row.fields {
         let name = field.field.display_name();
         match field.status {
-            ComparisonStatus::Match => out.push_str(&tr!(
-                "[{}] {name}: 一致\n",
-                "[{}] {name}: match\n",
-                row.locale
-            )),
-            ComparisonStatus::NotFetched => out.push_str(&tr!(
-                "[{}] {name}: 未取得\n",
-                "[{}] {name}: not fetched\n",
-                row.locale
-            )),
+            ComparisonStatus::Match => {
+                out.push_str(&tr!("cli.match", locale = row.locale, name = name))
+            }
+            ComparisonStatus::NotFetched => {
+                out.push_str(&tr!("cli.not_fetched", locale = row.locale, name = name))
+            }
             ComparisonStatus::Different => {
                 let current = field.current.as_deref().unwrap_or("");
                 if field.field == ListingField::Description {
                     out.push_str(&tr!(
-                        "[{}] {name}: 差分あり（現在 {} 文字 / 正本 {} 文字）\n",
-                        "[{}] {name}: different (current {} characters / source {} characters)\n",
-                        row.locale,
-                        format_n0(utf16_len(current)),
-                        format_n0(utf16_len(&field.expected))
+                        "cli.different_current_characters_source_characters",
+                        locale = row.locale,
+                        current = format_n0(utf16_len(current)),
+                        expected = format_n0(utf16_len(&field.expected)),
+                        name = name
                     ));
                     let lines = text_diff::compute(current, &field.expected);
                     if lines.iter().all(|l| l.kind == DiffKind::Same) {
@@ -48,23 +40,17 @@ pub fn format(row: &LocaleComparison) -> String {
                         // 差分ありの行なので位置は必ずあるが、念のため無ければ位置を出さない。
                         match text_diff::first_difference_position(current, &field.expected) {
                             Some(at) => out.push_str(&tr!(
-                                "  （行単位では同じです。{at} 文字目に見えない違いがあります）\n",
-                                "  (Lines are identical. There is an invisible difference at character {at})\n"
+                                "cli.lines_are_identical_there_is_an_invisible",
+                                position = at
                             )),
-                            None => out.push_str(trs!(
-                                "  （行単位では同じです。見えない違いがあります）\n",
-                                "  (Lines are identical. There is an invisible difference)\n"
-                            )),
+                            None => out
+                                .push_str(trs!("cli.lines_are_identical_there_is_an_invisible_2")),
                         }
                     } else {
                         out.push_str(&text_diff::format(&lines, 2));
                     }
                 } else {
-                    out.push_str(&tr!(
-                        "[{}] {name}: 差分あり\n",
-                        "[{}] {name}: different\n",
-                        row.locale
-                    ));
+                    out.push_str(&tr!("cli.different", locale = row.locale, name = name));
                     out.push_str(&format!("- {current}\n+ {}\n", field.expected));
                 }
             }

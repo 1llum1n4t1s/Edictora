@@ -19,9 +19,12 @@ use edictora::update::lock::{LockFile, is_held_by_another};
 use edictora::update::source::SOURCE_URL_ENV;
 
 fn main() {
-    // 表示言語を最初に決める（フック・引数の誤りより前。失敗しない。EDICTORA_LANG → OS の表示言語）
-    edictora::i18n::init(edictora::i18n::detect());
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // 表示言語は初回の使用時に決まる（フック・引数の誤りより前でも失敗しない。判定順は i18n.rs）。
+    // `edictora mcp` は AI が読む出力なので、利用者の言語に関わらず英語へ固定する
+    if mcp::is_mcp_command(&args) {
+        edictora::i18n::init(edictora::i18n::Language::English);
+    }
     let paths = AppPaths::from_environment();
 
     // ── Velopack のフック（引数の解釈より前。処理後は必ず 0 で終える）──
@@ -48,10 +51,7 @@ fn main() {
         logging::shutdown();
         eprintln!(
             "{}",
-            edictora::trs!(
-                "Edictora をインストールしました。コマンドプロンプトで edictora --help を実行すると使い方を表示します。",
-                "Edictora is installed. Run edictora --help in a command prompt to see how to use it."
-            )
+            edictora::trs!("main.edictora_is_installed_run_edictora_help_in")
         );
         std::process::exit(0);
     }
@@ -82,10 +82,7 @@ fn main() {
                 );
                 eprintln!(
                     "{}",
-                    edictora::trs!(
-                        "エラー: edictora の更新を適用している最中のため、MCP サーバーを起動しません。少し待ってからクライアントでサーバーを起動し直してください。",
-                        "Error: an edictora update is being applied, so the MCP server will not start. Wait a moment, then restart the server from your client."
-                    )
+                    edictora::trs!("main.error_an_edictora_update_is_being_applied")
                 );
                 logging::shutdown();
                 std::process::exit(1);

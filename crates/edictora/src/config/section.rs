@@ -31,9 +31,9 @@ use crate::util::read_text_file;
 pub fn extract_source(source: &TextSource) -> Result<String> {
     let text = read_text_file(&source.file_path).map_err(|e| {
         Error::Config(tr!(
-            "正本ファイルを読めません: {}（{e}）",
-            "Cannot read the source file: {} ({e})",
-            source.file_path.display()
+            "config.cannot_read_the_source_file",
+            file_path = source.file_path.display(),
+            error = e
         ))
     })?;
     extract(
@@ -58,8 +58,8 @@ pub fn extract(
         (Some(s), Some(e)) => (s, e),
         _ => {
             return Err(Error::Config(tr!(
-                "sectionStart と sectionEnd は両方指定してください: {source_name}",
-                "Specify both sectionStart and sectionEnd: {source_name}"
+                "config.specify_both_sectionstart_and_sectionend",
+                source_name = source_name
             )));
         }
     };
@@ -73,8 +73,9 @@ pub fn extract(
         .position(|l| start_re.is_match(l))
         .ok_or_else(|| {
             Error::Config(tr!(
-                "開始見出し（{start}）が見つかりません: {source_name}",
-                "Start heading ({start}) not found: {source_name}"
+                "config.start_heading_not_found",
+                start = start,
+                source_name = source_name
             ))
         })?;
     let e = lines
@@ -85,8 +86,9 @@ pub fn extract(
         .map(|(i, _)| i)
         .ok_or_else(|| {
             Error::Config(tr!(
-                "終端見出し（{end}）が開始見出しより後に見つかりません: {source_name}",
-                "End heading ({end}) not found after the start heading: {source_name}"
+                "config.end_heading_not_found_after_the_start",
+                end = end,
+                source_name = source_name
             ))
         })?;
 
@@ -133,8 +135,10 @@ pub fn is_js_whitespace(c: char) -> bool {
 fn create_regex(pattern: &str, name: &str) -> Result<Regex> {
     Regex::new(pattern).map_err(|e| {
         Error::Config(tr!(
-            "{name} の正規表現が正しくありません: {pattern}（{e}）。先読み・後読み・後方参照は使えません",
-            "Invalid regular expression in {name}: {pattern} ({e}). Lookahead, lookbehind, and backreferences are not supported"
+            "config.invalid_regular_expression_in_lookahead_lookbehind_and",
+            name = name,
+            pattern = pattern,
+            error = e
         ))
     })
 }

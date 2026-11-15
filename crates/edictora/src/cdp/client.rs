@@ -71,22 +71,18 @@ pub struct CdpClient {
 
 /// 接続が閉じられたときのエラー（応答待ち・送信・イベント待ちで共通）
 fn connection_closed() -> Error {
-    Error::Cdp(crate::trs!("CDP 接続が閉じられました", "The CDP connection was closed").to_string())
+    Error::Cdp(crate::trs!("cdp.the_cdp_connection_was_closed").to_string())
 }
 
 impl CdpClient {
     /// ブラウザレベルの WebSocket エンドポイント（`ws://127.0.0.1:<port>/devtools/browser/<id>`）に接続する
     pub fn connect(ws_url: &str) -> Result<Arc<CdpClient>> {
-        let parsed = parse_absolute_url(ws_url).ok_or_else(|| {
-            Error::Cdp(crate::tr!(
-                "WebSocket の URL が正しくありません: {ws_url}",
-                "Invalid WebSocket URL: {ws_url}"
-            ))
-        })?;
+        let parsed = parse_absolute_url(ws_url)
+            .ok_or_else(|| Error::Cdp(crate::tr!("cdp.invalid_websocket_url", ws_url = ws_url)))?;
         if parsed.scheme != "ws" {
             return Err(Error::Cdp(crate::tr!(
-                "ws:// 以外の接続先には接続しません: {ws_url}",
-                "Refusing to connect to anything other than ws://: {ws_url}"
+                "cdp.refusing_to_connect_to_anything_other_than",
+                ws_url = ws_url
             )));
         }
         let authority = ws_url
@@ -97,32 +93,20 @@ impl CdpClient {
             .to_string();
         let addr = authority
             .to_socket_addrs()
-            .map_err(|e| {
-                Error::Cdp(crate::tr!(
-                    "接続先を解決できません: {e}",
-                    "Cannot resolve the destination: {e}"
-                ))
-            })?
+            .map_err(|e| Error::Cdp(crate::tr!("cdp.cannot_resolve_the_destination", error = e)))?
             .next()
             .ok_or_else(|| {
-                Error::Cdp(
-                    crate::trs!("接続先を解決できません", "Cannot resolve the destination")
-                        .to_string(),
-                )
+                Error::Cdp(crate::trs!("cdp.cannot_resolve_the_destination_2").to_string())
             })?;
-        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| {
-            Error::Cdp(crate::tr!(
-                "CDP に接続できません: {e}",
-                "Cannot connect to CDP: {e}"
-            ))
-        })?;
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))
+            .map_err(|e| Error::Cdp(crate::tr!("cdp.cannot_connect_to_cdp", error = e)))?;
         let _ = stream.set_nodelay(true);
         // ハンドシェイクは同期で済ませ、その後で非ブロッキングに切り替える
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
         let (ws, _response) = tungstenite::client(ws_url, stream).map_err(|e| {
             Error::Cdp(crate::tr!(
-                "CDP の WebSocket 接続に失敗しました: {e}",
-                "The CDP WebSocket connection failed: {e}"
+                "cdp.the_cdp_websocket_connection_failed",
+                error = e
             ))
         })?;
         ws.get_ref().set_read_timeout(None).map_err(Error::from)?;
@@ -200,8 +184,8 @@ impl CdpClient {
         let result = if sent {
             wait_channel(&rx, timeout, cancel).unwrap_or_else(|e| match e {
                 WaitError::Timeout => Err(Error::Timeout(crate::tr!(
-                    "CDP コマンド {method} の応答待ちがタイムアウトまたはキャンセルされました",
-                    "Waiting for the response to CDP command {method} timed out or was cancelled"
+                    "cdp.waiting_for_the_response_to_cdp_command",
+                    method = method
                 ))),
                 WaitError::Cancelled => Err(Error::Cancelled),
                 WaitError::Closed => Err(connection_closed()),

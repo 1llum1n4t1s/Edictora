@@ -114,10 +114,10 @@ impl CdpPage {
                 .and_then(|e| e.get("description"))
                 .and_then(Value::as_str)
                 .or_else(|| ex.get("text").and_then(Value::as_str))
-                .unwrap_or(crate::trs!("不明なエラー", "unknown error"));
+                .unwrap_or(crate::trs!("cdp.unknown_error"));
             return Err(Error::JavaScript(crate::tr!(
-                "ページ内スクリプトの実行に失敗しました: {text}",
-                "The in-page script failed: {text}"
+                "cdp.the_in_page_script_failed",
+                text = text
             )));
         }
         // 例外が無いときだけ、評価結果の値を所有権ごと取り出す（大きな戻り値を深いコピーしない）
@@ -204,8 +204,8 @@ impl CdpPage {
                 )?;
                 match res.get("errorText").and_then(Value::as_str) {
                     Some(err) if !err.is_empty() => Err(Error::Cdp(crate::tr!(
-                        "ページを開けませんでした: {err}",
-                        "Could not open the page: {err}"
+                        "cdp.could_not_open_the_page",
+                        error = err
                     ))),
                     _ => Ok(()),
                 }
@@ -253,11 +253,7 @@ impl CdpPage {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return Err(Error::Timeout(
-                    crate::trs!(
-                        "CDP イベント Page.loadEventFired の待機がタイムアウトまたはキャンセルされました",
-                        "Waiting for the CDP event Page.loadEventFired timed out or was cancelled"
-                    )
-                    .to_string(),
+                    crate::trs!("cdp.waiting_for_the_cdp_event_page_loadeventfired").to_string(),
                 ));
             }
             match sub.recv(left, Some(cancel))? {
@@ -269,11 +265,8 @@ impl CdpPage {
                         cancel,
                     )?;
                     return Err(Error::Cdp(
-                        crate::trs!(
-                            "未保存の変更があるため、ページの移動を中止しました",
-                            "Navigation was cancelled because there are unsaved changes"
-                        )
-                        .to_string(),
+                        crate::trs!("cdp.navigation_was_cancelled_because_there_are_unsaved")
+                            .to_string(),
                     ));
                 }
                 Some(_) => return Ok(()),
@@ -292,13 +285,7 @@ impl CdpPage {
         )?;
         let data = res.get("data").and_then(Value::as_str).unwrap_or("");
         base64_decode(data).ok_or_else(|| {
-            Error::Cdp(
-                crate::trs!(
-                    "画面のデータを復号できませんでした",
-                    "Could not decode the screenshot data"
-                )
-                .to_string(),
-            )
+            Error::Cdp(crate::trs!("cdp.could_not_decode_the_screenshot_data").to_string())
         })
     }
 }

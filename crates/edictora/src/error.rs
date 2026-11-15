@@ -15,12 +15,6 @@ use std::fmt;
 
 use crate::trs;
 
-/// ログインが必要なときの定型文（C# の `LoginRequiredException` と同じ文面）
-pub const LOGIN_REQUIRED_MESSAGE: &str = "ダッシュボードにログインしていません。先に login を実行し、開いた Chrome で Google にログインしてください。";
-
-/// ログインが必要なときの定型文（英語表示用。日本語は [`LOGIN_REQUIRED_MESSAGE`]）
-pub const LOGIN_REQUIRED_MESSAGE_EN: &str = "You are not signed in to the dashboard. Run login first, then sign in to Google in the Chrome window that opens.";
-
 /// Edictora のエラー
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
@@ -70,10 +64,8 @@ impl Error {
             | Error::JavaScript(m)
             | Error::Io(m)
             | Error::Update(m) => m.clone(),
-            Error::LoginRequired => {
-                trs!(LOGIN_REQUIRED_MESSAGE, LOGIN_REQUIRED_MESSAGE_EN).to_string()
-            }
-            Error::Cancelled => trs!("中断しました。", "Cancelled.").to_string(),
+            Error::LoginRequired => trs!("error.login_required").to_string(),
+            Error::Cancelled => trs!("error.cancelled").to_string(),
         }
     }
 

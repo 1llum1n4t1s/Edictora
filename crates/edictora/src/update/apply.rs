@@ -64,9 +64,9 @@ impl ApplyLauncher for ProcessApplyLauncher {
         }
         command.spawn().map(|_| ()).map_err(|e| {
             update_err(crate::tr!(
-                "Update.exe を起動できませんでした（{}）: {e}",
-                "Could not start Update.exe ({}): {e}",
-                update_exe.display()
+                "update.could_not_start_update_exe",
+                update_exe = update_exe.display(),
+                error = e
             ))
         })
     }

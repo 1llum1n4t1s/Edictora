@@ -39,8 +39,8 @@ pub fn dashboard_lang(lang: Option<&str>) -> Result<DashboardLang> {
         "en" => Ok(DashboardLang::En),
         _ if raw.is_empty() => Ok(DashboardLang::Ja),
         _ => Err(Error::Dashboard(tr!(
-            "ダッシュボードの表示言語「{raw}」には対応していません。日本語か英語で表示してください（Google アカウントの言語設定で変えられます）",
-            "The dashboard display language \"{raw}\" is not supported. Display it in Japanese or English (change it in your Google Account language settings)"
+            "dashboard.the_dashboard_display_language_is_not_supported",
+            raw = raw
         ))),
     }
 }
@@ -96,20 +96,14 @@ pub fn covered_error_message(what: &str, point: &Value) -> String {
     if let Some(cover) = point.get("cover").and_then(Value::as_str) {
         // ページ内スクリプトは出力の言語を知らないので、「中心が画面の外」は固定の印で返し、ここで文に直す
         let cover = if cover == OFFSCREEN_COVER {
-            trs!(
-                "（要素なし: 中心が画面の外）",
-                "(no element: the center is outside the viewport)"
-            )
+            trs!("dashboard.no_element_the_center_is_outside_the")
         } else {
             cover
         };
-        details.push(tr!(
-            "中心にあった要素: {cover}",
-            "element at the center: {cover}"
-        ));
+        details.push(tr!("dashboard.element_at_the_center", element = cover));
     }
     if let (Some(x), Some(y)) = (num(point.get("x")), num(point.get("y"))) {
-        details.push(tr!("中心: ({x}, {y})", "center: ({x}, {y})"));
+        details.push(tr!("dashboard.center", x = x, y = y));
     }
     if let Some(r) = point.get("rect")
         && let (Some(l), Some(t), Some(w), Some(h)) = (
@@ -120,25 +114,29 @@ pub fn covered_error_message(what: &str, point: &Value) -> String {
         )
     {
         details.push(tr!(
-            "要素の枠: 左 {l}・上 {t}・幅 {w}・高さ {h}",
-            "element box: left {l}, top {t}, width {w}, height {h}"
+            "dashboard.element_box_left_top_width_height",
+            left = l,
+            top = t,
+            width = w,
+            height = h
         ));
     }
     if let Some(v) = point.get("viewport")
         && let (Some(w), Some(h)) = (num(v.get("width")), num(v.get("height")))
     {
-        details.push(tr!("画面: {w}×{h}", "viewport: {w}×{h}"));
+        details.push(tr!("dashboard.viewport", width = w, height = h));
     }
     if details.is_empty() {
         tr!(
-            "{what}が他の要素に覆われていて押せません",
-            "Cannot click {what} because another element covers it"
+            "dashboard.cannot_click_because_another_element_covers_it",
+            what = what
         )
     } else {
-        let joined = details.join(trs!("、", "; "));
+        let joined = details.join(trs!("dashboard.list_separator"));
         tr!(
-            "{what}が他の要素に覆われていて押せません（{joined}）",
-            "Cannot click {what} because another element covers it ({joined})"
+            "dashboard.cannot_click_because_another_element_covers_it_2",
+            what = what,
+            joined = joined
         )
     }
 }
@@ -159,10 +157,7 @@ pub const ELEMENT_GONE_MARKER: &str = "EDICTORA_ELEMENT_GONE:";
 pub fn page_script_error_message(message: &str) -> String {
     message.replace(
         ELEMENT_GONE_MARKER,
-        trs!(
-            "要素が画面から消えました: ",
-            "the element disappeared from the page: "
-        ),
+        trs!("dashboard.the_element_disappeared_from_the_page"),
     )
 }
 
@@ -222,16 +217,12 @@ pub fn pick_language_combobox<'a>(
         comboboxes.iter().filter(|c| {
             has_label_line(Some(&c.label), label) || has_label_line(Some(&c.text), label)
         }),
-        || {
-            tr!(
-                "「{label}」のコンボボックスが見つかりません（ダッシュボードが日本語か英語で表示されているか確認してください）",
-                "The \"{label}\" combo box was not found (check that the dashboard is displayed in Japanese or English)"
-            )
-        },
+        || tr!("dashboard.the_combo_box_was_not_found_check", label = label),
         |n| {
             tr!(
-                "「{label}」のコンボボックスが {n} 個あり、特定できません",
-                "Found {n} \"{label}\" combo boxes; cannot identify which one to use"
+                "dashboard.found_combo_boxes_cannot_identify_which_one",
+                count = n,
+                label = label
             )
         },
     )
@@ -349,14 +340,16 @@ pub fn pick_locale_option<'a>(
         || {
             let have = locale_codes(t, options).join(", ");
             tr!(
-                "言語の選択肢にロケール {code} がありません（ある言語: {have}）",
-                "The language options have no locale {code} (available: {have})"
+                "dashboard.the_language_options_have_no_locale_available",
+                code = code,
+                have = have
             )
         },
         |n| {
             tr!(
-                "言語の選択肢にロケール {code} が {n} 個あり、特定できません",
-                "Found {n} language options for locale {code}; cannot identify which one to use"
+                "dashboard.found_language_options_for_locale_cannot_identify",
+                count = n,
+                code = code
             )
         },
     )
@@ -366,16 +359,12 @@ pub fn pick_locale_option<'a>(
 pub fn pick_button<'a>(buttons: &'a [ElementInfo], text: &str) -> Result<&'a ElementInfo> {
     exactly_one(
         buttons.iter().filter(|b| b.text.trim() == text),
-        || {
-            tr!(
-                "「{text}」ボタンが見つかりません",
-                "The \"{text}\" button was not found"
-            )
-        },
+        || tr!("dashboard.the_button_was_not_found", text = text),
         |n| {
             tr!(
-                "「{text}」ボタンが {n} 個あり、特定できません",
-                "Found {n} \"{text}\" buttons; cannot identify which one to use"
+                "dashboard.found_buttons_cannot_identify_which_one_to",
+                count = n,
+                text = text
             )
         },
     )
@@ -389,8 +378,7 @@ pub fn pick_field_by_label<'a>(
 ) -> Result<&'a ElementInfo> {
     let Some(label) = t.field_label(field) else {
         return Err(Error::Dashboard(tr!(
-            "説明欄はラベルではなく textarea で特定します",
-            "The description field is identified by its textarea, not by a label"
+            "dashboard.the_description_field_is_identified_by_its"
         )));
     };
     // 言語欄と同じ理由で、ラベルの 1 行が完全一致するものだけを選ぶ（親要素の説明文に別の欄名が含まれても当たらない）。
@@ -398,16 +386,12 @@ pub fn pick_field_by_label<'a>(
         inputs
             .iter()
             .filter(|i| has_label_line(Some(&i.label), label)),
-        || {
-            tr!(
-                "「{label}」の入力欄が見つかりません",
-                "The \"{label}\" input field was not found"
-            )
-        },
+        || tr!("dashboard.the_input_field_was_not_found", label = label),
         |n| {
             tr!(
-                "「{label}」の入力欄が {n} 個あり、特定できません",
-                "Found {n} \"{label}\" input fields; cannot identify which one to use"
+                "dashboard.found_input_fields_cannot_identify_which_one",
+                count = n,
+                label = label
             )
         },
     )
@@ -418,12 +402,11 @@ pub fn pick_description(textareas: &[ElementInfo]) -> Result<&ElementInfo> {
     match textareas.len() {
         1 => Ok(&textareas[0]),
         0 => Err(Error::Dashboard(tr!(
-            "説明欄（textarea）が見つかりません",
-            "The description field (textarea) was not found"
+            "dashboard.the_description_field_textarea_was_not_found"
         ))),
         n => Err(Error::Dashboard(tr!(
-            "textarea が {n} 個あり、説明欄を特定できません",
-            "Found {n} textareas; cannot identify the description field"
+            "dashboard.found_textareas_cannot_identify_the_description_field",
+            count = n
         ))),
     }
 }
@@ -439,14 +422,16 @@ pub fn ensure_writable(element: &ElementInfo, field: ListingField) -> Result<()>
     let (tag, ty) = (&element.tag, &element.r#type);
     if !ok {
         return Err(Error::Dashboard(tr!(
-            "{name}の欄がテキスト入力欄ではありません（{tag} {ty}）。画面構成が想定と違うため止めます",
-            "The {name} field is not a text input ({tag} {ty}). Stopping because the page layout is not as expected"
+            "dashboard.the_field_is_not_a_text_input",
+            name = name,
+            tag = tag,
+            input_type = ty
         )));
     }
     if element.disabled || element.read_only {
         return Err(Error::WriteBlocked(tr!(
-            "{name}の欄が編集できない状態です",
-            "The {name} field cannot be edited"
+            "dashboard.the_field_cannot_be_edited",
+            name = name
         )));
     }
     Ok(())

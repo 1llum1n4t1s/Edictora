@@ -76,11 +76,7 @@ pub fn refuse_update(
     _cancel: &CancelToken,
 ) -> Result<UpdateOutcome> {
     Err(Error::Update(
-        trs!(
-            "この実行環境では更新処理を使えません",
-            "Updates are not available in this environment"
-        )
-        .to_string(),
+        trs!("cli.updates_are_not_available_in_this_environment").to_string(),
     ))
 }
 
@@ -212,10 +208,7 @@ impl<'a> CliApp<'a> {
         let _running = match LockFile::try_acquire_shared(&self.paths.running_lock_path()) {
             Ok(lock) => Some(lock),
             Err(e) if is_held_by_another(&e) => {
-                self.errln(trs!(
-                    "エラー: edictora の更新を適用している最中です。少し待ってから実行し直してください。",
-                    "Error: an edictora update is being applied. Wait a moment and run the command again.",
-                ));
+                self.errln(trs!("cli.error_an_edictora_update_is_being_applied"));
                 return exit_codes::FAILURE;
             }
             Err(e) => {
@@ -251,7 +244,7 @@ impl<'a> CliApp<'a> {
                 exit_codes::LOGIN_REQUIRED
             }
             Err(Error::WriteBlocked(m)) => {
-                self.errln(&tr!("中止: {}", "Aborted: {}", redact(&m)));
+                self.errln(&tr!("cli.aborted", detail = redact(&m)));
                 exit_codes::BLOCKED
             }
             Err(e) => {
@@ -325,9 +318,8 @@ impl<'a> CliApp<'a> {
         cancel: &CancelToken,
     ) -> Result<i32> {
         self.outln(&tr!(
-            "Chrome を開きます（プロファイル: {}）",
-            "Opening Chrome (profile: {})",
-            config.profile_directory.display()
+            "cli.opening_chrome_profile",
+            profile_directory = config.profile_directory.display()
         ));
         // ログインは利用者が画面で操作するので、常にウィンドウを表示する
         let options = self.browser_options(config, false).visible();
@@ -340,10 +332,7 @@ impl<'a> CliApp<'a> {
         );
         browser.close();
         result?;
-        self.outln(trs!(
-            "ログイン状態をプロファイルに保存しました。以後は pull / diff / push が使えます。",
-            "Saved the sign-in to the profile. You can now use pull / diff / push.",
-        ));
+        self.outln(trs!("cli.saved_the_sign_in_to_the_profile"));
         Ok(exit_codes::SUCCESS)
     }
 
@@ -389,9 +378,9 @@ impl<'a> CliApp<'a> {
                     Some(c) if c.error.is_none() => c,
                     other => {
                         failed = true;
-                        let msg = other.and_then(|c| c.error.clone()).unwrap_or_else(|| {
-                            trs!("読み出せませんでした", "Could not read the values").to_string()
-                        });
+                        let msg = other
+                            .and_then(|c| c.error.clone())
+                            .unwrap_or_else(|| trs!("cli.could_not_read_the_values").to_string());
                         self.outln(&format!("-- [{}] {}", locale.code, error_line(&msg)));
                         continue;
                     }
@@ -400,11 +389,10 @@ impl<'a> CliApp<'a> {
                     let value = current.values.get(&field).cloned().unwrap_or_default();
                     if field == ListingField::Description {
                         self.outln(&tr!(
-                            "-- [{}] {}（{} 文字）",
-                            "-- [{}] {} ({} characters)",
-                            locale.code,
-                            field.display_name(),
-                            format_n0(utf16_len(&value))
+                            "cli.characters",
+                            locale = locale.code,
+                            display_name = field.display_name(),
+                            length = format_n0(utf16_len(&value))
                         ));
                     } else {
                         self.outln(&format!("-- [{}] {}", locale.code, field.display_name()));
@@ -454,10 +442,7 @@ impl<'a> CliApp<'a> {
         }
 
         if push_hint && any_diff {
-            self.outln(trs!(
-                "差分のある欄を書き換えるには、--yes を付けて push を再実行してください（下書き保存まで行い、審査には送信しません）。",
-                "To update the fields that differ, run push again with --yes (it saves as draft and does not submit for review).",
-            ));
+            self.outln(trs!("cli.to_update_the_fields_that_differ_run"));
         }
         Ok(if any_error {
             exit_codes::FAILURE
@@ -490,25 +475,20 @@ impl<'a> CliApp<'a> {
                         .map(|f| f.display_name())
                         .collect();
                     tr!(
-                        "  [{}] 下書き保存・照合済み: {}",
-                        "  [{}] Saved as draft and verified: {}",
-                        locale.locale,
-                        names.join(trs!("・", ", "))
+                        "cli.saved_as_draft_and_verified",
+                        locale = locale.locale,
+                        text = names.join(trs!("cli.name_separator"))
                     )
                 } else {
                     tr!(
-                        "  [{}] 変更なし（正本と一致）",
-                        "  [{}] No changes (matches the source files)",
-                        locale.locale
+                        "cli.no_changes_matches_the_source_files",
+                        locale = locale.locale
                     )
                 };
                 self.outln(&line);
             }
         }
-        self.outln(trs!(
-            "完了しました。審査への送信は行っていません（必要なら submit を 1 件ずつ実行してください）。",
-            "Done. Nothing was submitted for review (run submit one item at a time if needed).",
-        ));
+        self.outln(trs!("cli.done_nothing_was_submitted_for_review_run"));
         Ok(exit_codes::SUCCESS)
     }
 
@@ -524,12 +504,11 @@ impl<'a> CliApp<'a> {
 
         let mut confirm = |dialog: &crate::dashboard::SubmitDialogInfo| -> Result<bool> {
             // --yes で同意済み。確認ダイアログの内容は記録として表示する
-            self.outln(trs!("確認ダイアログ:", "Confirmation dialog:"));
+            self.outln(trs!("cli.confirmation_dialog"));
             self.outln(&indent(&dialog.text));
             self.outln(&tr!(
-                "  自動公開: {}（変更しません）",
-                "  Publish automatically: {} (unchanged)",
-                auto_publish_text(dialog.auto_publish)
+                "cli.publish_automatically_unchanged",
+                auto_publish = auto_publish_text(dialog.auto_publish)
             ));
             Ok(true)
         };
@@ -537,25 +516,16 @@ impl<'a> CliApp<'a> {
 
         self.outln(&format!("== {} ({})", target.display_name, target.item_id));
         self.outln(&tr!(
-            "  結果: {}",
-            "  Result: {}",
-            result
-                .message
-                .as_deref()
-                .unwrap_or(trs!("（メッセージなし）", "(no message)"))
+            "cli.result",
+            message = result.message.as_deref().unwrap_or(trs!("cli.no_message"))
         ));
         self.outln(&tr!(
-            "  ステータス: {}",
-            "  Status: {}",
-            result
-                .status_text
-                .as_deref()
-                .unwrap_or(trs!("不明", "unknown"))
+            "cli.status",
+            status = result.status_text.as_deref().unwrap_or(trs!("cli.unknown"))
         ));
         self.outln(&tr!(
-            "  自動公開: {}",
-            "  Publish automatically: {}",
-            auto_publish_text(result.dialog.auto_publish)
+            "cli.publish_automatically",
+            auto_publish = auto_publish_text(result.dialog.auto_publish)
         ));
         Ok(exit_codes::SUCCESS)
     }
@@ -566,9 +536,8 @@ impl<'a> CliApp<'a> {
 pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<Vec<ExpectedItem>> {
     if config.items.is_empty() {
         return Err(Error::Config(tr!(
-            "設定ファイルに items がありません: {}",
-            "The config file has no items: {}",
-            config.source_path.display()
+            "cli.the_config_file_has_no_items",
+            source_path = config.source_path.display()
         )));
     }
 
@@ -580,10 +549,7 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
             .iter()
             .map(|id| {
                 config.find_item(id).ok_or_else(|| {
-                    Error::Config(tr!(
-                        "設定ファイルにアイテム {id} がありません",
-                        "Item {id} is not in the config file"
-                    ))
+                    Error::Config(tr!("cli.item_is_not_in_the_config_file", id = id))
                 })
             })
             .collect::<Result<_>>()?
@@ -615,9 +581,8 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
 
     if result.is_empty() {
         return Err(Error::Config(tr!(
-            "指定したロケール（{}）を持つアイテムが設定にありません",
-            "No item in the config file has the specified locale(s) ({})",
-            command.locale_codes.join(", ")
+            "cli.no_item_in_the_config_file_has",
+            locale_codes = command.locale_codes.join(", ")
         )));
     }
     Ok(result)
@@ -625,12 +590,12 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
 
 fn item_header(item: &ExpectedItem, status: Option<&str>, locales: &[String]) -> String {
     let status = status
-        .map(|s| tr!("  ステータス: {s}", "  Status: {s}"))
+        .map(|s| tr!("cli.status_2", status = s))
         .unwrap_or_default();
     let locales = if locales.is_empty() {
         String::new()
     } else {
-        tr!("  言語: {}", "  Languages: {}", locales.join(", "))
+        tr!("cli.languages", locales = locales.join(", "))
     };
     format!(
         "== {} ({}){status}{locales}",
@@ -641,15 +606,15 @@ fn item_header(item: &ExpectedItem, status: Option<&str>, locales: &[String]) ->
 /// 自動公開の表示
 pub fn auto_publish_text(value: Option<bool>) -> &'static str {
     match value {
-        Some(true) => trs!("する", "on"),
-        Some(false) => trs!("しない", "off"),
-        None => trs!("不明", "unknown"),
+        Some(true) => trs!("cli.on"),
+        Some(false) => trs!("cli.off"),
+        None => trs!("cli.unknown"),
     }
 }
 
 /// 「エラー: <本文>」の 1 行（接頭辞を表示言語に合わせる。本文は作った時点の言語のまま）
 fn error_line(message: &str) -> String {
-    tr!("エラー: {message}", "Error: {message}")
+    tr!("cli.error_2", message = message)
 }
 
 fn indent(text: &str) -> String {

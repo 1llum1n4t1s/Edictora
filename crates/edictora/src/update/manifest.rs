@@ -43,37 +43,23 @@ pub fn parse_manifest(xml: &str) -> Result<Manifest, String> {
     }
 
     if id.is_empty() {
-        return Err(
-            crate::trs!("マニフェストに id がありません", "The manifest has no id").to_string(),
-        );
+        return Err(crate::trs!("update.the_manifest_has_no_id").to_string());
     }
     if version_text.is_empty() {
-        return Err(crate::trs!(
-            "マニフェストに version がありません",
-            "The manifest has no version"
-        )
-        .to_string());
+        return Err(crate::trs!("update.the_manifest_has_no_version").to_string());
     }
     let version = Version::parse(&version_text).ok_or_else(|| {
         crate::tr!(
-            "マニフェストの version が正しくありません: {version_text}",
-            "Invalid version in the manifest: {version_text}"
+            "update.invalid_version_in_the_manifest",
+            version_text = version_text
         )
     })?;
     if version.major == 0 && version.minor == 0 && version.patch == 0 && !version.is_prerelease() {
         // SDK は 0.0.0 を「version が無い」と同じに扱う
-        return Err(crate::trs!(
-            "マニフェストに version がありません",
-            "The manifest has no version"
-        )
-        .to_string());
+        return Err(crate::trs!("update.the_manifest_has_no_version").to_string());
     }
     if main_exe.is_empty() {
-        return Err(crate::trs!(
-            "マニフェストに mainExe がありません",
-            "The manifest has no mainExe"
-        )
-        .to_string());
+        return Err(crate::trs!("update.the_manifest_has_no_mainexe").to_string());
     }
     if channel.is_empty() {
         channel = DEFAULT_CHANNEL.to_string();
@@ -89,13 +75,7 @@ pub fn parse_manifest(xml: &str) -> Result<Manifest, String> {
 /// 要素のローカル名と、その直下の文字列（空白だけのものは除く）を出てきた順に返す。
 /// 名前空間の接頭辞は外す。コメント・処理命令・DOCTYPE は読み飛ばし、CDATA は文字列として扱う
 fn element_texts(xml: &str) -> Result<Vec<(String, String)>, String> {
-    let malformed = || {
-        crate::trs!(
-            "マニフェストの XML が正しくありません",
-            "The manifest XML is malformed"
-        )
-        .to_string()
-    };
+    let malformed = || crate::trs!("update.the_manifest_xml_is_malformed").to_string();
     let mut out = Vec::new();
     let mut stack: Vec<String> = Vec::new();
     let mut rest = xml;

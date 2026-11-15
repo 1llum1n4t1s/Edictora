@@ -112,8 +112,8 @@ pub fn send(
         })
         .map_err(|e| {
             HttpError::Failed(crate::tr!(
-                "通信用のスレッドを作れませんでした: {e}",
-                "Could not create the network thread: {e}"
+                "net.could_not_create_the_network_thread",
+                error = e
             ))
         })?;
 
@@ -133,11 +133,7 @@ pub fn send(
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(HttpError::Failed(
-                    crate::trs!(
-                        "通信用のスレッドが異常終了しました",
-                        "The network thread terminated abnormally"
-                    )
-                    .to_string(),
+                    crate::trs!("net.the_network_thread_terminated_abnormally").to_string(),
                 ));
             }
         }
@@ -148,25 +144,13 @@ pub fn send(
 fn validate(request: &HttpRequest) -> Result<(), String> {
     let t = &request.target;
     if !t.secure && t.host != "127.0.0.1" {
-        return Err(crate::trs!(
-            "平文の HTTP は 127.0.0.1 にしか送れません",
-            "Plain HTTP can only be sent to 127.0.0.1"
-        )
-        .to_string());
+        return Err(crate::trs!("net.plain_http_can_only_be_sent_to").to_string());
     }
     if t.host.is_empty() || !t.path.starts_with('/') {
-        return Err(crate::trs!(
-            "接続先の指定が正しくありません",
-            "The destination is not valid"
-        )
-        .to_string());
+        return Err(crate::trs!("net.the_destination_is_not_valid").to_string());
     }
     if t.path.chars().any(|c| c.is_control() || c == ' ') {
-        return Err(crate::trs!(
-            "接続先のパスに空白や制御文字が含まれています",
-            "The destination path contains spaces or control characters"
-        )
-        .to_string());
+        return Err(crate::trs!("net.the_destination_path_contains_spaces_or_control").to_string());
     }
     // 値は出さない（トークンを含みうるため）
     if request
@@ -174,14 +158,10 @@ fn validate(request: &HttpRequest) -> Result<(), String> {
         .iter()
         .any(|h| h.contains('\r') || h.contains('\n') || h.contains('\0'))
     {
-        return Err(crate::trs!(
-            "ヘッダーに改行などの制御文字が含まれています",
-            "A header contains line breaks or other control characters"
-        )
-        .to_string());
+        return Err(crate::trs!("net.a_header_contains_line_breaks_or_other").to_string());
     }
     if request.timeout.is_zero() || request.total_timeout.is_zero() {
-        return Err(crate::trs!("タイムアウトが 0 です", "The timeout is 0").to_string());
+        return Err(crate::trs!("net.the_timeout_is_0").to_string());
     }
     Ok(())
 }
@@ -303,30 +283,21 @@ mod sys {
         // SAFETY: 引数なしの読み取り
         let code = unsafe { GetLastError() };
         let hint = match code {
-            12002 => crate::trs!("タイムアウトしました", "the request timed out"),
-            12007 => crate::trs!(
-                "サーバー名を解決できません",
-                "the server name could not be resolved"
-            ),
-            12017 => crate::trs!("通信が取り消されました", "the request was cancelled"),
-            12029 => crate::trs!(
-                "サーバーに接続できません",
-                "the server could not be reached"
-            ),
-            12030 => crate::trs!("接続が切れました", "the connection was lost"),
-            12152 => crate::trs!(
-                "サーバーの応答が正しくありません",
-                "the server response was invalid"
-            ),
-            12175 => crate::trs!(
-                "TLS（証明書）の検証に失敗しました",
-                "TLS (certificate) validation failed"
-            ),
-            _ => crate::trs!("通信に失敗しました", "the request failed"),
+            12002 => crate::trs!("net.the_request_timed_out"),
+            12007 => crate::trs!("net.the_server_name_could_not_be_resolved"),
+            12017 => crate::trs!("net.the_request_was_cancelled"),
+            12029 => crate::trs!("net.the_server_could_not_be_reached"),
+            12030 => crate::trs!("net.the_connection_was_lost"),
+            12152 => crate::trs!("net.the_server_response_was_invalid"),
+            12175 => crate::trs!("net.tls_certificate_validation_failed"),
+            _ => crate::trs!("net.the_request_failed"),
         };
         crate::tr!(
-            "{service} への通信で{hint}（{api}、WinHTTP エラー {code}）",
-            "Communication with {service} failed: {hint} ({api}, WinHTTP error {code})"
+            "net.communication_with_failed_winhttp_error",
+            service = service,
+            hint = hint,
+            api = api,
+            code = code
         )
     }
 
@@ -473,16 +444,16 @@ mod sys {
                     }
                     let mut file = std::fs::File::create(path).map_err(|e| {
                         crate::tr!(
-                            "ダウンロード先のファイルを作れませんでした（{}）: {e}",
-                            "Could not create the download file ({}): {e}",
-                            path.display()
+                            "net.could_not_create_the_download_file",
+                            path = path.display(),
+                            error = e
                         )
                     })?;
                     let written = read_to_file(req.0, service, &mut file, *max_bytes, stop)?;
                     file.flush().and_then(|_| file.sync_all()).map_err(|e| {
                         crate::tr!(
-                            "ダウンロードしたファイルを書き終えられませんでした: {e}",
-                            "Could not finish writing the downloaded file: {e}"
+                            "net.could_not_finish_writing_the_downloaded_file",
+                            error = e
                         )
                     })?;
                     Ok(HttpResponse {
@@ -509,8 +480,8 @@ mod sys {
         loop {
             if stop() {
                 return Err(crate::tr!(
-                    "{service} からの受信を中止しました",
-                    "Receiving from {service} was aborted"
+                    "net.receiving_from_was_aborted",
+                    service = service
                 ));
             }
             let mut available: u32 = 0;
@@ -525,8 +496,9 @@ mod sys {
             }
             if body.len() + available as usize > max_bytes {
                 return Err(crate::tr!(
-                    "{service} の応答が大きすぎます（{max_bytes} バイトを超えました）",
-                    "The response from {service} is too large (exceeded {max_bytes} bytes)"
+                    "net.the_response_from_is_too_large_exceeded",
+                    service = service,
+                    max_bytes = max_bytes
                 ));
             }
             let start = body.len();
@@ -564,8 +536,8 @@ mod sys {
         loop {
             if stop() {
                 return Err(crate::tr!(
-                    "{service} からのダウンロードを中止しました",
-                    "Downloading from {service} was aborted"
+                    "net.downloading_from_was_aborted",
+                    service = service
                 ));
             }
             let mut available: u32 = 0;
@@ -581,8 +553,9 @@ mod sys {
             let to_read = available.min(FILE_CHUNK);
             if written + u64::from(to_read) > max_bytes {
                 return Err(crate::tr!(
-                    "{service} から受け取るデータが宣言より大きくなりました（{max_bytes} バイトを超えました）",
-                    "The data from {service} is larger than declared (exceeded {max_bytes} bytes)"
+                    "net.the_data_from_is_larger_than_declared",
+                    service = service,
+                    max_bytes = max_bytes
                 ));
             }
             let mut read: u32 = 0;
@@ -595,12 +568,8 @@ mod sys {
             if read == 0 {
                 break;
             }
-            file.write_all(&buffer[..read as usize]).map_err(|e| {
-                crate::tr!(
-                    "ダウンロードしたデータを書き込めませんでした: {e}",
-                    "Could not write the downloaded data: {e}"
-                )
-            })?;
+            file.write_all(&buffer[..read as usize])
+                .map_err(|e| crate::tr!("net.could_not_write_the_downloaded_data", error = e))?;
             written += u64::from(read);
         }
         Ok(written)
@@ -618,9 +587,8 @@ mod sys {
         _stop: &dyn Fn() -> bool,
     ) -> Result<HttpResponse, String> {
         Err(crate::tr!(
-            "{} への通信は Windows でだけ使えます",
-            "Communication with {} is available only on Windows",
-            request.service
+            "net.communication_with_is_available_only_on_windows",
+            service = request.service
         ))
     }
 }

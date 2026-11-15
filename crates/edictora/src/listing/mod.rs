@@ -40,10 +40,10 @@ impl ListingField {
     /// ダッシュボードの要素を探す文言ではない（そちらは `dashboard::text`）
     pub fn display_name(self) -> &'static str {
         match self {
-            ListingField::Description => trs!("説明", "Description"),
-            ListingField::OfficialUrl => trs!("公式 URL", "Official URL"),
-            ListingField::HomepageUrl => trs!("ホームページ URL", "Homepage URL"),
-            ListingField::SupportUrl => trs!("サポート URL", "Support URL"),
+            ListingField::Description => trs!("listing.description"),
+            ListingField::OfficialUrl => trs!("listing.official_url"),
+            ListingField::HomepageUrl => trs!("listing.homepage_url"),
+            ListingField::SupportUrl => trs!("listing.support_url"),
         }
     }
 
@@ -127,11 +127,10 @@ impl ExpectedItem {
                 .find(|l| eq_ic(&l.code, &normalized))
                 .ok_or_else(|| {
                     Error::Config(tr!(
-                        "{} ({}) の設定にロケール {} がありません",
-                        "{} ({}) has no locale {} in the config file",
-                        self.display_name,
-                        self.item_id,
-                        code
+                        "listing.has_no_locale_in_the_config_file",
+                        display_name = self.display_name,
+                        item_id = self.item_id,
+                        code = code
                     ))
                 })?;
             if !selected.contains(found) {
@@ -155,13 +154,12 @@ pub fn build_expected(item: &ItemConfig) -> Result<ExpectedItem> {
             let len = utf16_len(&text);
             if len > DESCRIPTION_MAX_LENGTH {
                 return Err(Error::Config(tr!(
-                    "{} ({}) [{}] の説明が {} 文字あり、上限 {} 文字を超えています",
-                    "{} ({}) [{}] description is {} characters, over the limit of {}",
-                    item.display_name,
-                    item.item_id,
-                    locale.code,
-                    format_n0(len),
-                    format_n0(DESCRIPTION_MAX_LENGTH)
+                    "listing.description_is_characters_over_the_limit_of",
+                    display_name = item.display_name,
+                    item_id = item.item_id,
+                    locale = locale.code,
+                    length = format_n0(len),
+                    max = format_n0(DESCRIPTION_MAX_LENGTH)
                 )));
             }
             values.insert(ListingField::Description, text);
@@ -248,10 +246,10 @@ impl ComparisonStatus {
     /// 画面・CLI に出す状態の名前（表示言語に合わせる）
     pub fn display_name(self) -> &'static str {
         match self {
-            ComparisonStatus::NotFetched => trs!("未取得", "not fetched"),
-            ComparisonStatus::Match => trs!("一致", "match"),
-            ComparisonStatus::Different => trs!("差分あり", "different"),
-            ComparisonStatus::Error => trs!("エラー", "error"),
+            ComparisonStatus::NotFetched => trs!("listing.not_fetched"),
+            ComparisonStatus::Match => trs!("listing.match"),
+            ComparisonStatus::Different => trs!("listing.different"),
+            ComparisonStatus::Error => trs!("listing.error"),
         }
     }
 }
@@ -346,10 +344,9 @@ pub fn compare(expected: &ExpectedItem, snapshot: Option<&ItemSnapshot>) -> Vec<
                     .any(|c| eq_ic(c, &locale.code)))
             .then(|| {
                 tr!(
-                    "ダッシュボードにロケール {} がありません（ある言語: {}）",
-                    "Locale {} is not on the dashboard (available: {})",
-                    locale.code,
-                    snapshot.available_locales.join(", ")
+                    "listing.locale_is_not_on_the_dashboard_available",
+                    locale = locale.code,
+                    available_locales = snapshot.available_locales.join(", ")
                 )
             });
             result.push(not_fetched(expected, locale, error));
