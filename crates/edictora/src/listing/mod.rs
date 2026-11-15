@@ -14,7 +14,7 @@ use crate::{tr, trs};
 /// Edictora が読み書きする掲載情報の欄。
 ///
 /// ダッシュボードの「ストアの掲載情報」で編集できる欄のうち、テキストで正本を持てるものだけを扱う。
-/// カテゴリ・プロモーション動画・アイコンは対象外（掲載画像は `images` モジュールが別に扱う）。設定ファイルに書かれていない欄は、
+/// カテゴリ・プロモーション動画は対象外（アイコンを含む掲載画像は `images` モジュールが別に扱う）。設定ファイルに書かれていない欄は、
 /// 読み出し・比較・書き換えのどれにも使わない。並び順（Ord）は処理・表示の順番と同じ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ListingField {
@@ -182,7 +182,7 @@ pub fn build_expected(item: &ItemConfig) -> Result<ExpectedItem> {
 
 /// 設定のアイテムから画像の正本を作る（`scope` とロケールで絞ったスロットだけを検証する。誤りは `Config` エラー）。
 ///
-/// 処理順は 小タイル → マーキー → 全言語向けスクリーンショット → ローカライズ版（設定に書いたロケール順）。
+/// 処理順は アイコン → 小タイル → マーキー → 全言語向けスクリーンショット → ローカライズ版（設定に書いたロケール順）。
 /// `images` を書いていないアイテムは None。`locales` が空でなければ、ローカライズ版はそのロケールだけにする
 pub fn build_expected_images(
     item: &ItemConfig,
@@ -194,6 +194,16 @@ pub fn build_expected_images(
     };
     let place = format!("{} ({})", item.display_name, item.item_id);
     let mut slots: Vec<ExpectedSlot> = Vec::new();
+    if scope.includes(ImageSlot::Icon)
+        && let Some(path) = &images.icon
+    {
+        slots.push(build_expected_slot(
+            ImageSlot::Icon,
+            None,
+            std::slice::from_ref(path),
+            &format!("{place} images.icon"),
+        )?);
+    }
     if scope.includes(ImageSlot::SmallTile)
         && let Some(path) = &images.small_tile
     {

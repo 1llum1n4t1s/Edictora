@@ -7,6 +7,7 @@
 //!
 //! ```json
 //! "images": {
+//!   "icon": "icons/icon-128.png",
 //!   "smallTile": "webstore/images/en/tile-small.png",
 //!   "marquee": "webstore/images/en/tile-marquee.png",
 //!   "globalScreenshots": { "dir": "webstore/images/en" },
@@ -35,6 +36,8 @@ use crate::{tr, trs};
 /// アイテム 1 件の画像の設定（検証済み。パスは絶対パス）
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImagesConfig {
+    /// ストア アイコン（128x128 の PNG。透過可）
+    pub icon: Option<PathBuf>,
     pub small_tile: Option<PathBuf>,
     pub marquee: Option<PathBuf>,
     pub global_screenshots: Option<Vec<PathBuf>>,
@@ -45,6 +48,7 @@ pub struct ImagesConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(super) struct ImagesDto {
+    icon: Option<String>,
     small_tile: Option<String>,
     marquee: Option<String>,
     global_screenshots: Option<ScreenshotsDto>,
@@ -94,6 +98,9 @@ pub(super) fn parse_images(dto: ImagesDto, place: &str, base_dir: &Path) -> Resu
     let place = format!("{place}.images");
     let mut config = ImagesConfig::default();
 
+    if let Some(p) = dto.icon.as_deref() {
+        config.icon = Some(single_file(p, base_dir, &format!("{place}.icon"))?);
+    }
     if let Some(p) = dto.small_tile.as_deref() {
         config.small_tile = Some(single_file(p, base_dir, &format!("{place}.smallTile"))?);
     }
@@ -138,7 +145,8 @@ pub(super) fn parse_images(dto: ImagesDto, place: &str, base_dir: &Path) -> Resu
         }
     }
 
-    if config.small_tile.is_none()
+    if config.icon.is_none()
+        && config.small_tile.is_none()
         && config.marquee.is_none()
         && config.global_screenshots.is_none()
         && config.localized_screenshots.is_empty()
@@ -151,7 +159,7 @@ pub(super) fn parse_images(dto: ImagesDto, place: &str, base_dir: &Path) -> Resu
     Ok(config)
 }
 
-/// 1 枚のファイル（小タイル・マーキー）
+/// 1 枚のファイル（アイコン・小タイル・マーキー）
 fn single_file(value: &str, base_dir: &Path, place: &str) -> Result<PathBuf> {
     if is_blank(Some(value)) {
         return Err(Error::Config(tr!(

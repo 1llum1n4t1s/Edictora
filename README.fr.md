@@ -22,7 +22,7 @@ Il s'exécute sous la forme d'un unique outil en ligne de commande (`edictora.ex
 - **pull** : lit les valeurs actuelles du tableau de bord (description, URL officielle, URL de la page d'accueil et URL d'assistance). Lecture seule.
 - **diff** : affiche les différences avec vos fichiers sources. Lecture seule, et commande par défaut.
 - **push** : réécrit uniquement les champs qui diffèrent, **les enregistre en brouillon**, puis recharge la page et compare les valeurs enregistrées à vos fichiers sources.
-- **Images** : si un élément a `images` dans la configuration, `pull`, `diff` et `push` gèrent aussi ses images de fiche (captures d'écran, petite tuile promotionnelle et marquee). Limitez-les avec `--only text|images` et `--image-scope all|global|localized`.
+- **Images** : si un élément a `images` dans la configuration, `pull`, `diff` et `push` gèrent aussi ses images de fiche (icône de la boutique, captures d'écran, petite tuile promotionnelle et marquee). Limitez-les avec `--only text|images` et `--image-scope all|global|localized`.
 - **submit** : envoie un élément pour examen. Il ne modifie pas le paramètre « publier automatiquement après examen ».
 - **login** : ouvre Chrome avec le profil dédié pour que vous puissiez vous connecter vous-même à Google.
 - **update** : télécharge et installe une version plus récente, s'il y en a une. Cela ne fonctionne que si vous avez installé Edictora avec Setup, et la commande s'exécute aussi automatiquement à l'ouverture de votre session Windows.
@@ -102,6 +102,7 @@ Ajoutez `images` à un élément pour gérer ses images. Comme pour les autres c
 
 ```jsonc
 "images": {
+  "icon": "icons/icon-128.png",                             // 128x128 (a transparent PNG is allowed)
   "smallTile": "webstore/images/tile-small.png",            // 440x280
   "marquee": "webstore/images/tile-marquee.png",            // 1400x560
   "globalScreenshots": { "dir": "webstore/images/en" },     // or { "files": ["a.png", "b.png"] }
@@ -113,10 +114,10 @@ Ajoutez `images` à un élément pour gérer ses images. Comme pour les autres c
 ```
 
 - `dir` utilise les fichiers `screenshot-*.png` situés directement dans le dossier, par ordre de nom (1 à 5 fichiers). `files` utilise les fichiers dans l'ordre où vous les écrivez (1 à 5).
-- Seul le PNG est pris en charge : 24 bits sans alpha, 1280x800 ou 640x400 pour les captures, 440x280 pour la petite tuile et 1400x560 pour le marquee. Edictora le vérifie, ainsi qu'une éventuelle image en double dans un même jeu, avant d'ouvrir Chrome (code de sortie 2). L'icône de la boutique n'est pas gérée.
+- Seul le PNG est pris en charge : 24 bits sans alpha, 1280x800 ou 640x400 pour les captures, 440x280 pour la petite tuile et 1400x560 pour le marquee. Edictora le vérifie, ainsi qu'une éventuelle image en double dans un même jeu, avant d'ouvrir Chrome (code de sortie 2). L'icône de la boutique (`icon`) fait exception : elle doit faire 128x128 et peut être un PNG transparent (RVB ou RVBA 8 bits). Elle est comparée alpha compris, en ignorant la couleur des pixels totalement transparents. Elle est commune à toutes les langues, donc `--image-scope global` l'inclut.
 - Un élément peut avoir `images` sans `locales` (images seulement).
 - **Les images sont comparées par leurs pixels décodés, pas par les octets du fichier.** Le tableau de bord ré-encode les PNG téléversés : le fichier stocké n'a jamais les mêmes octets que le vôtre, mais les pixels sont identiques. Edictora télécharge chaque image du tableau de bord (l'original `=s0`, en HTTPS uniquement depuis `*.googleusercontent.com`, sans cookie) et compare les empreintes des pixels dans l'ordre. Si une image ne peut pas être téléchargée ou décodée, le résultat est « comparaison impossible » : jamais « identique » ni « remplacer ».
-- `push --yes` remplace un emplacement entier (tout supprimer, puis téléverser dans l'ordre) uniquement s'il diffère, enregistre un brouillon, recharge et vérifie à nouveau. Ordre : petite tuile, marquee, captures globales, puis les captures localisées de chaque langue.
+- `push --yes` remplace un emplacement entier (tout supprimer, puis téléverser dans l'ordre) uniquement s'il diffère, enregistre un brouillon, recharge et vérifie à nouveau. Ordre : icône de la boutique, petite tuile, marquee, captures globales, puis les captures localisées de chaque langue.
 - **La suppression d'une image prend effet immédiatement sur le tableau de bord** (il demande « cette action est irréversible » et, après rechargement sans enregistrer, l'emplacement restait vide). Si un push s'arrête en cours de route, le brouillon peut rester privé de certaines images : relancez-le pour terminer. Edictora ne touche jamais un élément en attente d'examen.
 - Un élément à une seule langue n'a pas de captures localisées ; utilisez `--image-scope global`. Si une langue de `localizedScreenshots` n'est pas sur le tableau de bord, Edictora s'arrête avant de rien modifier : utilisez `--image-scope global` ou `--locale`.
 - L'écriture d'images ne fonctionne que lorsque le tableau de bord est en japonais (les libellés anglais ne sont pas vérifiés).
@@ -244,7 +245,7 @@ Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même comma
 - Les champs et les boutons sont trouvés par leur libellé, leur rôle et leur texte, jamais par des noms de classes CSS. Si une recherche ne correspond pas à exactement un élément, Edictora s'arrête.
 - Chrome est démarré sans indicateurs d'automatisation et fermé proprement. **Le profil n'est jamais supprimé.**
 - Les captures d'écran prises en cas d'échec sont enregistrées dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, jamais dans votre dépôt.
-- Les mises à jour d'images ne remplacent que les emplacements qui diffèrent. Elles ne touchent ni l'icône de la boutique ni l'ordre des images, et ne peuvent jamais soumettre à l'examen (le code des images n'a aucun moyen de l'appeler).
+- Les mises à jour d'images ne remplacent que les emplacements qui diffèrent. Elles ne touchent pas à l'ordre des images, et ne peuvent jamais soumettre à l'examen (le code des images n'a aucun moyen de l'appeler).
 
 ## Où les fichiers sont stockés
 

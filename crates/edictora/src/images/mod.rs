@@ -1,4 +1,4 @@
-//! 掲載画像（全言語向けスクリーンショット・ローカライズ版スクリーンショット・小タイル・マーキー）のモデル・検証・比較。
+//! 掲載画像（ストア アイコン・全言語向けスクリーンショット・ローカライズ版スクリーンショット・小タイル・マーキー）のモデル・検証・比較。
 //!
 //! 画面操作は持たない（`dashboard` の `ImagePage` が担う）。ここは「正本の画像は何か」「現在の画像と一致するか」を
 //! 決める純粋な部分で、ブラウザなしでテストできる。
@@ -11,7 +11,8 @@
 //!   取得・デコードできなければ「比較不能」で、一致扱いにも常に置換にもしない。
 //! - 正本は Chrome を開く前に検証する（存在・PNG・8bit/RGB（アルファなし）・寸法・同一セット内の重複なし）。
 //!   v1 は PNG だけ（ダッシュボードは JPEG も受け付けるが、検証を PNG に絞って取り違えを減らす）。
-//! - アイコンは対象外（ストア全体の見た目に直結し、言語ごとの入れ替えも要らないため）。
+//! - ストア アイコン（128x128）も 1 枚のスロットとして扱う（全言語共通）。アイコンだけは透過（RGBA）を許し、
+//!   比較はアルファ込みの画素ダイジェスト（`png::pixel_digest_rgba`）で行う。並べ替え・プロモーション動画は対象外。
 
 pub mod fetch;
 pub mod png;
@@ -29,6 +30,8 @@ pub const MAX_SCREENSHOTS: usize = 5;
 /// 画像の置き場（スロット）。並び順（Ord）は処理・表示の順番と同じ（全言語向け → ローカライズ版）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ImageSlot {
+    /// ストア アイコン 128x128、1 枚（全言語共通。透過 PNG を許す唯一のスロット）
+    Icon,
     /// プロモーション タイル（小）440x280、1 枚
     SmallTile,
     /// マーキー プロモーション タイル 1400x560、1 枚
@@ -43,6 +46,7 @@ impl ImageSlot {
     /// 設定ファイル上のキー名
     pub fn config_key(self) -> &'static str {
         match self {
+            ImageSlot::Icon => "icon",
             ImageSlot::SmallTile => "smallTile",
             ImageSlot::Marquee => "marquee",
             ImageSlot::GlobalScreenshots => "globalScreenshots",
@@ -53,6 +57,7 @@ impl ImageSlot {
     /// 画面・CLI に出す名前（表示言語に合わせる）
     pub fn display_name(self) -> &'static str {
         match self {
+            ImageSlot::Icon => trs!("images.icon"),
             ImageSlot::SmallTile => trs!("images.small_tile"),
             ImageSlot::Marquee => trs!("images.marquee"),
             ImageSlot::GlobalScreenshots => trs!("images.global_screenshots"),
@@ -63,6 +68,7 @@ impl ImageSlot {
     /// 許される寸法（幅 x 高さ）
     pub fn allowed_sizes(self) -> &'static [(u32, u32)] {
         match self {
+            ImageSlot::Icon => &[(128, 128)],
             ImageSlot::SmallTile => &[(440, 280)],
             ImageSlot::Marquee => &[(1400, 560)],
             ImageSlot::GlobalScreenshots | ImageSlot::LocalizedScreenshots => {
@@ -74,9 +80,17 @@ impl ImageSlot {
     /// 置ける最大枚数
     pub fn max_count(self) -> usize {
         match self {
-            ImageSlot::SmallTile | ImageSlot::Marquee => 1,
+            ImageSlot::Icon | ImageSlot::SmallTile | ImageSlot::Marquee => 1,
             ImageSlot::GlobalScreenshots | ImageSlot::LocalizedScreenshots => MAX_SCREENSHOTS,
         }
+    }
+
+    /// 透過（アルファ）を持つ PNG を許すか。ストア アイコンだけが許す
+    /// （角丸・余白を透過で表すのが普通で、ダッシュボードの規格も 128x128 の透過 PNG を受け付ける。
+    /// 小タイル・マーキー・スクリーンショットは 24 ビット（アルファなし）の規格）。
+    /// 許すスロットはアルファ込みの画素ダイジェスト（`png::pixel_digest_rgba`）で比べる
+    pub fn allows_alpha(self) -> bool {
+        self == ImageSlot::Icon
     }
 
     /// ローカライズ版か（言語の切替が要る）
@@ -91,7 +105,7 @@ pub enum ImageScope {
     /// 全言語向けとローカライズ版の両方（既定）
     #[default]
     All,
-    /// 全言語向け（小タイル・マーキー・全言語向けスクリーンショット）だけ
+    /// 全言語向け（アイコン・小タイル・マーキー・全言語向けスクリーンショット）だけ
     Global,
     /// ローカライズ版スクリーンショットだけ
     Localized,
@@ -247,6 +261,16 @@ pub fn parse_png_header(bytes: &[u8]) -> Option<PngInfo> {
     })
 }
 
+/// スロットに合わせた画素ダイジェスト（正本のファイルとダッシュボードの原本の両方で同じ関数を使う）。
+/// アイコンはアルファ込み（`png::pixel_digest_rgba`）、それ以外は RGB（`png::pixel_digest`）
+pub fn digest_for_slot(slot: ImageSlot, bytes: &[u8]) -> std::result::Result<String, String> {
+    if slot.allows_alpha() {
+        png::pixel_digest_rgba(bytes)
+    } else {
+        png::pixel_digest(bytes)
+    }
+}
+
 /// 画像ファイル 1 枚を検証し、ハッシュ付きで返す（誤りは `Config` エラー）。
 /// `place` はエラー文に出す設定上の場所
 pub fn validate_image_file(slot: ImageSlot, path: &Path, place: &str) -> Result<ExpectedImageFile> {
@@ -276,8 +300,19 @@ pub fn validate_image_file(slot: ImageSlot, path: &Path, place: &str) -> Result<
             path = shown
         )));
     };
-    // 24 ビット PNG（アルファなし）だけ。ダッシュボードの規格と同じ（色種別 2 = RGB、8 ビット）
-    if info.bit_depth != 8 || info.color_type != 2 {
+    // 8 ビットの PNG だけ。ダッシュボードの規格と同じく、小タイル・マーキー・スクリーンショットは
+    // 24 ビット（アルファなし。色種別 2 = RGB）。アイコンだけは透過を許す（色種別 6 = RGBA も可）
+    if slot.allows_alpha() {
+        if info.bit_depth != 8 || !matches!(info.color_type, 2 | 6) {
+            return Err(Error::Config(tr!(
+                "images.the_icon_png_must_be_8_bit_rgb_or_rgba",
+                place = place,
+                path = shown,
+                bit_depth = info.bit_depth,
+                color_type = info.color_type
+            )));
+        }
+    } else if info.bit_depth != 8 || info.color_type != 2 {
         return Err(Error::Config(tr!(
             "images.the_png_must_be_24_bit_without_alpha",
             place = place,
@@ -299,7 +334,7 @@ pub fn validate_image_file(slot: ImageSlot, path: &Path, place: &str) -> Result<
         )));
     }
     // 画素のダイジェスト。インターレースありなど、デコードできない PNG はここで弾く（比較できないため）
-    let pixel_sha256 = png::pixel_digest(&bytes).map_err(|e| {
+    let pixel_sha256 = digest_for_slot(slot, &bytes).map_err(|e| {
         Error::Config(tr!(
             "images.the_image_cannot_be_decoded",
             place = place,

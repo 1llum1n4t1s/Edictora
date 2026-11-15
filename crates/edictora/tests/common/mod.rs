@@ -106,6 +106,23 @@ pub fn png_bytes(width: u32, height: u32, color_type: u8, bit_depth: u8, seed: u
             }
         }
     }
+    encode_png(width, height, color_type, bit_depth, &raw)
+}
+
+/// 指定した RGBA 画素（行を詰めた `width * height * 4` バイト）の PNG（色種別 6・8 ビット）。
+/// 透過画素・半透明画素を持つ画像（ストア アイコン）を作る
+pub fn rgba_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    assert_eq!(rgba.len(), width as usize * height as usize * 4);
+    let mut raw = Vec::with_capacity(rgba.len() + height as usize);
+    for row in rgba.chunks(width as usize * 4) {
+        raw.push(0); // フィルターなし
+        raw.extend_from_slice(row);
+    }
+    encode_png(width, height, 6, 8, &raw)
+}
+
+/// フィルターバイト付きの画素データ `raw` から PNG を組み立てる（非圧縮の DEFLATE ブロック）
+fn encode_png(width: u32, height: u32, color_type: u8, bit_depth: u8, raw: &[u8]) -> Vec<u8> {
     let mut zlib = vec![0x78, 0x01];
     let mut blocks = raw.chunks(65_535).peekable();
     while let Some(block) = blocks.next() {
@@ -114,7 +131,7 @@ pub fn png_bytes(width: u32, height: u32, color_type: u8, bit_depth: u8, seed: u
         zlib.extend_from_slice(&(!(block.len() as u16)).to_le_bytes());
         zlib.extend_from_slice(block);
     }
-    zlib.extend_from_slice(&adler32(&raw).to_be_bytes());
+    zlib.extend_from_slice(&adler32(raw).to_be_bytes());
 
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&width.to_be_bytes());

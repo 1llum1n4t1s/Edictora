@@ -40,8 +40,70 @@ pub fn pixel_digest(bytes: &[u8]) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-/// PNG をデコードする
+/// 画素のダイジェスト（アルファあり版。大文字の 16 進 SHA-256）を求める。ストア アイコン専用。
+///
+/// アイコンは角丸などで透過画素を持つのが普通なので、RGB だけでは比べられない。入力は
+/// 「幅（4 バイト BE）・高さ（4 バイト BE）・RGBA の画素列」で、**完全に透明（A=0）の画素は RGBA をすべて 0 に正規化する**
+/// （見えない画素の色は表示に影響せず、再エンコードで変わりうるため、比較に含めない）。
+/// 色種別 2（RGB）は A=255 として扱う（不透明な RGB と RGBA が同じダイジェストになる）。
+/// 8 ビットでインターレースなしの RGB / RGBA 以外は、`pixel_digest` と同じく解釈できない（比較不能）
+pub fn pixel_digest_rgba(bytes: &[u8]) -> Result<String, String> {
+    let raw = decode_raw(bytes)?;
+    let mut input = Vec::with_capacity(8 + raw.width as usize * raw.height as usize * 4);
+    input.extend_from_slice(&raw.width.to_be_bytes());
+    input.extend_from_slice(&raw.height.to_be_bytes());
+    if raw.channels == 4 {
+        for px in raw.data.as_chunks::<4>().0 {
+            if px[3] == 0 {
+                input.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                input.extend_from_slice(px);
+            }
+        }
+    } else {
+        for px in raw.data.as_chunks::<3>().0 {
+            input.extend_from_slice(&[px[0], px[1], px[2], 255]);
+        }
+    }
+    bytes_digests(&input)
+        .map(|d| d.sha256)
+        .map_err(|e| e.to_string())
+}
+
+/// フィルターを戻したままの画素（チャンネル数は 3 か 4）
+struct RawImage {
+    width: u32,
+    height: u32,
+    /// 3（RGB）か 4（RGBA）
+    channels: usize,
+    data: Vec<u8>,
+}
+
+/// PNG をデコードする（RGB 8 ビット。透過画素があれば比較不能）
 pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
+    let raw = decode_raw(bytes)?;
+    let pixels = if raw.channels == 3 {
+        raw.data
+    } else {
+        // RGBA: すべて不透明なら RGB に落とす。透過があれば、RGB 同士の比較にならないので比較不能
+        let mut rgb = Vec::with_capacity(raw.width as usize * raw.height as usize * 3);
+        for px in raw.data.as_chunks::<4>().0 {
+            if px[3] != 255 {
+                return Err("PNG has transparent pixels".to_string());
+            }
+            rgb.extend_from_slice(&px[..3]);
+        }
+        rgb
+    };
+    Ok(Decoded {
+        width: raw.width,
+        height: raw.height,
+        pixels,
+    })
+}
+
+/// PNG のチャンクを読み、フィルターを戻した画素を返す（8 ビット・インターレースなしの RGB / RGBA だけ）
+fn decode_raw(bytes: &[u8]) -> Result<RawImage, String> {
     if bytes.len() < 8 || bytes[..8] != SIGNATURE {
         return Err("not a PNG file".to_string());
     }
@@ -108,25 +170,12 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     if raw.len() != expected {
         return Err("PNG pixel data has an unexpected length".to_string());
     }
-    let unfiltered = unfilter(&raw, stride, channels, height as usize)?;
-
-    let pixels = if channels == 3 {
-        unfiltered
-    } else {
-        // RGBA: すべて不透明なら RGB に落とす。透過があれば、RGB 同士の比較にならないので比較不能
-        let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-        for px in unfiltered.as_chunks::<4>().0 {
-            if px[3] != 255 {
-                return Err("PNG has transparent pixels".to_string());
-            }
-            rgb.extend_from_slice(&px[..3]);
-        }
-        rgb
-    };
-    Ok(Decoded {
+    let data = unfilter(&raw, stride, channels, height as usize)?;
+    Ok(RawImage {
         width,
         height,
-        pixels,
+        channels,
+        data,
     })
 }
 

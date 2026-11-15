@@ -632,6 +632,8 @@ fn remove_white_space(s: &str) -> String {
 
 /// スロットの寸法の表記（画面の案内は「1280x800」「440×280」のように x か × で書かれる）
 fn size_pattern(slot: ImageSlot) -> &'static Regex {
+    static ICON: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b128\s*[x×]\s*128\b").expect("固定の正規表現"));
     static SMALL: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\b440\s*[x×]\s*280\b").expect("固定の正規表現"));
     static MARQUEE: LazyLock<Regex> =
@@ -639,6 +641,7 @@ fn size_pattern(slot: ImageSlot) -> &'static Regex {
     static SHOT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)\b1280\s*[x×]\s*800\b").expect("固定の正規表現"));
     match slot {
+        ImageSlot::Icon => &ICON,
         ImageSlot::SmallTile => &SMALL,
         ImageSlot::Marquee => &MARQUEE,
         ImageSlot::GlobalScreenshots | ImageSlot::LocalizedScreenshots => &SHOT,
@@ -650,7 +653,7 @@ fn size_pattern(slot: ImageSlot) -> &'static Regex {
 /// 見分けは、その入力を含む枠の文字列の「寸法の表記」（1280x800・440×280・1400×560）と「見出しの行」
 /// （全言語向けアセット / ローカライズ版アセット）で行う。クラス名・位置には頼らない。
 /// - スクリーンショットは見出しの行が必要（全言語向けとローカライズ版は同じ寸法なので、見出しで分ける）
-/// - 小タイル・マーキーは寸法だけで選び、ローカライズ版の見出しを持つ枠は除く
+/// - アイコン・小タイル・マーキーは寸法だけで選び、ローカライズ版の見出しを持つ枠は除く
 /// - 候補がちょうど 1 つに絞れなければ止める（別のスロットを書き換える事故を防ぐ）
 /// - PNG を受け付けない入力・無効な入力は候補にしない
 pub fn pick_image_slot<'a>(
@@ -671,7 +674,7 @@ pub fn pick_image_slot<'a>(
             .filter(|i| match slot {
                 ImageSlot::GlobalScreenshots => global(i) && !localized(i),
                 ImageSlot::LocalizedScreenshots => localized(i) && !global(i),
-                ImageSlot::SmallTile | ImageSlot::Marquee => !localized(i),
+                ImageSlot::Icon | ImageSlot::SmallTile | ImageSlot::Marquee => !localized(i),
             }),
         || tr!("dashboard.the_image_slot_was_not_found", name = name),
         |n| {
@@ -687,6 +690,7 @@ pub fn pick_image_slot<'a>(
 /// スロットの `position`（0 始まり）番目の画像に画面が付ける alt（「スクリーンショット 3」など）
 pub fn expected_image_alt(t: &DashboardText, slot: ImageSlot, position: usize) -> String {
     match slot {
+        ImageSlot::Icon => t.icon_alt.to_string(),
         ImageSlot::SmallTile => t.small_tile_alt.to_string(),
         ImageSlot::Marquee => t.marquee_alt.to_string(),
         ImageSlot::GlobalScreenshots | ImageSlot::LocalizedScreenshots => {
@@ -740,7 +744,7 @@ pub fn pick_delete_button<'a>(
 }
 
 /// 画像まわりのクリックを許すか。押してよいのは削除ボタン（`画像を削除 ` で始まるラベル）だけで、
-/// 並べ替え・アップロード状況を閉じるなど、それ以外は押さない（アイコン・並べ替えに触れない）
+/// 並べ替え・アップロード状況を閉じるなど、それ以外は押さない（並べ替えに触れない）
 pub fn ensure_image_click_allowed(t: &DashboardText, label: &str) -> Result<()> {
     if label.trim().starts_with(t.delete_image_prefix.trim_end()) {
         Ok(())
