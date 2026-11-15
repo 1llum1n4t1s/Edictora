@@ -10,7 +10,7 @@
 //! - `<packages>\.edictora-update.lock` … 更新処理の全体（確認〜Update.exe の起動）で持つ。ログオン時の
 //!   更新用 exe と `edictora update` が同時に動かないようにする
 //! - `<データの根>\edictora-running.lock`（[`RUNNING_LOCK_FILE`]）… Chrome を開くコマンド（login / pull / diff /
-//!   push / submit）が実行中だけ共有で持つ。更新側は Update.exe を起動する直前にこれを排他で取り、取れなければ
+//!   push / submit）が実行中だけ、MCP サーバー（`edictora mcp`）はプロセスの生存期間中ずっと共有で持つ。更新側は Update.exe を起動する直前にこれを排他で取り、取れなければ
 //!   適用しない（Update.exe がインストール先配下のプロセスを止めて push の途中で落とすのを防ぐ）。
 //!   排他で取れたら、プロセスが終わるまで持ち続ける（終わった後に Update.exe が差し替える）。
 //!   インストール先に依存しない場所に置くので、インストールされていない実行（cargo run など）でも無害

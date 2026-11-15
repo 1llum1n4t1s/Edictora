@@ -3,6 +3,7 @@
 //! - コンソールを出さない（`windows_subsystem = "windows"`）。結果は標準エラーでなくログ（`Edictora.Data\logs`）へ残す。
 //! - 最初に Velopack のフック（`--veloapp-*`）を処理する（主 exe をどちらにしても同じ登録が行われるように）。
 //! - Velopack でインストールされた場所から起動されていなければ（cargo run など）何もしない。
+//! - 更新の前に、MCP サーバーの Claude Code・Codex への登録で未完了のものをやり直す（`install::connect`）。
 //! - 二重起動は `<packages>\.edictora-update.lock` で防ぐ（`edictora update` とも排他）。
 //! - ログオン直後はネットワークがまだ使えないことがあるので、失敗したら間を空けて 2 回まで試し直す。
 //!   Chrome を開くコマンド（login / pull / diff / push / submit）が実行中で適用を後に回したときも同じ。
@@ -15,7 +16,7 @@ use std::time::Duration;
 use edictora::Error;
 use edictora::app_paths::AppPaths;
 use edictora::cancel::CancelToken;
-use edictora::install::hooks;
+use edictora::install::{connect, hooks};
 use edictora::logging::{self, LogLevel, log};
 use edictora::update::apply::ProcessApplyLauncher;
 use edictora::update::locate::{LocateError, locate_current};
@@ -60,6 +61,20 @@ fn run_logon_update(paths: &AppPaths) -> i32 {
             return 1;
         }
     };
+
+    // フックで終わらなかった MCP の登録（時間切れ・CLI が後から入った など）を、更新の結果に関係なく
+    // ここでやり直す。済んだクライアントは状態ファイルで覚えているので、普段は CLI を呼ばない。
+    // Portable 版は登録しない（フックと同じ）
+    if !hooks::is_portable(&installation.root) {
+        let budget = connect::Budget::new(connect::UPDATER_CALL_TIMEOUT, connect::UPDATER_TOTAL);
+        connect::ensure_registered(
+            &paths.local_root,
+            &connect::registered_executable(&installation.root),
+            &connect::resolve_from_environment,
+            &budget,
+            "updater",
+        );
+    }
 
     // コンソールが無いので Ctrl+C は来ない（中断の合図は立たない）
     let cancel = CancelToken::new();

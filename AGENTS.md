@@ -27,6 +27,7 @@ crates/edictora/
 │  ├─ updater_main.rs … 更新用 exe（edictora-updater.exe、windows_subsystem = "windows"）の入口
 │  ├─ services.rs     … pull・diff・push・submit の手順と中止判断
 │  ├─ cli/            … args.rs（引数解析）/ mod.rs（実行と終了コード）/ diff_formatter.rs
+│  ├─ mcp/mod.rs      … MCP サーバー（`edictora mcp`、標準入出力の JSON-RPC）。ツールの中身は CliApp::run を呼ぶだけ
 │  ├─ logging.rs      … %LOCALAPPDATA%\Edictora.Data\logs。publisherId を伏せる
 │  ├─ app_paths.rs / error.rs / cancel.rs（Ctrl+C）/ util.rs
 └─ tests/             … 結合テスト（ブラウザ不要。CDP は 127.0.0.1 の偽サーバー）とフィクスチャ
@@ -51,7 +52,9 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **区間切り出しは検証スクリプト（push.mjs）と同じ結果にする。** 見出しが無ければエラー。`sectionStart` / `sectionEnd` は Rust の `regex` で解釈するため、先読み・後読み・後方参照は使えない（設定の契約）。`crates/edictora/tests/fixtures/ReplaceTranslator` の SHA-256・文字数（ja=1492 / en=3172）のテストを壊さない。
 - **設定に書いていない欄は、読み出し・比較・書き換えの対象外。** 未知のキーはエラー。URL 欄はキーなし＝対象外、`""`＝空欄が正本。
 - **引数と設定の誤りは Chrome を開く前に終了コード 2 で止める。** 終了コードは 0 / 1 / 2 / 3（差分あり）/ 4（書き込み中止）/ 5（ログインが必要）/ 130（中断）。進捗は標準エラー、結果は標準出力。
-- 失敗時の画面保存は `%LOCALAPPDATA%\Edictora.Data\diagnostics` に置き、リポジトリには置かない。
+- 失敗時の画面保存は `%LOCALAPPDATA%\Edictora.Data\diagnostics` に置き、リポジトリには置かない。push / submit の失敗に加え、pull / diff の読み出し失敗（ログイン切れ以外）でも保存し、保存先を結果のエラー文に含める（標準エラーを捨てて実行されても分かるように）。
+- **MCP（`edictora mcp`）は CLI の薄い皮にする**: ツールは `edictora_list_items` / `edictora_diff` / `edictora_pull` / `edictora_push` / `edictora_submit` だけで、中身は引数の配列を組み立てて `CliApp::run` を呼び、出力をメモリで受ける（手順・安全策・終了コード・伏せ字を二重に持たない）。**画面表示・login・update・プロファイル・chrome.exe の指定はツールに持たせない**（スキーマは `additionalProperties: false`、無い引数はエラー）。push / submit は `confirm: true` が無ければ書かない、`destructiveHint` を付ける。終了コード 3（差分あり）は `isError: false`。呼び出しは作業スレッド 1 本で順に実行（同じプロファイルの Chrome を同時に開かない）、`notifications/cancelled` で中断、入力が閉じても受け付け済みは最後まで実行する。標準出力には JSON-RPC 以外を書かない。**実行中ロックはサーバーの生存期間中ずっと共有で持つ**（`main.rs`。Update.exe の apply はインストール先の他プロセスを強制終了するので、待機中の MCP も守る。サーバーが動いている間の更新は `AppInUse` で見送り、次のログオンへ回る。適用中に起動されたら終了コード 1）。説明文には検索で見つかる語（Chrome Web Store・store listing・description・掲載情報・説明文）を入れる（テストで固定）。**Setup 版はフックで Claude Code・Codex へ自動登録・解除する**（`install/` の登録処理。公式 CLI の `.exe` だけを時間制限つきで呼ぶ、既に自分を指す登録は触らない、登録済みの CLI は `Edictora.Data\setup-registration.json` に覚えて二度と呼ばない、終わらなかった分はログオン時の更新用 exe がやり直す、解除は自分の exe を指す登録だけ、Portable 版は登録しない。テストは本物の CLI・設定に触れずスタブで検証する）。Claude Desktop・ゲートウェイの登録方法は README に、クライアントごとに書く（Setup 版の固定パス `%LOCALAPPDATA%\Edictora\current\edictora.exe` を絶対パスで指定）。作者の環境では Toolport の `%APPDATA%\Toolport\registry.json` に stdio 項目（`args: ["mcp"]`）として登録している
+- **AI エージェントは edictora を `--show-browser` 付きで実行しない**（利用者の画面にウィンドウが出る。2026-11-15 に実際に起きた）。原因調査はエラー文と diagnostics の画面で行う。そのため「覆われていて押せません」のエラー文には、中心にあった要素・要素の枠・画面の大きさを含める（`selectors::covered_error_message`）。
 - **自動更新（Velopack）**: インストール・差し替え・アンインストールは Velopack の Setup.exe / Update.exe に任せ、Edictora は更新の確認とダウンロードだけを自前で行う（velopack crate は使わない）。約束（フック引数・`sq.version`・`releases.{channel}.json`・`.partial` → 検証 → 改名・`apply --package … --waitPid <自分> --silent --norestart --root … --packageDir …`）は vendored の Velopack 1.2.161 Rust SDK（Petarin の `desktop/src-tauri/vendor/velopack-1.2.161`）に合わせ、推測で変えない。詳細と SDK との意図的な違いは DESIGN.md の「配布・インストール・自動更新」。
 - **フックは引数の解釈より前に処理して必ず 0 で終える**（`edictora.exe`・`edictora-updater.exe` の両方）。install / updated で HKCU の Run に更新用 exe、ユーザー PATH に `<根>\current` を登録し、uninstall で取り除く。名前と要素は根から決める。PATH は型と他の要素を壊さない。インストール先から起動されていなければレジストリに触れない。テストは RegLoadAppKeyW の専用ハイブを使い、実際の Run・PATH に触れない。
 - **Chrome を開くコマンドの実行中は更新を適用しない**（契約）。Update.exe の apply はインストール先配下のプロセスを止める可能性があり、push の途中で落とされると書き込みの安全策が崩れるため。login / pull / diff / push / submit は、設定の検証の後・ブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`、インストール先に依存しない）を共有で持つ（CLI 同士は同時に動ける。ロックファイルを開けないだけなら続行し、インストールされていない実行でも無害）。更新側（`edictora update`・`edictora-updater.exe`）はダウンロードと検証を済ませた後、Update.exe を起動する直前にこれを排他で取り、取れなければ適用せず `AppInUse`（`update` は終了コード 1、更新用 exe は間を空けて試し直す）。取れたらプロセスの終了まで持ち続ける。適用中（排他で持たれている）に Chrome を開くコマンドを実行したら、Chrome を開かずに終了コード 1。`update` 自身はこのロックを持たない。排他は更新プロセスの終了で外れ、Update.exe の差し替えはその後なので、この数秒の隙間は塞げない（Update.exe 側の動きに依存。文書で案内する）。Run の同名の値が「別の場所に実在する」更新用 exe を指すときだけ上書きしない（指す先が消えた古い登録は上書きする）
@@ -92,8 +95,10 @@ cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
 ## 既知の制約 / 今後の課題
 
 - ダッシュボードの英語表示は未対応（文言で要素を探すため）
-- 実画面で確認済みなのは `pull` / `diff`（ヘッドレス）まで。`push` / `submit`、Ctrl+C での中断、beforeunload の扱いは Rust 版ではまだ実画面で確かめていない
-- 未確認の画面状態: 審査待ちアイテムの編集画面、URL 欄の書き換えと保存、言語が 1 つだけ / ja・en 以外のアイテム。`write_gate.rs` の許可リスト（公開済み・下書き）は実画面の表記で確かめて更新する
+- 実画面で確認済み: `pull` / `diff`（ヘッドレス）、2026-11-15 に 9 言語のアイテムでの `push`（説明欄）と `submit`、ステータス「拒否」での書き込み。Ctrl+C での中断、beforeunload の扱いは Rust 版ではまだ実画面で確かめていない
+- 未確認の画面状態: 審査待ちアイテムの編集画面、URL 欄の書き換えと保存、言語が 1 つだけのアイテム。`write_gate.rs` の許可リスト（公開済み・下書き・拒否）は実画面の表記で確かめて更新する
+- **「拒否」を許可したことの未確認のリスク**: 拒否のアイテムを再提出した直後も表記は「拒否」のままだった。審査中でも「拒否」と出続けるなら、審査中のアイテムに書き込めてしまう。再提出後の表記を実画面で確かめるまで、拒否のアイテムへの push は利用者の確認のうえで行う（DESIGN.md「実画面での確認状況」）
+- MCP の未確認: 実画面での操作、`notifications/cancelled` での中断、本物の Update.exe で「待機中の MCP があると適用を見送る」こと（ロックの保持は結合テスト `tests/mcp_running_lock.rs` で確認済み）、本物の `claude` / `codex` CLI での自動登録・解除（`mcp get` の出力に exe のパスがそのまま出るか、`mcp get` が健康診断でサーバーを起動するか）、`codex mcp add` の書式
 - exe にアイコンとバージョン情報のリソースがまだ無い
 - 自動更新の結合は、検証用 packId `EdictoraTest` で実機確認済み: Install フックで Run（`EdictoraTest Updater`）と PATH（REG_EXPAND_SZ のまま）を登録、`edictora update` で 1.0.5 → 1.0.6（Obsolete / Updated フック）、`edictora-updater.exe` で 1.0.6 → 1.0.7、`Update.exe uninstall` で Uninstall フックが Run と PATH から自分の分だけを消し `Edictora.Data` は残る。未確認: 実署名での一連、R2 への実配信、本番の HTTPS（edictora.kagayoi.com）、本番 packId `Edictora` での Setup、Portable 版の一連、Setup 直後の初回起動の見え方（`--silent` の Setup は主 exe を起動しないらしい）、実行中ロックで適用を後に回す動作の実機確認。nupkg 内の `Squirrel.exe` で Update.exe を差し替える処理（SDK にある）は持たない
 - 配信先の R2 bucket `edictora-updates` と `https://edictora.kagayoi.com` は作成済みだが、作成時点で SSL 証明書は初期化中。初回配信の前に HTTPS で接続できることを確かめる

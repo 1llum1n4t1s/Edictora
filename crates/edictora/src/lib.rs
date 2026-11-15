@@ -12,6 +12,7 @@
 //! - [`install`] — Velopack のフック（`--veloapp-*`）と、ログオン時の自動更新・PATH の登録
 //! - [`services`] — pull / diff / push / submit の手順と中止判断
 //! - [`cli`] — 引数・出力・終了コード
+//! - [`mcp`] — MCP サーバー（`edictora mcp`）。AI エージェント向けに CLI と同じ処理を標準入出力で公開する
 //!
 //! ページ内で評価する JavaScript は page-scripts/（Bun + TypeScript）で生成し、生成物を埋め込む。
 
@@ -26,6 +27,7 @@ pub mod error;
 pub mod install;
 pub mod listing;
 pub mod logging;
+pub mod mcp;
 pub mod net;
 pub mod services;
 pub mod update;

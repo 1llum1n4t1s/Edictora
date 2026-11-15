@@ -4,7 +4,11 @@
 //!   `edictora.exe` と `edictora-updater.exe` の両方が、引数を解釈する前に最初に呼ぶ。
 //! - [`registry`] — HKCU の Run と環境変数 PATH の読み書き（Windows API を直接宣言して使う）。
 //!   根のキーを引数で受けるので、テストは専用のハイブを使い、実際の Run や PATH に触れない。
+//! - [`connect`] — MCP サーバー（`edictora mcp`）の Claude Code・Codex への登録と解除（公式 CLI を
+//!   時間の上限つきで呼ぶ）。フックとログオン時の更新用 exe から呼ぶ。CLI の場所と状態フォルダーを
+//!   引数で受けるので、テストはスタブの CLI を使い、本物の CLI・設定に触れない。
 
+pub mod connect;
 pub mod hooks;
 #[cfg(windows)]
 pub mod registry;

@@ -15,6 +15,11 @@
 //! - uninstall: その両方を取り除く（Run は内容が自分の値と一致するときだけ。根のフォルダーは Velopack が消す。
 //!   データの `Edictora.Data` は残す）。
 //! - obsolete: 何もしない。
+//! - Run・PATH の処理を済ませた後に、MCP サーバー（`edictora mcp`）を Claude Code・Codex へ登録・解除する
+//!   （[`super::connect`]）。install は登録の状態を忘れてから登録し、updated は状態のまま未完了の分だけ
+//!   登録する（初期版からの最初の更新では状態ファイルが無いので全クライアントが対象）。uninstall は
+//!   自分を指す登録だけを解除して状態ファイルを消す（Portable 版でも行う）。Portable 版の install / updated
+//!   では登録しない。CLI の呼び出しは時間で打ち切り、失敗はログに残すだけで終了コードは 0 のまま。
 //!
 //! Run の値の名前と PATH の要素は、インストール先の根から決める（packId を変えた検証用インストールと
 //! 本番のインストールが互いの登録を上書き・削除しないように）。Velopack でインストールされた場所
@@ -276,8 +281,64 @@ pub fn run_hook(hook: &Hook) -> i32 {
         return 0;
     }
     let reg = registration_for(&installation.root);
+    // 初期版からの移行の流れ（Run 登録）を壊さないよう、Run・PATH を必ず先に済ませる
     apply_to_current_user(action, &reg);
+    apply_mcp_registration(hook.kind, &installation.root);
     0
+}
+
+/// MCP サーバーの Claude Code・Codex への登録・解除（本物の PATH と保存先を使う本番経路）。
+/// 締め切りは Run・PATH の処理の後から数える（Velopack の打ち切りまでの残りに収める）
+fn apply_mcp_registration(kind: HookKind, root: &Path) {
+    use super::connect::{
+        Budget, HOOK_CALL_TIMEOUT, INSTALL_HOOK_TOTAL, UNINSTALL_HOOK_TOTAL, UPDATED_HOOK_TOTAL,
+        ensure_registered, forget_state, registered_executable, resolve_from_environment,
+        unregister_all,
+    };
+    let paths = crate::app_paths::AppPaths::from_environment();
+    let state_dir = paths.local_root.as_path();
+    let executable = registered_executable(root);
+    let label = format!("Velopack のフック {kind:?}");
+    match kind {
+        HookKind::Install => {
+            // 再インストールでは、前回の状態（済んだ CLI）を忘れて登録し直す
+            if let Err(e) = forget_state(state_dir) {
+                log(
+                    &format!("{label}: MCP の登録の状態を消せません: {e}"),
+                    LogLevel::Warning,
+                );
+            }
+            let budget = Budget::new(HOOK_CALL_TIMEOUT, INSTALL_HOOK_TOTAL);
+            ensure_registered(
+                state_dir,
+                &executable,
+                &resolve_from_environment,
+                &budget,
+                &label,
+            );
+        }
+        HookKind::Updated => {
+            let budget = Budget::new(HOOK_CALL_TIMEOUT, UPDATED_HOOK_TOTAL);
+            ensure_registered(
+                state_dir,
+                &executable,
+                &resolve_from_environment,
+                &budget,
+                &label,
+            );
+        }
+        HookKind::Uninstall => {
+            let budget = Budget::new(HOOK_CALL_TIMEOUT, UNINSTALL_HOOK_TOTAL);
+            unregister_all(
+                state_dir,
+                &executable,
+                &resolve_from_environment,
+                &budget,
+                &label,
+            );
+        }
+        HookKind::Obsolete => {}
+    }
 }
 
 #[cfg(windows)]

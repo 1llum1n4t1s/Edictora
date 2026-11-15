@@ -284,6 +284,7 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   edictora push    [--item <id>]... [--locale <code>]... --yes [共通オプション]
   edictora submit  --item <id> --yes [共通オプション]
   edictora update
+  edictora mcp
 
 コマンド:
   login    専用プロファイルの Chrome を開き、手動ログインしてダッシュボードに着くまで待ちます
@@ -294,6 +295,8 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   update   新しい版があればダウンロードし、終了後に差し替えます（Velopack の Setup・Portable 版のとき。
            Setup で入れたときはログオン時にも自動で行います。Portable 版は自動更新を登録しません。
            pull などの実行中は適用を後に回します。https://edictora.kagayoi.com に接続します）
+  mcp      AI エージェント向けの MCP サーバー（標準入出力）として動きます。list_items / diff / pull / push / submit を
+           ツールとして公開します（画面の表示・login・プロファイルの指定はツールから選べません）
 
 共通オプション:
   --config <file>   設定ファイル（既定: %APPDATA%\Edictora\config.json）
@@ -301,7 +304,9 @@ pub const HELP_TEXT: &str = r"Edictora — Chrome Web Store の掲載情報を�
   --chrome <exe>    chrome.exe の場所（既定: 設定ファイルの chromePath、なければ自動検出）
   --item <id>       対象アイテム（複数可。省略時は設定ファイルの全アイテム）
   --locale <code>   対象ロケール（複数可。例: ja, en）
-  --show-browser    Chrome のウィンドウを表示して操作する（既定はウィンドウなしで動き、作業中に前面へ出てこない）
+  --show-browser    Chrome のウィンドウを表示して操作する（既定はウィンドウなしで動き、作業中に前面へ出てこない）。
+                    人が目で見るためのもの。AI エージェントや自動実行では付けないこと（利用者の画面にウィンドウが出る。
+                    失敗の原因はエラー文と、失敗時に保存する画面 %LOCALAPPDATA%\Edictora.Data\diagnostics で調べる）
   --wait <分>       login で待つ時間（既定 10 分）。login は常にウィンドウを表示します
   --help            この説明を表示
   --version         バージョンを表示

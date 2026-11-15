@@ -111,7 +111,7 @@ impl UpdateOutcome {
             ),
             UpdateOutcome::Busy => "別の更新処理が動いているため、何もしませんでした。".to_string(),
             UpdateOutcome::AppInUse { from, to } => format!(
-                "{from} → {to} の更新はダウンロード済みですが、実行中の edictora（login / pull / diff / push / submit）があるため適用を後に回しました。終わってから edictora update を実行してください。"
+                "{from} → {to} の更新はダウンロード済みですが、実行中の edictora（login / pull / diff / push / submit、または AI クライアントが起動した MCP サーバーの edictora mcp）があるため適用を後に回しました。終わってから（MCP はクライアントを閉じてから）edictora update を実行するか、次のログオンを待ってください。"
             ),
         }
     }

@@ -124,7 +124,7 @@ $AccountId = '10901bfadbf1005164774a7350082985'
 $SecretsPath = 'D:\Dev\Secret\secrets.json'
 # 署名者の CN。証明書の年次更新で thumbprint が変わっても同じ値で照合できる。
 $CertSubjectName = 'Open Source Developer Yuichiro Shinozaki'
-# 他アプリ (Taskmetry・Skilvella) と揃えた Velopack CLI の版。変えるときは release.yml の導入版も合わせる。
+# 他アプリ (Skilvella など) と揃えた Velopack CLI の版。変えるときは release.yml の導入版も合わせる。
 $VpkVersion = '1.2.161'
 # Velopack の識別子。packId はインストール先 (%LOCALAPPDATA%\Edictora) と更新フィードの名前を決めるため、
 # 一度配布したら変えない (変えると既存の利用者が自動更新を受け取れなくなる)。

@@ -120,6 +120,68 @@ edictora submit --item <id> --yes               # 1 件を審査に送信
 `pull` / `diff` / `push` / `submit` は、Chrome をウィンドウなし（ヘッドレス）で動かすので、作業中に Chrome が前面へ出てきません。
 動きを目で確かめたいときは `--show-browser` を付けるとウィンドウを表示します。`login` は手で操作するため、常にウィンドウを表示します。
 
+> [!WARNING]
+> `--show-browser` は人が画面を見るためのものです。AI エージェントやスクリプトから実行するときは付けないでください。利用者の画面に Chrome のウィンドウが出て、作業の邪魔になります（AI には画面が見えないので、原因調査の役にも立ちません）。
+> 失敗の原因は、エラー文（覆っていた要素・要素の枠・画面の大きさを含みます）と、失敗時に保存する画面（`%LOCALAPPDATA%\Edictora.Data\diagnostics`、保存先はエラー文にも出ます）で調べてください。`pull` / `diff` の読み出しに失敗したときも画面を保存します。
+
+### 4. AI エージェントから使う（MCP）
+
+`edictora mcp` は、標準入出力で動く MCP サーバーです。Claude Code や Codex などに登録すると、AI が掲載情報を直すときに Edictora を見つけて使えます。
+
+Setup でインストールすると、**Claude Code と Codex には自動で登録します**（それぞれの公式 CLI `claude` / `codex` が PATH にある場合。アンインストールすると、Edictora を指す登録だけを自動で外します）。インストールの時点で CLI が無かった・時間内に終わらなかった場合は、次のログオンでやり直します。一度登録した後に自分で外した登録は、もう一度足しません。
+CLI を後から入れた場合も、次のログオンで自動で登録します。Portable 版や、Claude Desktop・ゲートウェイなど上の 2 つ以外のクライアントでは、次のどれかで一度だけ登録してください。
+コマンドには、インストール先の exe を絶対パスで指定します（Setup 版は `%LOCALAPPDATA%\Edictora\current\edictora.exe`。自動更新で中身が替わってもこのパスは変わりません。Portable 版は展開した場所の `current\edictora.exe`）。
+PATH の `edictora` でも動きますが、インストール前から起動しているクライアントは新しい PATH を知らないため、絶対パスをおすすめします。
+
+**Claude Code**（全プロジェクトで使う）
+
+```powershell
+claude mcp add --scope user edictora -- "$env:LOCALAPPDATA\Edictora\current\edictora.exe" mcp
+```
+
+**Codex**
+
+```powershell
+codex mcp add edictora -- "$env:LOCALAPPDATA\Edictora\current\edictora.exe" mcp
+```
+
+または `%USERPROFILE%\.codex\config.toml` に書きます（`<ユーザー名>` は置き換える）。
+
+```toml
+[mcp_servers.edictora]
+command = 'C:\Users\<ユーザー名>\AppData\Local\Edictora\current\edictora.exe'
+args = ["mcp"]
+```
+
+**Claude Desktop など、JSON の設定ファイルで登録するクライアント**（`<ユーザー名>` は置き換える）
+
+```json
+{
+  "mcpServers": {
+    "edictora": {
+      "command": "C:\\Users\\<ユーザー名>\\AppData\\Local\\Edictora\\current\\edictora.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+MCP のゲートウェイ（Toolport など）を使っている場合は、ゲートウェイ側に同じコマンド（stdio、引数 `mcp`）を登録します。
+
+| ツール | 内容 |
+|---|---|
+| `edictora_list_items` | 設定ファイルの対象（アイテム・ロケール・正本ファイル）を表示（ブラウザを開かない） |
+| `edictora_diff` | 正本との差分を表示（読み取りのみ） |
+| `edictora_pull` | 現在値を表示（読み取りのみ） |
+| `edictora_push` | 差分のある欄を書き換えて下書き保存。`confirm: true` が無ければ差分を表示して止まる |
+| `edictora_submit` | 1 件を審査に送信。`item` と `confirm: true` が必須 |
+
+- 中身は CLI と同じ処理で、安全策・終了コードも同じです（結果の先頭に終了コードとその意味が出ます。差分あり（3）は失敗扱いにしません）。
+- 画面の表示（`--show-browser`）・`login`・プロファイルや chrome.exe の指定は、ツールから選べません。Chrome は常にウィンドウなしで動きます。
+- ログインが切れていたら、ツールは「端末で `edictora login` を実行してください」と返します。ログインは利用者が行います。
+- 呼び出しは 1 件ずつ順に実行します。`notifications/cancelled` で実行中の呼び出しを中断できます。
+- 全アイテムの `diff` は数分かかることがあります。クライアントの待ち時間は長めにしてください。
+
 ## 安全策
 
 - 既定は差分表示だけで、何も変更しません。書き換えは `push --yes`、送信は `submit --item <id> --yes` を明示したときだけです。
