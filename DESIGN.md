@@ -29,7 +29,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 | `dashboard/` | ダッシュボード操作。`urls.rs`（publisherId の取り出し）/ `text.rs`（画面の文言）/ `page_scripts.rs`（埋め込み JS の呼び出し）/ `selectors.rs`（要素の選択）/ `write_gate.rs`（書き込み可否）/ `item_page.rs`（1 操作ずつの実装）/ `browser.rs`（接続とログイン確認）。trait `ListingPage` が手順と画面操作の境目 |
 | `net/` | `winhttp.rs`: WinHTTP を FFI で直接使う HTTP クライアント（GET だけ、メモリかファイルへ受ける）。自動更新が使う |
 | `update/` | 自動更新。`locate.rs`（インストールの判定）/ `manifest.rs`（`sq.version`）/ `feed.rs`（フィードと更新先の選択）/ `version.rs`（SemVer）/ `source.rs`（配信元）/ `download.rs`（ダウンロードと検証）/ `hash.rs`（CNG）/ `lock.rs` / `apply.rs`（Update.exe の起動。trait `ApplyLauncher` が境目） |
-| `install/` | Velopack のフック（`hooks.rs`）と HKCU の Run・PATH の読み書き（`registry.rs`） |
+| `install/` | Velopack のフック（`hooks.rs`）、HKCU の Run・PATH の読み書き（`registry.rs`）、Claude Code・Codex への MCP 自動登録・解除（`connect.rs`） |
 | `services.rs` | pull・diff・push・submit の手順と中止判断 |
 | `cli/` | 引数解析・実行と終了コード・差分表示 |
 | `mcp/` | MCP サーバー（`edictora mcp`）。標準入出力の改行区切り JSON-RPC。ツールの中身は `CliApp::run` を呼んで出力をメモリで受けるだけ |

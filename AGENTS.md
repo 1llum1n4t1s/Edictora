@@ -23,7 +23,7 @@ crates/edictora/
 │  ├─ net/winhttp.rs  … WinHTTP の FFI（GET だけ、メモリかファイルへ受ける）。自動更新が使う
 │  ├─ update/         … 自動更新: locate.rs / manifest.rs（sq.version）/ feed.rs / version.rs（SemVer）/ source.rs（配信元）
 │  │                    download.rs（ダウンロードと検証）/ hash.rs（CNG）/ lock.rs / apply.rs（Update.exe の起動）
-│  ├─ install/        … Velopack のフック（hooks.rs）と HKCU の Run・PATH（registry.rs）
+│  ├─ install/        … Velopack のフック（hooks.rs）と HKCU の Run・PATH（registry.rs）/ Claude Code・Codex への MCP 自動登録・解除（connect.rs）
 │  ├─ updater_main.rs … 更新用 exe（edictora-updater.exe、windows_subsystem = "windows"）の入口
 │  ├─ services.rs     … pull・diff・push・submit の手順と中止判断
 │  ├─ cli/            … args.rs（引数解析）/ mod.rs（実行と終了コード）/ diff_formatter.rs
