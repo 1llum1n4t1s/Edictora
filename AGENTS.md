@@ -114,10 +114,10 @@ cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
 
 ## リリース
 
-詳細は [docs/release.md](docs/release.md)。通常の公開は、`/vava` で版を上げて push した後に CI の `release.yml`（手動起動・Environment `release`、承認待ちなし）で行い、手元から重ねて配信しない。`edictora.exe` と `edictora-updater.exe` を `vpk pack`（Velopack 1.2.161、packId `Edictora`、チャンネル `win`）でパッケージにし、その中で Sigilune（`scripts/Sigilune.Common.ps1`、Certum SimplySign のクラウド鍵）が 1 ファイルずつ署名する。nupkg・Setup・Portable とフィード `releases.win.json` を R2（`edictora-updates`、`https://edictora.kagayoi.com`）へ配信する。CI は `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` / `CLOUDFLARE_API_TOKEN` を Environment の Secrets から受け取る。
+詳細は [docs/release.md](docs/release.md)。通常の公開は、`/vava` が main と `release/<version>` を push すると、`release/**` への push で CI の `release.yml`（Environment `release`、承認待ちなし）が自動で起動して行い、手元から重ねて配信しない。`workflow_dispatch` は同じ `release/<version>` を指定した再実行にだけ使い、main を指定した実行は Environment `release` が `release/*` だけを許可するため拒否される（タグは使わない）。`edictora.exe` と `edictora-updater.exe` を `vpk pack`（Velopack 1.2.161、packId `Edictora`、チャンネル `win`）でパッケージにし、その中で Sigilune（`scripts/Sigilune.Common.ps1`、Certum SimplySign のクラウド鍵）が 1 ファイルずつ署名する。nupkg・Setup・Portable とフィード `releases.win.json` を R2（`edictora-updates`、`https://edictora.kagayoi.com`）へ配信する。CI は `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` / `CLOUDFLARE_API_TOKEN` を Environment の Secrets から受け取る。
 
 ```powershell
-gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref main
+gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref release/<version>
 ```
 
 ローカル実行は検証（`-SkipUpload`）に使う。事前に Sigilune のクラウドログインを確認し、失敗時は `sigilune status` で登録を確認するよう案内し、ログインを自動再試行しない。

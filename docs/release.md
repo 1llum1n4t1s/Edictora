@@ -33,10 +33,10 @@ EdictoraのWindows配布物は、Rust版CLI `edictora.exe` と自動更新用の
 
 ## アプリのリリース
 
-通常のリリースは、`/vava` で版を上げて push した後に GitHub Actions の Release ワークフローを手動起動すると、承認待ちなしで `scripts/release-local.ps1` が実行されます（Secrets は Environment `release` から渡します。workflow が vpk 1.2.161 を導入します）。
+通常のリリースは、`/vava` が main と `release/<version>` を push すると、`release/**` への push で GitHub Actions の Release ワークフローが自動で起動し、承認待ちなしで `scripts/release-local.ps1` が実行されます（Secrets は Environment `release` から渡します。workflow が vpk 1.2.161 を導入します）。手動起動（`workflow_dispatch`）は、同じ `release/<version>` を指定した再実行にだけ使います。main を指定した実行は、Environment `release` が `release/*` だけを許可するため拒否されます。タグは使いません。
 
 ```powershell
-gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref main
+gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref release/<version>
 # 公開せずに確認: -f skip_upload=true / 古い版の削除も行う: -f cleanup=true
 ```
 
