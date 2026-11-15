@@ -28,6 +28,7 @@ crates/edictora/
 │  ├─ services.rs     … pull・diff・push・submit の手順と中止判断
 │  ├─ cli/            … args.rs（引数解析）/ mod.rs（実行と終了コード）/ diff_formatter.rs
 │  ├─ mcp/mod.rs      … MCP サーバー（`edictora mcp`、標準入出力の JSON-RPC）。ツールの中身は CliApp::run を呼ぶだけ
+│  ├─ i18n.rs         … 利用者向け出力の表示言語（ja / en）。`tr!` / `trs!` で日英を呼び出し箇所に並べる
 │  ├─ logging.rs      … %LOCALAPPDATA%\Edictora.Data\logs。publisherId を伏せる
 │  ├─ app_paths.rs / error.rs / cancel.rs（Ctrl+C）/ util.rs
 └─ tests/             … 結合テスト（ブラウザ不要。CDP は 127.0.0.1 の偽サーバー）とフィクスチャ
@@ -44,7 +45,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **Chrome の起動引数は最小限**（`--user-data-dir`・`--remote-debugging-port=0`・`--no-first-run`・`--no-default-browser-check` と描画の間引き抑止 3 つ・`--disable-features=CalculateNativeWinOcclusion`、ヘッドレス時だけ `--headless=new --window-size=1280,900`）。`--enable-automation` などの自動化フラグや画面外配置は付けない（Google ログインを弾かれる恐れ）。変える場合は実画面でログインを再検証する。Chrome の stdout/stderr は捨てる。
 - **プロファイルは秘密情報で、ツールは絶対に削除しない。** 終了は `Browser.close`、応答しないときだけプロセスを止める。ログイン待ちの間はタブに接続しない。
 - **publisherId はログイン後の URL から実行時に取り出し、コード・設定・ログに書かない。** ログと CLI のエラー出力は伏せ字処理を通す。
-- **要素はラベル・役割・文言で探し、クラス名に頼らない。** 文言は `dashboard/text.rs` に集める。ラベルは 1 行単位の完全一致、言語一覧の開閉は `aria-expanded`、0×0 の一覧は数えない。候補がちょうど 1 つに絞れなければ止める（最初の 1 つを選ばない）。外部のサービスに選ばせる経路は持たない（判断は `dashboard/selectors.rs` の純粋関数だけ）。ダッシュボードは日本語表示が前提。
+- **要素はラベル・役割・文言で探し、クラス名に頼らない。** 文言は `dashboard/text.rs` に集める。ラベルは 1 行単位の完全一致、言語一覧の開閉は `aria-expanded`、0×0 の一覧は数えない。候補がちょうど 1 つに絞れなければ止める（最初の 1 つを選ばない）。外部のサービスに選ばせる経路は持たない（判断は `dashboard/selectors.rs` の純粋関数だけ）。ダッシュボードの画面言語は `<html lang>` で 1 回だけ判定して文言セット（`text.rs` の JA / EN）を 1 つ選ぶ（要素ごとに両言語で探さない）。lang が空なら日本語、ja / en 以外は止める。英語の文言は実画面で未確認の暫定値で、英語で足す判定は「止める」側だけにし、「書いてよい」側へ推測で足さない（`write_gate.rs` の `UNCONFIRMED_LOOKALIKE_KEYWORDS` など）。
 - **Chrome を前面に出さない。** `login` 以外はヘッドレス（`--show-browser` で表示）、UA の HeadlessChrome は Chrome に置き換え、操作の前に毎回 `Emulation.setFocusEmulationEnabled`。`Page.bringToFront` は使わない。クリックは scrollIntoView 後に矩形中心へ実際のマウス入力（`clickCount: 1`）、覆われていたら押さない。書き換えはフォーカス → 全選択 → `Input.insertText`。DOM の `value` 直接代入はしない。待ちは固定 sleep でなく上限つきの条件確認。
 - **ページ内スクリプトに利用者の入力値を埋め込まない。** 書き込む文字列は CDP の `Input.insertText` で渡す。
 - **書き込みの安全策**: `write_gate.rs` は確認済みの状態（許可リスト）以外を止める。審査の取り消しはしない。言語ごとに「切替 → 書換 → 全欄照合 → 保存 → 再読込 → 照合」、最後に全言語を読み直す。途中で失敗したら、そのアイテムの残りは行わない。beforeunload が出たら「留まる」を選び、変更を捨てずに中止する。
@@ -71,7 +72,8 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 
 ## コーディング規約
 
-- 利用者向けの文言・コメント・コミットメッセージは **日本語**。コメントは目的・設計意図・制約を多めに書く
+- コメント・コミットメッセージは **日本語**。コメントは目的・設計意図・制約を多めに書く
+- 利用者に見せる出力（CLI の進捗・結果・エラー、差分、ヘルプ、MCP のツール説明）は日英併記の `tr!` / `trs!`（`i18n.rs`）で書く。表示言語は `EDICTORA_LANG`（ja / en）→ OS の表示言語、`init` 前は日本語（既存テストは日本語の文言を確かめる）。ログの定型文は日本語のまま。README は `README.md`（日本語）と `README.en.md`（英語）の両方を揃える
 - 依存は最小限（`serde` / `serde_json` / `regex` / `tungstenite`（同期・TLS なし・`handshake` のみ）、テスト専用に `sha2`）。HTTP/TLS crate は使わない（DevTools の確認は localhost への素の HTTP/1.1）。**外部への HTTPS（自動更新の `edictora.kagayoi.com`）は、crate を足さず WinHTTP を FFI で直接使い、`net/winhttp.rs` に集める**（リダイレクト無効・操作ごとのタイムアウトと全体の期限・ワーカースレッドで実行し Ctrl+C で抜ける・応答の上限・平文は 127.0.0.1 のテストだけ）。Ctrl+C・レジストリ・ローカル時刻・環境変数展開・ハッシュ（CNG）・WM_SETTINGCHANGE は Windows API を直接宣言して使う
 - CDP は入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答待ちの間もイベントを配る
 - `AppPaths` は値として注入する。テストは `target/tmp` 配下を根にし、実プロファイル・実設定を解決しない。CLI のテストはブラウザを開く関数に「呼ばれたら panic」を渡す
@@ -94,7 +96,7 @@ cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
 
 ## 既知の制約 / 今後の課題
 
-- ダッシュボードの英語表示は未対応（文言で要素を探すため）
+- ダッシュボードの英語表示は認識するが、英語の文言は実画面で未確認（日本語の画面だけ確認済み）
 - 実画面で確認済み: `pull` / `diff`（ヘッドレス）、2026-11-15 に 9 言語のアイテムでの `push`（説明欄）と `submit`、ステータス「拒否」での書き込み。Ctrl+C での中断、beforeunload の扱いは Rust 版ではまだ実画面で確かめていない
 - 未確認の画面状態: 審査待ちアイテムの編集画面、URL 欄の書き換えと保存、言語が 1 つだけのアイテム。`write_gate.rs` の許可リスト（公開済み・下書き・拒否）は実画面の表記で確かめて更新する
 - **「拒否」を許可したことの未確認のリスク**: 拒否のアイテムを再提出した直後も表記は「拒否」のままだった。審査中でも「拒否」と出続けるなら、審査中のアイテムに書き込めてしまう。再提出後の表記を実画面で確かめるまで、拒否のアイテムへの push は利用者の確認のうえで行う（DESIGN.md「実画面での確認状況」）
