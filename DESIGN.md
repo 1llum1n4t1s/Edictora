@@ -35,6 +35,7 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 | `cli/` | 引数解析・実行と終了コード・差分表示 |
 | `mcp/` | MCP サーバー（`edictora mcp`）。標準入出力の改行区切り JSON-RPC。ツールの中身は `CliApp::run` を呼んで出力をメモリで受けるだけ |
 | `i18n.rs` | 利用者向け出力の表示言語（9 言語）の決定と、辞書（`locales/<タグ>.json`）をキーで引く `tr!` / `trs!` |
+| `redirect.rs` | MSIX パッケージ内のアプリから起動されたときの保存先リダイレクト（アプリ専用領域）の検出と案内。「パッケージ内のアプリからの保存先リダイレクト」の節を参照 |
 | `logging.rs` ほか | ログ（publisherId を伏せる）、保存先（`AppPaths`）、エラー型、Ctrl+C |
 
 ### 役割分担の考え方
@@ -133,6 +134,15 @@ Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームペー
 ### 区間切り出し
 
 - 切り出し結果は検証スクリプト（push.mjs）と同じにする。`crates/edictora/tests/fixtures/ReplaceTranslator` の SHA-256・文字数（ja=1492 / en=3172）のテストで固める。
+
+### パッケージ内のアプリからの保存先リダイレクト（`redirect.rs`）
+
+- 背景（実害）: Claude デスクトップアプリは MSIX パッケージで、その中の Bash ツールから起動したプロセスが `%APPDATA%` / `%LOCALAPPDATA%` の下に**本物にまだ無いフォルダー**を作ると、本物ではなくパッケージ専用領域 `%LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalCache\{Roaming,Local}\...` に作られる。本物に既にあるフォルダーへの書き込みは本物に入る。両方にあるとパッケージ内のプロセスは専用領域を優先して読む。結果として `%APPDATA%\Edictora\config.json` が専用領域にだけできて、通常のターミナルからは「設定が無い」状態になった（2026-11-15）。
+- 検出: 対象を開いて `GetFinalPathNameByHandleW`（kernel32 を FFI で直接。`FILE_FLAG_BACKUP_SEMANTICS`・アクセス権 0 で、何も作らず変えない）で最終パスを得る。仮想化は最終パスに現れる（Claude の Bash から `%APPDATA%\rtk` で実測し、`...\Packages\Claude_...\LocalCache\Roaming\rtk` が返ることを確認）。判定は文字列だけの純粋関数 `detect_redirect(要求, 最終)`: 2 つが（`\\?\`・大文字小文字・区切り・末尾の `\` を除いて）異なり、かつ最終が `...\AppData\Local\Packages\<name>\LocalCache\` の下であること。利用者が最初から専用領域のパスを指定した場合と、専用領域以外への付け替え（ジャンクションなど）は対象にしない。
+- 読めたとき: 既定の設定ファイル（`--config` 未指定）と Chrome プロファイル（`profile_directory`）がリダイレクトされていれば、標準エラーへ警告を種類ごとに 1 プロセス 1 回出す（実際の保存先・通常のターミナルから見えないこと・本物の場所へ移す対処）。設定は `CliApp::run` の検証後（Chrome を開く前）、プロファイルはブラウザを開いた直後（login は作成直後に当たる）。MCP では標準エラーは結果の「Progress and errors」に入り、`edictora_list_items` は結果の本文に入る（標準出力の JSON-RPC は壊さない）。文言は 9 言語の辞書（`redirect.*`）で、MCP では英語。
+- 見つからないとき: 既定の設定ファイルが無いとき、`AppPaths::packages_root`（既定 `%LOCALAPPDATA%\Packages`、環境変数 `EDICTORA_PACKAGES_ROOT` で差し替え。`EDICTORA_LOCAL_ROOT` / `EDICTORA_ROAMING_ROOT` を使う実行・テストでは `None` で探さない）の下の `*\LocalCache\Roaming\Edictora\config.json` を読み取りだけで探し、あればエラー文に候補のパスと移す先を添える。自動で読み込まない・移さない（利用者のデータで、どちらが正かは利用者が決める）。
+- 起きにくくする（判断）: パッケージ内のプロセスから「本物へ確実に」フォルダーを作る手段は無い（子プロセスもパッケージの仮想化を受ける）ので、作成を回避する実装はしない。代わりに、**パッケージの外で動く経路**だけで本物の場所を先に用意する: Velopack の install / updated フックと、ログオン時の `edictora-updater.exe` が `ensure_data_folders` で `%APPDATA%\Edictora` と `%LOCALAPPDATA%\Edictora.Data` を作る（ベストエフォート。既にあれば何もしない。以後パッケージ内のアプリが書いても本物に入る）。パッケージ内から呼ばれて仮想化先へ作られた場合は、作成後に検出してログへ警告を残す。Edictora が新規作成する箇所（login のプロファイル作成・ログ）は、作成後の検出と警告にとどめる。config の雛形作成は無い。
+- 未確認: 実際に Setup・ログオン時の更新用 exe で本物の場所にフォルダーができることの実機確認、パッケージ内から login して警告が出る実機の流れ（Chrome を起動する確認は行っていない）。
 
 ### 配布・インストール・自動更新（Velopack）
 

@@ -424,6 +424,13 @@ fn list_items(paths: &AppPaths) -> Value {
         config.source_path.display(),
         config.items.len()
     );
+    // 設定がアプリ専用領域（MSIX パッケージ内の仮想化先）から読まれていれば知らせる
+    // （この経路は CliApp を通らないので、ここでも確かめる。標準出力は JSON-RPC 専用なので結果の文面に含める）
+    if let Some(warning) = crate::redirect::config_warning(&config.source_path) {
+        text.push('\n');
+        text.push_str(&warning);
+        text.push('\n');
+    }
     for item in &config.items {
         text.push_str(&format!(
             "\n- {} ({})\n  Repository: {}\n",

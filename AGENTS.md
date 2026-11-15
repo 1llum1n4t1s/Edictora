@@ -31,6 +31,7 @@ crates/edictora/
 │  ├─ mcp/mod.rs      … MCP サーバー（`edictora mcp`、標準入出力の JSON-RPC）。ツールの中身は CliApp::run を呼ぶだけ
 │  ├─ i18n.rs         … 利用者向け出力の表示言語（9 言語）と辞書の引き方。`tr!` / `trs!` でキーを参照する。辞書は `locales/<タグ>.json`
 │  ├─ logging.rs      … %LOCALAPPDATA%\Edictora.Data\logs。publisherId を伏せる
+│  ├─ redirect.rs     … MSIX パッケージ内のアプリ（Claude デスクトップなど）から起動されたときの保存先リダイレクトの検出（`GetFinalPathNameByHandleW` と、文字列だけの純粋関数 `detect_redirect`）・警告・設定が見つからないときの専用領域の候補探し
 │  ├─ app_paths.rs / error.rs / cancel.rs（Ctrl+C）/ util.rs
 └─ tests/             … 結合テスト（ブラウザ不要。CDP は 127.0.0.1 の偽サーバー）とフィクスチャ
 page-scripts/         … ページ内で評価する TypeScript（src/edictora.ts）→ Bun で dist/edictora.js を生成してコミット
@@ -65,6 +66,8 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **更新は `edictora update` とログオン時の `edictora-updater.exe` だけ**。pull / diff / push / submit の中では確かめない。`update` は設定を読まず Chrome を開かない。検証（サイズと SHA256、無ければ SHA1）に通らないパッケージは適用しない。配信元は定数 `https://edictora.kagayoi.com`、検証用に `EDICTORA_UPDATE_URL`（平文は 127.0.0.1 だけ）。テストで本物の配信元・Update.exe を使わない（127.0.0.1 の偽配信元と偽の `ApplyLauncher`、CLI は偽の更新処理）。
 
 ## 保存先
+
+- **MSIX パッケージ内のアプリ（Claude デスクトップの Bash など）から実行すると、`%APPDATA%` / `%LOCALAPPDATA%` に新規作成したフォルダーは本物ではなくパッケージ専用領域（`%LOCALAPPDATA%\Packages\<名前>\LocalCache\...`）へ入り、通常のターミナルから見えなくなる**（本物に既にあるフォルダーへの書き込みは本物に入る。両方あると専用領域が優先）。Edictora は既定の設定とプロファイルがそこから読まれていれば標準エラーへ警告し（`redirect.rs`）、既定の設定が無いときは専用領域の候補をエラー文に添える。自動で読み込んだり移したりしない。AI エージェントは設定・データのフォルダーを新規に作らず、設定を作るときは本物の場所にあるか確かめる。詳細は DESIGN.md「パッケージ内のアプリからの保存先リダイレクト」
 
 - 設定（正本の対応づけ）: `%APPDATA%\Edictora\config.json`（`--config` で変更可）
 - Chrome プロファイル: `%LOCALAPPDATA%\Edictora.Data\chrome-profile`（設定の `profileDir` / `--profile` で変更可）

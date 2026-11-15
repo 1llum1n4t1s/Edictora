@@ -261,6 +261,10 @@ args = ["mcp"]
 Chrome 設定檔包含您的登入 Cookie。請勿分享，並在不再需要時自行刪除。
 發布者 ID（資訊主頁 URL 的一部分）在記錄中會被遮蔽。
 
+### 找不到設定檔時（Claude 桌面應用程式）
+
+Claude 桌面應用程式是封裝（MSIX）應用程式。從它內部啟動的程式在 `%APPDATA%` 或 `%LOCALAPPDATA%` 下建立**新**資料夾時，Windows 會把它放進應用程式專用儲存空間（`%LOCALAPPDATA%\Packages\<套件>\LocalCache\...`），而不是實際位置，一般終端機看不到。當設定檔或 Chrome 設定檔是從這樣的位置讀取時，Edictora 會在標準錯誤輸出警告；設定檔不存在時會列出在那裡找到的副本。解決方法是將該檔案（資料夾）移到訊息中顯示的實際位置，例如 `%APPDATA%\Edictora\config.json`。Edictora 不會自動讀取或移動這些副本。
+
 ## 建置
 
 主程式以 Rust 撰寫（`crates/edictora/`）。

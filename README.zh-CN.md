@@ -261,6 +261,10 @@ args = ["mcp"]
 Chrome 配置文件包含您的登录 Cookie。请勿分享它，不再需要时请自行删除。
 发布者 ID（信息中心 URL 的一部分）在日志中会被遮蔽。
 
+### 找不到配置文件时（Claude 桌面应用）
+
+Claude 桌面应用是打包（MSIX）应用。从它内部启动的程序在 `%APPDATA%` 或 `%LOCALAPPDATA%` 下创建**新**文件夹时，Windows 会把它放进应用专用存储（`%LOCALAPPDATA%\Packages\<包>\LocalCache\...`），而不是真实位置，普通终端看不到。当配置或 Chrome 配置文件是从这样的位置读取时，Edictora 会在标准错误输出警告；配置不存在时会列出在那里找到的副本。解决办法是将该文件（文件夹）移到消息中显示的真实位置，例如 `%APPDATA%\Edictora\config.json`。Edictora 不会自动读取或移动这些副本。
+
 ## 构建
 
 主程序使用 Rust 编写（`crates/edictora/`）。

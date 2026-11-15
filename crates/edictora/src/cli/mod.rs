@@ -24,6 +24,7 @@ use crate::listing::{
     build_expected_images,
 };
 use crate::logging::{LogLevel, log, log_error_detail, redact};
+use crate::redirect;
 use crate::services::{self, ImageSnapshot, LocalePushOutcome};
 use crate::update::UpdateOutcome;
 use crate::update::lock::{LockFile, is_held_by_another};
@@ -205,6 +206,14 @@ impl<'a> CliApp<'a> {
             }
         };
 
+        // ── 既定の設定ファイルがアプリ専用領域（MSIX パッケージ内のアプリの仮想化先）から読まれていれば警告 ──
+        // --config で明示された場合は利用者の指定なので対象にしない。標準エラーなので MCP の JSON-RPC も壊さない
+        if command.config_path.is_none()
+            && let Some(warning) = redirect::config_warning(&config.source_path)
+        {
+            self.errln(&warning);
+        }
+
         // ── 実行中の印（更新の適用側に、Chrome を開くコマンドが動いていることを知らせる）──
         // Update.exe の apply がインストール先配下のプロセスを止めて push の途中で落とすのを防ぐため、
         // ブラウザ操作の間だけ共有ロックを持つ（CLI 同士は同時に動ける）。更新の適用中（排他で持たれている）
@@ -329,6 +338,8 @@ impl<'a> CliApp<'a> {
         // ログインは利用者が画面で操作するので、常にウィンドウを表示する
         let options = self.browser_options(config, false).visible();
         let mut browser = (self.open_browser)(&options, cancel)?;
+        // プロファイルはここで新規に作られうるので、作成後に仮想化先へ入っていないか確かめる
+        self.warn_profile_redirect(config);
         let progress = self.progress();
         let result = browser.wait_for_login(
             command.login_wait.unwrap_or(DEFAULT_LOGIN_WAIT),
@@ -341,6 +352,13 @@ impl<'a> CliApp<'a> {
         Ok(exit_codes::SUCCESS)
     }
 
+    /// Chrome プロファイルがアプリ専用領域へリダイレクトされていれば、標準エラーへ警告を 1 回出す
+    fn warn_profile_redirect(&self, config: &EdictoraConfig) {
+        if let Some(warning) = redirect::profile_warning(&config.profile_directory) {
+            self.errln(&warning);
+        }
+    }
+
     /// ログイン済みのブラウザを開く。既定はヘッドレス（作業中に前面へ出てこない）。--show-browser のときだけウィンドウを表示する
     fn open_logged_in(
         &self,
@@ -349,6 +367,7 @@ impl<'a> CliApp<'a> {
     ) -> Result<DashboardBrowser> {
         let mut browser =
             (self.open_browser)(&self.browser_options(config, self.show_browser), cancel)?;
+        self.warn_profile_redirect(config);
         // 失敗したら drop で閉じる（自分で起動した Chrome は Browser.close で正常終了させる）
         browser.ensure_logged_in(cancel)?;
         Ok(browser)

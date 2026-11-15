@@ -271,6 +271,11 @@ pub fn run_hook(hook: &Hook) -> i32 {
             return 0;
         }
     };
+    // 設定フォルダー・データフォルダーを本物の場所へ先に用意する（インストール・更新はパッケージの外で
+    // 動くのが普通。後からパッケージ内のアプリが書いても、本物に既にあれば本物へ入る）。uninstall では作らない
+    if matches!(hook.kind, HookKind::Install | HookKind::Updated) {
+        crate::redirect::ensure_data_folders(&crate::app_paths::AppPaths::from_environment());
+    }
     let portable = is_portable(&installation.root);
     let action = hook_action(hook.kind, portable);
     if action == HookAction::Nothing {

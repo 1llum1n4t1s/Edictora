@@ -261,6 +261,10 @@ Os dados ficam em `Edictora.Data`, separados do aplicativo, para que desinstalar
 O perfil do Chrome contém os seus cookies de login. Não o compartilhe e exclua-o você mesmo quando não precisar mais dele.
 O ID do publicador (parte da URL do painel) é ocultado nos logs.
 
+### Se a configuração parecer ausente (aplicativo de desktop do Claude)
+
+O aplicativo de desktop do Claude é um aplicativo empacotado (MSIX). Quando um programa iniciado dentro dele cria uma pasta **nova** em `%APPDATA%` ou `%LOCALAPPDATA%`, o Windows a coloca no armazenamento privado do aplicativo (`%LOCALAPPDATA%\Packages\<pacote>\LocalCache\...`) em vez do local real, e um terminal normal não consegue vê-la. O Edictora avisa na saída de erro quando lê a configuração ou o perfil do Chrome de um lugar assim e, se a configuração estiver ausente, lista as cópias encontradas lá. Para corrigir, mova o arquivo (ou a pasta) para o local real indicado na mensagem, por exemplo `%APPDATA%\Edictora\config.json`. O Edictora nunca lê nem move essas cópias por conta própria.
+
 ## Compilação
 
 O programa principal é escrito em Rust (`crates/edictora/`).

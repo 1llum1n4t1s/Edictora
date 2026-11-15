@@ -261,6 +261,10 @@ Data is kept in `Edictora.Data`, separate from the app, so that uninstalling doe
 The Chrome profile contains your sign-in cookies. Don't share it, and delete it yourself when you no longer need it.
 The publisher ID (part of the dashboard URL) is masked in the logs.
 
+### If the config seems to be missing (Claude desktop app)
+
+The Claude desktop app is a packaged (MSIX) app. When a program started from inside it creates a **new** folder under `%APPDATA%` or `%LOCALAPPDATA%`, Windows puts it in the app's private storage (`%LOCALAPPDATA%\Packages\<package>\LocalCache\...`) instead of the real location, and a normal terminal can't see it. Edictora warns on stderr when it is reading the config or the Chrome profile from such a place, and when the config is missing it lists any copy found there. To fix it, move the file (or folder) to the real location shown in the message, for example `%APPDATA%\Edictora\config.json`. Edictora never moves or reads those copies on its own.
+
 ## Building
 
 The main program is written in Rust (`crates/edictora/`).

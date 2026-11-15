@@ -34,6 +34,9 @@ pub struct AppPaths {
     pub local_root: PathBuf,
     /// `%APPDATA%\Edictora`（設定ファイル）
     pub roaming_root: PathBuf,
+    /// `%LOCALAPPDATA%\Packages`（MSIX パッケージ専用領域の根）。設定が見つからないときに、アプリ専用領域に
+    /// 取り残された設定の候補を探す場所（`redirect`）。`None` なら探さない（テスト・保存先を差し替えた実行）
+    pub packages_root: Option<PathBuf>,
 }
 
 impl AppPaths {
@@ -42,7 +45,14 @@ impl AppPaths {
         AppPaths {
             local_root: local_root.into(),
             roaming_root: roaming_root.into(),
+            packages_root: None,
         }
+    }
+
+    /// 専用領域の根を指定する（テスト用）
+    pub fn with_packages_root(mut self, packages_root: impl Into<PathBuf>) -> AppPaths {
+        self.packages_root = Some(packages_root.into());
+        self
     }
 
     /// 環境から既定の保存先を決める（`main` だけが呼ぶ）。
@@ -56,9 +66,20 @@ impl AppPaths {
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| folder("APPDATA").join(APP_NAME));
+        // 専用領域の根: 検証用の環境変数があればそれ。保存先を差し替えた実行（検証・テスト）では本物の
+        // Packages を見ない。それ以外は `%LOCALAPPDATA%\Packages`
+        let packages = std::env::var_os(crate::redirect::PACKAGES_ROOT_ENV)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                let overridden = std::env::var_os(LOCAL_ROOT_ENV).is_some_and(|v| !v.is_empty())
+                    || std::env::var_os(ROAMING_ROOT_ENV).is_some_and(|v| !v.is_empty());
+                (!overridden).then(|| folder("LOCALAPPDATA").join("Packages"))
+            });
         AppPaths {
             local_root: local,
             roaming_root: roaming,
+            packages_root: packages,
         }
     }
 

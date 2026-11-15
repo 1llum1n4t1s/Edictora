@@ -261,6 +261,10 @@ Die Daten liegen getrennt von der App in `Edictora.Data`, damit beim Deinstallie
 Das Chrome-Profil enthält Ihre Anmelde-Cookies. Geben Sie es nicht weiter und löschen Sie es selbst, wenn Sie es nicht mehr brauchen.
 Die Publisher-ID (Teil der Dashboard-URL) wird in den Logs maskiert.
 
+### Wenn die Konfiguration zu fehlen scheint (Claude-Desktop-App)
+
+Die Claude-Desktop-App ist eine gepackte (MSIX-)App. Legt ein aus ihr gestartetes Programm einen **neuen** Ordner unter `%APPDATA%` oder `%LOCALAPPDATA%` an, landet er im privaten Speicher der App (`%LOCALAPPDATA%\Packages\<Paket>\LocalCache\...`) statt am echten Ort, und ein normales Terminal sieht ihn nicht. Edictora warnt auf der Fehlerausgabe, wenn es Konfiguration oder Chrome-Profil von so einem Ort liest, und listet bei fehlender Konfiguration die dort gefundenen Kopien auf. Zur Behebung verschieben Sie die Datei (bzw. den Ordner) an den in der Meldung genannten echten Ort, z. B. `%APPDATA%\Edictora\config.json`. Edictora liest oder verschiebt diese Kopien nie von sich aus.
+
 ## Bauen
 
 Das Hauptprogramm ist in Rust geschrieben (`crates/edictora/`).

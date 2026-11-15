@@ -24,6 +24,7 @@ use serde::de::{MapAccess, Visitor};
 use crate::app_paths::AppPaths;
 use crate::error::{Error, Result};
 use crate::listing::ListingField;
+use crate::redirect;
 use crate::util::{
     expand_env, is_blank, parse_absolute_url, read_text_file,
     strip_json_comments_and_trailing_commas,
@@ -201,16 +202,29 @@ pub fn load(
     require_file: bool,
     paths: &AppPaths,
 ) -> Result<EdictoraConfig> {
-    let raw = expand(config_path)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| paths.default_config_path());
+    let explicit = expand(config_path).map(PathBuf::from);
+    let is_default = explicit.is_none();
+    let raw = explicit.unwrap_or_else(|| paths.default_config_path());
     let path = full_path(&raw);
     if !path.is_file() {
         if require_file {
-            return Err(Error::Config(tr!(
+            let mut message = tr!(
                 "config.config_file_not_found_create_one_using",
                 path = path.display()
-            )));
+            );
+            // 既定の場所に無いときだけ、アプリ専用領域（MSIX パッケージ内のアプリが作った側）に取り残された
+            // 設定が無いかを読み取りだけで探し、あれば候補を添える（自動では読み込まない・移さない）
+            if is_default
+                && let Some(root) = &paths.packages_root
+                && let Some(hint) = redirect::package_config_hint(
+                    &redirect::find_package_configs(root, &path),
+                    &path,
+                )
+            {
+                message.push('\n');
+                message.push_str(&hint);
+            }
+            return Err(Error::Config(message));
         }
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
         return Ok(EdictoraConfig {

@@ -261,6 +261,10 @@ Les données sont conservées dans `Edictora.Data`, séparément de l'applicatio
 Le profil Chrome contient vos cookies de connexion. Ne le partagez pas et supprimez-le vous-même lorsque vous n'en avez plus besoin.
 L'ID de l'éditeur (une partie de l'URL du tableau de bord) est masqué dans les journaux.
 
+### Si la configuration semble absente (application de bureau Claude)
+
+L'application de bureau Claude est une application empaquetée (MSIX). Lorsqu'un programme lancé depuis celle-ci crée un **nouveau** dossier sous `%APPDATA%` ou `%LOCALAPPDATA%`, Windows le place dans le stockage privé de l'application (`%LOCALAPPDATA%\Packages\<paquet>\LocalCache\...`) au lieu de l'emplacement réel, et un terminal normal ne peut pas le voir. Edictora avertit sur la sortie d'erreur lorsqu'il lit la configuration ou le profil Chrome depuis un tel endroit et, si la configuration est absente, liste les copies trouvées à cet endroit. Pour corriger, déplacez le fichier (ou le dossier) vers l'emplacement réel indiqué dans le message, par exemple `%APPDATA%\Edictora\config.json`. Edictora ne lit ni ne déplace jamais ces copies de lui-même.
+
 ## Compilation
 
 Le programme principal est écrit en Rust (`crates/edictora/`).
