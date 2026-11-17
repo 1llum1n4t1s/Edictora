@@ -180,6 +180,7 @@ fn expected() -> ExpectedItem {
             ),
         ],
         images: None,
+        privacy: None,
     }
 }
 

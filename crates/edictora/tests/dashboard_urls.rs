@@ -4,7 +4,8 @@ mod common;
 
 use common::ITEM_A as ITEM;
 use edictora::dashboard::urls::{
-    ROOT, edit_url, is_edit_page_of, is_login_page, try_parse_publisher_id,
+    ROOT, edit_url, is_edit_page_of, is_login_page, is_privacy_page_of, privacy_url,
+    try_parse_publisher_id,
 };
 use edictora::logging::redact;
 
@@ -78,4 +79,38 @@ fn redact_ログに出す文字列からpublisher_idを伏せる() {
     assert!(redacted.contains(&format!("devconsole/<publisher>/{ITEM}/edit")));
     // 2 回通しても変わらない
     assert_eq!(redacted, redact(&redacted));
+}
+
+#[test]
+fn privacy_url_プライバシー_タブのurlを作る() {
+    let url = privacy_url(PUBLISHER, ITEM);
+    assert_eq!(
+        url,
+        format!("https://chrome.google.com/webstore/devconsole/{PUBLISHER}/{ITEM}/edit/privacy")
+    );
+    assert!(is_privacy_page_of(Some(&url), ITEM));
+    // 末尾のスラッシュ・大文字小文字の違いは同じ画面
+    assert!(is_privacy_page_of(
+        Some(&format!("{url}/")),
+        &ITEM.to_uppercase()
+    ));
+    // 掲載情報の編集画面・別のアイテム・別のタブは対象外
+    assert!(!is_privacy_page_of(Some(&edit_url(PUBLISHER, ITEM)), ITEM));
+    assert!(!is_privacy_page_of(
+        Some(&url),
+        "ponmlkjihgfedcbaponmlkjihgfedcba"
+    ));
+    assert!(!is_privacy_page_of(
+        Some(&format!(
+            "https://chrome.google.com/webstore/devconsole/{PUBLISHER}/{ITEM}/edit/listing"
+        )),
+        ITEM
+    ));
+    assert!(!is_privacy_page_of(
+        Some("https://accounts.google.com/signin"),
+        ITEM
+    ));
+    assert!(!is_privacy_page_of(None, ITEM));
+    // 「プライバシー」タブは編集画面の URL ではない（open_item の確認に取り違えない）
+    assert!(!is_edit_page_of(Some(&url), ITEM));
 }

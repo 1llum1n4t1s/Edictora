@@ -6,7 +6,8 @@
 //! - [`write_gate`] — 書き込み可否の判定。確認済みの状態以外はすべて止める（許可リスト方式）
 //! - [`item_page`] — 1 操作ずつの実装（開く・言語切替・読む・書く・画像の読み書き・保存・送信）
 //!
-//! 画面操作の境目の trait は 3 つ: [`EditorPage`]（共通）・[`ListingPage`]（テキストと審査送信）・[`ImagePage`]（画像。審査送信を持たない）
+//! 画面操作の境目の trait は 4 つ: [`EditorPage`]（共通）・[`ListingPage`]（テキストと審査送信）・[`ImagePage`]（画像。審査送信を持たない）・
+//! [`PrivacyPage`]（「プライバシー」タブ。審査送信を持たない）
 //! - [`browser`] — 専用プロファイルの Chrome と 1 タブへの接続
 
 pub mod browser;
@@ -17,6 +18,7 @@ pub mod text;
 pub mod urls;
 pub mod write_gate;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::cancel::CancelToken;
@@ -24,6 +26,7 @@ use crate::dashboard::write_gate::ItemPageState;
 use crate::error::Result;
 use crate::images::ImageSlot;
 use crate::listing::{FieldValues, ListingField};
+use crate::privacy::{DataKind, ExpectedPrivacy, PrivacyField, PrivacyReading};
 
 /// 確認ダイアログ（「審査のため送信」を押した後）の内容
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,4 +130,37 @@ pub trait ImagePage: EditorPage {
 
     /// ファイルを 1 枚追加する。枚数が 1 枚増え、alt の番号が揃い、エラー表示が無いことを確かめるまで待つ
     fn upload_image(&mut self, slot: ImageSlot, path: &Path, cancel: &CancelToken) -> Result<()>;
+}
+
+/// 「プライバシー」タブ（単一用途の説明・権限の正当性・データ使用の開示）の読み書き。
+///
+/// 画面の欄はラベルの行・役割で Rust 側が 1 つに絞る（絞れなければ止める）。審査送信は持たない
+/// （`EditorPage` ← `ListingPage` / `ImagePage` / `PrivacyPage` の分離を保つ。プライバシー タブの手順は型の上で審査送信を呼べない）。
+/// 日本語の画面だけを扱う（英語の画面の文言は実画面で未確認）。
+/// 書き込み可否（`get_state`）・下書き保存（`save_draft`）・読み込み直し（`reload`）は、このタブを開いている間は
+/// このタブに対して行う。
+pub trait PrivacyPage: EditorPage {
+    /// アイテムの「プライバシー」タブを開き、操作できる状態になるまで待つ
+    fn open_privacy(&mut self, item_id: &str, cancel: &CancelToken) -> Result<()>;
+
+    /// `targets` に書いた欄の現在値を読む（書いていない欄は読まない）。画面に無い欄は None のまま返す
+    fn read_privacy(
+        &mut self,
+        targets: &ExpectedPrivacy,
+        cancel: &CancelToken,
+    ) -> Result<PrivacyReading>;
+
+    /// テキスト欄（単一用途の説明・権限の正当性）を書き換え、値が `value` と完全一致することを確かめる
+    fn write_privacy_text(
+        &mut self,
+        field: &PrivacyField,
+        value: &str,
+        cancel: &CancelToken,
+    ) -> Result<()>;
+
+    /// データの種類のチェックボックスを、`wanted` にあるものだけがチェックされた状態にする（9 つとも確かめる）
+    fn set_data_kinds(&mut self, wanted: &BTreeSet<DataKind>, cancel: &CancelToken) -> Result<()>;
+
+    /// 3 つの宣誓チェックをすべて入れる（すでに入っているものは触らない）
+    fn check_certifications(&mut self, cancel: &CancelToken) -> Result<()>;
 }

@@ -55,6 +55,23 @@ pub fn edit_url(publisher_id: &str, item_id: &str) -> String {
     )
 }
 
+/// アイテムの「プライバシー」タブの URL（編集画面の `/privacy`。2026-11-18 の実画面で確認）
+pub fn privacy_url(publisher_id: &str, item_id: &str) -> String {
+    format!("{}/privacy", edit_url(publisher_id, item_id))
+}
+
+/// URL がそのアイテムの「プライバシー」タブか（publisherId は問わない）
+pub fn is_privacy_page_of(url: Option<&str>, item_id: &str) -> bool {
+    if try_parse_publisher_id(url).is_none() {
+        return false;
+    }
+    let Some(u) = url.and_then(parse_absolute_url) else {
+        return false;
+    };
+    let path = u.path.trim_end_matches('/').to_lowercase();
+    path.ends_with(&format!("/{}/edit/privacy", item_id.to_lowercase()))
+}
+
 /// URL がそのアイテムの編集画面か（publisherId は問わない）
 pub fn is_edit_page_of(url: Option<&str>, item_id: &str) -> bool {
     if try_parse_publisher_id(url).is_none() {

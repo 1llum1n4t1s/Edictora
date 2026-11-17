@@ -22,7 +22,8 @@
 - **pull**: 대시보드의 현재 값(설명, 공식 URL, 홈페이지 URL, 지원 URL)을 읽습니다. 읽기 전용입니다.
 - **diff**: 원본 파일과의 차이를 표시합니다. 읽기 전용이며 기본 명령입니다.
 - **push**: 차이가 있는 필드만 다시 쓰고 **초안으로 저장**한 뒤, 페이지를 다시 불러와 저장된 값을 원본 파일과 대조합니다.
-- **이미지**: 설정의 항목에 `images`가 있으면 `pull`, `diff`, `push`가 스토어 이미지(스토어 아이콘, 스크린샷, 작은 프로모션 타일, 마키)도 다룹니다. `--only text|images`와 `--image-scope all|global|localized`로 범위를 좁힐 수 있습니다.
+- **이미지**: 설정의 항목에 `images`가 있으면 `pull`, `diff`, `push`가 스토어 이미지(스토어 아이콘, 스크린샷, 작은 프로모션 타일, 마키)도 다룹니다. `--only text|images|privacy`와 `--image-scope all|global|localized`로 범위를 좁힐 수 있습니다.
+- **'개인정보 보호' 탭**: 설정의 항목에 `privacy`가 있으면 `pull`, `diff`, `push`가 대시보드의 '개인정보 보호' 탭(Privacy practices: 단일 목적 설명, 권한별 사유, 데이터 사용 공개)도 다룹니다. `--only privacy`로 범위를 좁힐 수 있습니다. 임시 저장까지만 하며 심사에는 제출하지 않습니다.
 - **submit**: 항목 하나를 심사에 제출합니다. "심사 후 자동으로 게시" 설정은 변경하지 않습니다.
 - **login**: 전용 프로필로 Chrome을 열어 Google에 직접 로그인할 수 있게 합니다.
 - **update**: 새 버전이 있으면 다운로드하여 설치합니다. Setup으로 Edictora를 설치한 경우에만 동작하며, Windows에 로그인할 때도 자동으로 실행됩니다.
@@ -125,6 +126,37 @@ Edictora의 메시지, diff 출력, 도움말은 일본어, 영어, 중국어 �
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)
 edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
+
+#### '개인정보 보호' 탭(선택)
+
+확장 프로그램에 권한을 추가하면, 대시보드의 **'개인정보 보호' 탭**(Privacy practices)에 권한 사유 등을 입력해야 심사에 제출할 수 있습니다. 항목에 `privacy`를 추가하면 해당 입력란을 원본 파일에서 읽고 비교하고 임시 저장할 수 있습니다. 다른 항목과 마찬가지로 **쓰지 않은 키는 건드리지 않습니다**.
+
+```jsonc
+"privacy": {
+  // Text fields use the same "file + sectionStart / sectionEnd" as `description`
+  "singlePurpose": { "file": "webstore/store-listing.txt", "sectionStart": "^■ Single purpose$", "sectionEnd": "^■ Data usage$" },
+  "permissions": {                                  // manifest permission name -> justification; host permissions use the special key "host"
+    "activeTab": { "file": "webstore/store-listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  scripting:$" },
+    "host": { "file": "webstore/store-listing.txt", "sectionStart": "^  Host permissions:$", "sectionEnd": "^■ Privacy policy URL$" }
+  },
+  "dataUsage": {
+    "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
+    "certify": true                                            // checks the three declarations; only true is allowed
+  }
+}
+```
+
+- 본문은 `description`과 같이 파일에서 구간을 잘라 냅니다(위 참조). 앞쪽 빈 줄을 없애고 모든 줄에 공통인 들여쓰기를 제거하므로, `  activeTab:` 아래에 들여써서 적은 사유도 그대로 쓸 수 있습니다. 어떤 본문도 비어 있으면 안 되며 1,000자 이내여야 합니다. Edictora는 Chrome을 열기 전에 이를 확인합니다(종료 코드 2).
+- `collected`에는 `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity`, `websiteContent`를 쓸 수 있습니다(쓴 것만 체크하고 나머지는 해제합니다). `certify`는 `true`만 지정할 수 있습니다('판매하지 않음' 등 세 가지 선언에 체크한다는 의미). `false`나 생략은 설정 오류입니다.
+- **권한 목록 자체도 대조합니다.** `permissions`를 쓴 경우, 설정에는 있는데 화면에 없는 권한(또는 그 반대)은 비교 결과에 표시되고 `push`는 아무것도 쓰지 않고 멈춥니다. 설정에 추가하거나 manifest를 고치세요.
+- `remoteCode`(`{ "uses": false }` 또는 `{ "uses": true, "justification": {...} }`)는 설정에 쓸 수 있지만, 대시보드의 해당 입력란을 실제 화면에서 확인하지 못했기 때문에 쓰면 `diff`가 오류를 보고하고 `push`가 멈춥니다. 지금은 쓰지 마세요.
+- 대시보드가 일본어로 표시될 때만 사용할 수 있습니다(영어 문구는 확인되지 않았습니다). 임시 저장까지만 하며, Edictora는 절대 심사에 제출하지 않습니다.
+- 항목에 `locales`나 `images` 없이 `privacy`만 둘 수도 있습니다('개인정보 보호' 탭 전용).
+
+```powershell
+edictora diff --only privacy --item <id>          # Privacy practices tab only (read-only)
+edictora push --only privacy --item <id> --yes    # Rewrite differing fields, save as draft, reload and verify
 ```
 
 ### 2. 로그인
@@ -246,6 +278,7 @@ MCP 게이트웨이(Toolport 등)를 사용한다면, 게이트웨이에도 같�
 - Chrome은 자동화 플래그 없이 시작되고 정상적으로 종료됩니다. **프로필은 절대 삭제하지 않습니다.**
 - 실패 시 찍은 스크린샷은 `%LOCALAPPDATA%\Edictora.Data\diagnostics`에 저장되며, 저장소에는 저장되지 않습니다.
 - 이미지 갱신은 차이가 있는 슬롯만 교체합니다. 순서에는 손대지 않으며, 심사 제출도 호출할 수 없습니다(이미지 처리에는 그 경로가 없습니다).
+- '개인정보 보호' 탭 업데이트는 차이가 있는 입력란만 바꾸고, 심사에 제출하지 않으며(코드에 호출할 방법이 없음), 대시보드의 권한이 설정과 맞지 않으면 아무것도 쓰기 전에 멈춥니다.
 
 ## 파일 저장 위치
 

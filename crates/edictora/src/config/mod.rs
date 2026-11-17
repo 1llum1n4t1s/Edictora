@@ -10,6 +10,7 @@
 //! - 「キーがない（null）」と「空文字」を区別する。URL 欄はキーなし＝対象外、`""`＝空欄が正本
 
 pub mod images;
+pub mod privacy;
 pub mod section;
 
 use std::collections::{BTreeMap, HashSet};
@@ -31,6 +32,7 @@ use crate::util::{
 };
 use crate::{tr, trs};
 pub use images::ImagesConfig;
+pub use privacy::PrivacyConfig;
 
 // ───────── 検証済みの設定 ─────────
 
@@ -69,6 +71,8 @@ pub struct ItemConfig {
     pub locales: Vec<LocaleConfig>,
     /// 掲載画像の正本（`images` を書いたアイテムだけ。書いていなければ画像は対象外）
     pub images: Option<ImagesConfig>,
+    /// 「プライバシー」タブの正本（`privacy` を書いたアイテムだけ。書いていなければ対象外）
+    pub privacy: Option<PrivacyConfig>,
 }
 
 /// ロケール 1 件の正本（検証済み）
@@ -135,6 +139,8 @@ struct ItemConfigDto {
     locales: Option<OrderedLocales>,
     /// 掲載画像の正本（任意。書いたスロットだけが対象）
     images: Option<images::ImagesDto>,
+    /// 「プライバシー」タブの正本（任意。書いた欄だけが対象）
+    privacy: Option<privacy::PrivacyDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,10 +356,10 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
         )));
     }
 
-    // locales か images の少なくとも一方が要る（画像だけを管理するアイテムも許す）
+    // locales・images・privacy のどれか 1 つは要る（画像だけ・プライバシー タブだけを管理するアイテムも許す）
     let entries = match dto.locales {
         Some(OrderedLocales(entries)) if !entries.is_empty() => entries,
-        _ if dto.images.is_some() => Vec::new(),
+        _ if dto.images.is_some() || dto.privacy.is_some() => Vec::new(),
         _ => {
             return Err(Error::Config(tr!(
                 "config.specify_at_least_one_entry_in_locales",
@@ -363,6 +369,11 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
     };
     let images = match dto.images {
         Some(images_dto) => Some(images::parse_images(images_dto, &place, &base_dir)?),
+        None => None,
+    };
+
+    let privacy = match dto.privacy {
+        Some(privacy_dto) => Some(privacy::parse_privacy(privacy_dto, &place, &base_dir)?),
         None => None,
     };
 
@@ -409,6 +420,7 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
         base_directory: base_dir,
         locales,
         images,
+        privacy,
     })
 }
 

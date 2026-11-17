@@ -12,6 +12,7 @@
 //! - [`net`] — WinHTTP を FFI で直接使う HTTP クライアント（自動更新が使う）
 //! - [`update`] — Velopack でインストールされたときの更新の確認・ダウンロード・適用の起動（`edictora update` と `edictora-updater.exe`）
 //! - [`install`] — Velopack のフック（`--veloapp-*`）と、ログオン時の自動更新・PATH の登録
+//! - [`privacy`] — ダッシュボードの「プライバシー」タブ（単一用途・権限の正当性・データ使用）のモデル・正本の組み立て・比較
 //! - [`services`] — pull / diff / push / submit の手順と中止判断
 //! - [`cli`] — 引数・出力・終了コード
 //! - [`mcp`] — MCP サーバー（`edictora mcp`）。AI エージェント向けに CLI と同じ処理を標準入出力で公開する
@@ -33,6 +34,7 @@ pub mod listing;
 pub mod logging;
 pub mod mcp;
 pub mod net;
+pub mod privacy;
 pub mod redirect;
 pub mod services;
 pub mod update;

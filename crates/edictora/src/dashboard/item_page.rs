@@ -1,4 +1,5 @@
-//! アイテムの編集画面（ストアの掲載情報）を CDP で操作する [`ListingPage`] 実装（C# の `DashboardItemPage`）。
+//! アイテムの編集画面（ストアの掲載情報・画像・「プライバシー」タブ）を CDP で操作する [`ListingPage`] / [`ImagePage`] /
+//! [`PrivacyPage`] 実装（C# の `DashboardItemPage`）。
 //!
 //! 2026-11-13 の検証（DESIGN.md）で確かめた操作手順をそのまま使う。
 //! - 操作の前に毎回 Emulation.setFocusEmulationEnabled を行う（ウィンドウを前面には出さない）
@@ -8,6 +9,7 @@
 //! - 画面の表示言語（日本語 / 英語）は、編集画面を開く・読み込み直すたびに `<html lang>` から 1 回だけ判定し、
 //!   以降はその言語の文言セットだけで要素を探す（`text.rs`）。日本語・英語以外なら止める
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -17,22 +19,33 @@ use crate::cancel::CancelToken;
 use crate::cdp::CdpPage;
 use crate::dashboard::page_scripts::{self as scripts, kinds};
 use crate::dashboard::selectors::{self as sel, ElementInfo};
-use crate::dashboard::text::{DashboardLang, DashboardText};
+use crate::dashboard::text::{DashboardLang, DashboardText, PrivacyText};
 use crate::dashboard::urls;
 use crate::dashboard::write_gate::ItemPageState;
 use crate::dashboard::{
-    EditorPage, ImagePage, ListingPage, PageImage, SubmitConfirm, SubmitDialogInfo, SubmitResult,
+    EditorPage, ImagePage, ListingPage, PageImage, PrivacyPage, SubmitConfirm, SubmitDialogInfo,
+    SubmitResult,
 };
 use crate::error::{Error, Result};
 use crate::images::ImageSlot;
 use crate::listing::text_diff::first_difference_position;
 use crate::listing::{FieldValues, ListingField};
 use crate::logging::{LogLevel, log};
+use crate::privacy::{DataKind, ExpectedPrivacy, PrivacyField, PrivacyReading};
 use crate::tr;
 use crate::util::{LocalTime, contains_ic, diagnostics_file_name, eq_ic, utf16_len};
 
 /// 条件確認の間隔
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
+
+/// 今開いているタブ（保存・読み込み直し・書き込み可否の判断が、タブごとに見る欄を変える）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    /// 「ストアの掲載情報」（`open_item` で開く）
+    Listing,
+    /// 「プライバシー」（`open_privacy` で開く）
+    Privacy,
+}
 
 /// 編集画面の操作
 pub struct DashboardItemPage<'a> {
@@ -42,6 +55,8 @@ pub struct DashboardItemPage<'a> {
     diagnostics_dir: PathBuf,
     /// 今の画面の表示言語の文言セット（open_item / reload で判定する。判定前は None）
     text: Option<&'static DashboardText>,
+    /// 今開いているタブ
+    tab: Tab,
 }
 
 impl<'a> DashboardItemPage<'a> {
@@ -57,6 +72,7 @@ impl<'a> DashboardItemPage<'a> {
             item_id: None,
             diagnostics_dir,
             text: None,
+            tab: Tab::Listing,
         }
     }
 
@@ -265,6 +281,7 @@ impl<'a> DashboardItemPage<'a> {
 impl EditorPage for DashboardItemPage<'_> {
     fn open_item(&mut self, item_id: &str, cancel: &CancelToken) -> Result<()> {
         self.item_id = Some(item_id.to_string());
+        self.tab = Tab::Listing;
         self.page.prepare_for_input(cancel)?;
         self.page
             .navigate(&urls::edit_url(&self.publisher_id, item_id), cancel)
@@ -306,7 +323,10 @@ impl EditorPage for DashboardItemPage<'_> {
         })?;
         // 読み込み直しで window は作り直されるので、表示言語も判定し直す
         self.detect_language(cancel)?;
-        self.wait_for_editor_ready(cancel)
+        match self.tab {
+            Tab::Listing => self.wait_for_editor_ready(cancel),
+            Tab::Privacy => self.wait_for_privacy_ready(cancel),
+        }
     }
 
     fn get_state(&mut self, cancel: &CancelToken) -> Result<ItemPageState> {
@@ -315,7 +335,13 @@ impl EditorPage for DashboardItemPage<'_> {
         let status = sel::parse_status(t, Some(&self.body_text(cancel)?));
         let textareas = self.collect(kinds::TEXTAREA, cancel)?;
         let buttons = self.collect(kinds::BUTTON, cancel)?;
-        Ok(sel::item_page_state(t, status, &textareas, &buttons))
+        match (self.tab, t.privacy.as_ref()) {
+            // 「プライバシー」タブでは、主の入力欄を単一用途の説明として見る
+            (Tab::Privacy, Some(p)) => {
+                Ok(sel::privacy_page_state(t, p, status, &textareas, &buttons))
+            }
+            _ => Ok(sel::item_page_state(t, status, &textareas, &buttons)),
+        }
     }
 
     fn get_locales(&mut self, cancel: &CancelToken) -> Result<Vec<String>> {
@@ -544,52 +570,7 @@ impl ListingPage for DashboardItemPage<'_> {
         self.page.prepare_for_input(cancel)?;
         let (kind, element) = self.locate(field, cancel)?;
         sel::ensure_writable(&element, field)?;
-
-        let t = self.t()?;
-        self.evaluate(&scripts::scroll_to(t, kind, element.index), cancel)?;
-        let selected = self.evaluate(&scripts::focus_select_all(t, kind, element.index), cancel)?;
-        let name = field.display_name();
-        if selected != Value::Bool(true) {
-            return Err(Error::Dashboard(tr!(
-                "dashboard.could_not_focus_the_field_and_select",
-                name = name
-            )));
-        }
-
-        if value.is_empty() {
-            // Input.insertText("") では選択範囲が消えないため、Delete キーで消す
-            self.page.press_key("Delete", 46, cancel)?;
-        } else {
-            self.page.insert_text(value, cancel)?;
-        }
-
-        // 書き換え後の値が正本と完全一致するまで待つ。一致しなければ保存せずに止める
-        let mut last: Option<String> = None;
-        let ok = try_poll(
-            || {
-                let v = self.value(kind, element.index, cancel)?;
-                let same = v == value;
-                last = Some(v);
-                Ok(same.then_some(()))
-            },
-            Duration::from_secs(10),
-            cancel,
-        )?;
-        if !ok {
-            let last = last.unwrap_or_default();
-            // 表示は 1 始まり。一致しなかった経路なので位置は必ずあるが、無ければ 0 を出さず「?」にする。
-            let at = first_difference_position(&last, value)
-                .map_or_else(|| "?".to_string(), |p| p.to_string());
-            let (now, want) = (utf16_len(&last), utf16_len(value));
-            return Err(Error::Dashboard(tr!(
-                "dashboard.rewrote_but_the_value_does_not_match",
-                name = name,
-                position = at,
-                now = now,
-                want = want
-            )));
-        }
-        Ok(())
+        self.rewrite_text(kind, &element, field.display_name(), value, cancel)
     }
 
     fn submit_for_review(
@@ -738,6 +719,266 @@ impl ListingPage for DashboardItemPage<'_> {
             message,
             status_text: status,
         })
+    }
+}
+
+impl DashboardItemPage<'_> {
+    /// 入力欄（textarea・input）を `value` に書き換え、値が完全一致するまで待つ（フォーカス → 全選択 → insertText）。
+    /// 掲載情報の欄とプライバシー タブの欄で共通。一致しなければ保存せずに止める
+    fn rewrite_text(
+        &self,
+        kind: &'static str,
+        element: &ElementInfo,
+        name: &str,
+        value: &str,
+        cancel: &CancelToken,
+    ) -> Result<()> {
+        let t = self.t()?;
+        self.evaluate(&scripts::scroll_to(t, kind, element.index), cancel)?;
+        let selected = self.evaluate(&scripts::focus_select_all(t, kind, element.index), cancel)?;
+        if selected != Value::Bool(true) {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.could_not_focus_the_field_and_select",
+                name = name
+            )));
+        }
+
+        if value.is_empty() {
+            // Input.insertText("") では選択範囲が消えないため、Delete キーで消す
+            self.page.press_key("Delete", 46, cancel)?;
+        } else {
+            self.page.insert_text(value, cancel)?;
+        }
+
+        // 書き換え後の値が正本と完全一致するまで待つ。一致しなければ保存せずに止める
+        let mut last: Option<String> = None;
+        let ok = try_poll(
+            || {
+                let v = self.value(kind, element.index, cancel)?;
+                let same = v == value;
+                last = Some(v);
+                Ok(same.then_some(()))
+            },
+            Duration::from_secs(10),
+            cancel,
+        )?;
+        if !ok {
+            let last = last.unwrap_or_default();
+            // 表示は 1 始まり。一致しなかった経路なので位置は必ずあるが、無ければ 0 を出さず「?」にする。
+            let at = first_difference_position(&last, value)
+                .map_or_else(|| "?".to_string(), |p| p.to_string());
+            let (now, want) = (utf16_len(&last), utf16_len(value));
+            return Err(Error::Dashboard(tr!(
+                "dashboard.rewrote_but_the_value_does_not_match",
+                name = name,
+                position = at,
+                now = now,
+                want = want
+            )));
+        }
+        Ok(())
+    }
+
+    /// 「プライバシー」タブの文言（日本語の画面だけ。英語の画面は文言が未確認なので止める）
+    fn privacy_text(&self) -> Result<&'static PrivacyText> {
+        self.t()?.privacy.as_ref().ok_or_else(|| {
+            Error::Dashboard(tr!(
+                "dashboard.the_privacy_tab_is_only_supported_on_a_japanese_dashboard"
+            ))
+        })
+    }
+
+    /// 「プライバシー」タブの入力欄（単一用途の説明の textarea とデータ使用のチェックボックス）が揃うまで待つ。
+    /// SPA なので読み込み後に中身が遅れて出る
+    fn wait_for_privacy_ready(&self, cancel: &CancelToken) -> Result<()> {
+        let p = self.privacy_text()?;
+        let what = tr!("dashboard.the_privacy_tab_fields", item = self.item_label());
+        poll(
+            || {
+                let textareas = self.collect(kinds::TEXTAREA, cancel)?;
+                let checks = self.collect(kinds::CHECKBOX, cancel)?;
+                let areas = sel::classify_privacy_textareas(p, &textareas)?;
+                let ready =
+                    areas.single_purpose.is_some() && sel::collected_kinds(p, &checks)?.is_some();
+                Ok(ready.then_some(()))
+            },
+            Duration::from_secs(45),
+            &what,
+            cancel,
+        )
+    }
+
+    /// チェックボックスを `want` の状態にする（すでにその状態なら何もしない）。
+    /// 実際のマウス入力で押し、状態が変わるまで待つ。`locate` は集め直したチェックボックスから対象を 1 つ選ぶ
+    fn set_checkbox(
+        &self,
+        locate: &dyn Fn(&[ElementInfo]) -> Result<ElementInfo>,
+        label: &str,
+        want: bool,
+        cancel: &CancelToken,
+    ) -> Result<()> {
+        self.page.prepare_for_input(cancel)?;
+        let current = locate(&self.collect(kinds::CHECKBOX, cancel)?)?;
+        if current.checked == Some(want) {
+            return Ok(());
+        }
+        let what = tr!("dashboard.the_privacy_checkbox", label = label);
+        if current.disabled {
+            return Err(Error::WriteBlocked(tr!(
+                "dashboard.the_image_button_cannot_be_clicked",
+                what = what
+            )));
+        }
+        self.click(kinds::CHECKBOX, current.index, &what, cancel)?;
+        let changed = try_poll(
+            || {
+                let now = locate(&self.collect(kinds::CHECKBOX, cancel)?)?;
+                Ok((now.checked == Some(want)).then_some(()))
+            },
+            Duration::from_secs(5),
+            cancel,
+        )?;
+        if !changed {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_privacy_checkbox_did_not_change",
+                label = label
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl PrivacyPage for DashboardItemPage<'_> {
+    fn open_privacy(&mut self, item_id: &str, cancel: &CancelToken) -> Result<()> {
+        self.item_id = Some(item_id.to_string());
+        self.tab = Tab::Privacy;
+        self.page.prepare_for_input(cancel)?;
+        self.page
+            .navigate(&urls::privacy_url(&self.publisher_id, item_id), cancel)
+            .map_err(|e| match e {
+                Error::Cdp(m) => Error::Dashboard(tr!(
+                    "dashboard.could_not_open_the_privacy_tab",
+                    item_id = item_id,
+                    detail = m
+                )),
+                other => other,
+            })?;
+
+        let url = self.page.get_url(cancel)?;
+        if urls::is_login_page(url.as_deref()) {
+            return Err(Error::LoginRequired);
+        }
+        // 新しいページなので表示言語を判定し直す（導入部を含む式より前に）。日本語以外はここで止める
+        self.detect_language(cancel)?;
+        self.privacy_text()?;
+        self.wait_for_privacy_ready(cancel)?;
+
+        // 読み込み後に別画面へ移されていないか確認する（アイテム ID の誤りで起きる）
+        let url = self.page.get_url(cancel)?;
+        if !urls::is_privacy_page_of(url.as_deref(), item_id) {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.could_not_open_the_privacy_tab_2",
+                item_id = item_id
+            )));
+        }
+        Ok(())
+    }
+
+    fn read_privacy(
+        &mut self,
+        targets: &ExpectedPrivacy,
+        cancel: &CancelToken,
+    ) -> Result<PrivacyReading> {
+        let p = self.privacy_text()?;
+        self.page.prepare_for_input(cancel)?;
+        let textareas = self.collect(kinds::TEXTAREA, cancel)?;
+        let areas = sel::classify_privacy_textareas(p, &textareas)?;
+        let mut reading = PrivacyReading::default();
+        if targets.single_purpose.is_some()
+            && let Some(element) = areas.single_purpose
+        {
+            reading.single_purpose = Some(self.value(kinds::TEXTAREA, element.index, cancel)?);
+        }
+        if let Some(wanted) = &targets.permissions {
+            // 画面にある権限の名前は全部読み、本文は設定にある権限の分だけ読む
+            reading.screen_permissions = areas.permissions.iter().map(|(k, _)| k.clone()).collect();
+            for (key, element) in &areas.permissions {
+                if wanted.iter().any(|(k, _)| k == key) {
+                    reading.permissions.insert(
+                        key.clone(),
+                        self.value(kinds::TEXTAREA, element.index, cancel)?,
+                    );
+                }
+            }
+        }
+        if targets.data_usage.is_some() {
+            let checks = self.collect(kinds::CHECKBOX, cancel)?;
+            reading.collected = sel::collected_kinds(p, &checks)?;
+            reading.certified = sel::certified(p, &checks)?;
+        }
+        Ok(reading)
+    }
+
+    fn write_privacy_text(
+        &mut self,
+        field: &PrivacyField,
+        value: &str,
+        cancel: &CancelToken,
+    ) -> Result<()> {
+        let p = self.privacy_text()?;
+        self.page.prepare_for_input(cancel)?;
+        let textareas = self.collect(kinds::TEXTAREA, cancel)?;
+        let areas = sel::classify_privacy_textareas(p, &textareas)?;
+        let found = match field {
+            PrivacyField::SinglePurpose => areas.single_purpose,
+            PrivacyField::Permission(key) => areas
+                .permissions
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, e)| *e),
+            // テキスト欄ではない欄（チェックボックス・リモートコード）は、ここでは書かない
+            _ => None,
+        };
+        let name = field.display_name();
+        let Some(element) = found else {
+            return Err(Error::Dashboard(tr!(
+                "privacy.the_field_is_not_on_the_dashboard",
+                label = name
+            )));
+        };
+        sel::ensure_privacy_text_writable(element, &name)?;
+        let element = element.clone();
+        self.rewrite_text(kinds::TEXTAREA, &element, &name, value, cancel)
+    }
+
+    fn set_data_kinds(&mut self, wanted: &BTreeSet<DataKind>, cancel: &CancelToken) -> Result<()> {
+        let p = self.privacy_text()?;
+        for kind in DataKind::ALL {
+            let label = p.data_kind_labels[DataKind::ALL
+                .iter()
+                .position(|k| *k == kind)
+                .expect("ALL に全種類がある")];
+            self.set_checkbox(
+                &|checks| sel::pick_data_kind_checkbox(p, checks, kind).cloned(),
+                label,
+                wanted.contains(&kind),
+                cancel,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn check_certifications(&mut self, cancel: &CancelToken) -> Result<()> {
+        let p = self.privacy_text()?;
+        for (index, label) in p.certify_labels.iter().enumerate() {
+            self.set_checkbox(
+                &|checks| sel::pick_certify_checkbox(p, checks, index).cloned(),
+                label,
+                true,
+                cancel,
+            )?;
+        }
+        Ok(())
     }
 }
 

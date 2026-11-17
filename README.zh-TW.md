@@ -22,7 +22,8 @@
 - **pull**：從資訊主頁讀取目前的值（說明、官方 URL、首頁 URL 與支援 URL）。唯讀。
 - **diff**：顯示與您的來源檔案之間的差異。唯讀，也是預設指令。
 - **push**：只重寫有差異的欄位並**儲存為草稿**，然後重新載入頁面，將儲存的值與您的來源檔案核對。
-- **圖片**：如果設定中的項目寫了 `images`，`pull`、`diff`、`push` 也會處理商店圖片（商店圖示、截圖、小型宣傳圖塊、宣傳橫幅）。可用 `--only text|images` 與 `--image-scope all|global|localized` 縮小範圍。
+- **圖片**：如果設定中的項目寫了 `images`，`pull`、`diff`、`push` 也會處理商店圖片（商店圖示、截圖、小型宣傳圖塊、宣傳橫幅）。可用 `--only text|images|privacy` 與 `--image-scope all|global|localized` 縮小範圍。
+- **「隱私」分頁**：如果設定中的項目寫了 `privacy`，`pull`、`diff`、`push` 也會處理後台的「隱私」分頁（Privacy practices：單一用途說明、各權限的理由、資料使用揭露）。可用 `--only privacy` 縮小範圍。只儲存為草稿，不會送出審核。
 - **submit**：將一個項目提交審查。不會變更「審查通過後自動發布」的設定。
 - **login**：以專用設定檔開啟 Chrome，讓您自行登入 Google。
 - **update**：若有新版本，則下載並安裝。僅在您以 Setup 安裝 Edictora 時有效，並且會在您登入 Windows 時自動執行。
@@ -125,6 +126,37 @@ Edictora 的訊息、差異輸出與說明文字提供九種語言：日文、�
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)
 edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
+
+#### 「隱私」分頁（選用）
+
+為擴充功能加入權限後，必須在後台的**「隱私」分頁**（Privacy practices）填寫權限理由等內容，才能送出審核。在項目中加入 `privacy`，即可從來源檔案讀取、比較並以草稿儲存這些欄位。與其他欄位相同，**沒有寫的鍵不會被觸碰**。
+
+```jsonc
+"privacy": {
+  // Text fields use the same "file + sectionStart / sectionEnd" as `description`
+  "singlePurpose": { "file": "webstore/store-listing.txt", "sectionStart": "^■ Single purpose$", "sectionEnd": "^■ Data usage$" },
+  "permissions": {                                  // manifest permission name -> justification; host permissions use the special key "host"
+    "activeTab": { "file": "webstore/store-listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  scripting:$" },
+    "host": { "file": "webstore/store-listing.txt", "sectionStart": "^  Host permissions:$", "sectionEnd": "^■ Privacy policy URL$" }
+  },
+  "dataUsage": {
+    "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
+    "certify": true                                            // checks the three declarations; only true is allowed
+  }
+}
+```
+
+- 本文與 `description` 相同，從檔案中擷取區段（見上文）。會去掉開頭的空行，並去掉所有行共有的縮排，因此縮排寫在 `  activeTab:` 底下的理由也可以直接使用。每段本文不可為空，且不超過 1,000 個字元；Edictora 會在開啟 Chrome 之前檢查（結束代碼 2）。
+- `collected` 可寫 `personallyIdentifiable`、`health`、`financial`、`authentication`、`personalCommunications`、`location`、`webHistory`、`userActivity`、`websiteContent`（只勾選寫出的，其餘取消勾選）。`certify` 只能為 `true`（表示勾選「不出售」等三項聲明）；`false` 或省略都會是設定錯誤。
+- **權限清單本身也會核對。** 寫了 `permissions` 時，設定中有而後台上沒有的權限（或相反）會顯示在比較結果中，`push` 會在寫入任何內容之前停止：請在設定中補上，或修正 manifest。
+- `remoteCode`（`{ "uses": false }`，或 `{ "uses": true, "justification": {...} }`）可以寫在設定中，但後台上對應的欄位尚未在實際畫面中確認，因此寫了之後 `diff` 會回報錯誤，`push` 會停止。目前請不要寫。
+- 僅當後台以日語顯示時可用（英文文案尚未確認）。只儲存為草稿，Edictora 絕不會送出審核。
+- 項目可以只寫 `privacy` 而不寫 `locales` 和 `images`（僅「隱私」分頁）。
+
+```powershell
+edictora diff --only privacy --item <id>          # Privacy practices tab only (read-only)
+edictora push --only privacy --item <id> --yes    # Rewrite differing fields, save as draft, reload and verify
 ```
 
 ### 2. 登入
@@ -246,6 +278,7 @@ args = ["mcp"]
 - Chrome 不帶自動化旗標啟動，並會正常關閉。**設定檔絕不會被刪除。**
 - 失敗時擷取的螢幕截圖會儲存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，絕不會儲存到您的儲存庫。
 - 圖片更新只取代有差異的位置。不會調整順序，更不可能送出審核（圖片處理中沒有呼叫送出的途徑）。
+- 「隱私」分頁的更新只更動有差異的欄位，不會送出審核（程式碼中沒有可呼叫的途徑）；如果後台上的權限與設定不一致，會在寫入任何內容之前停止。
 
 ## 檔案儲存位置
 

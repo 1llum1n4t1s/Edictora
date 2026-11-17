@@ -22,7 +22,8 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 - **pull** — ダッシュボードの現在値（説明・公式 URL・ホームページ URL・サポート URL）を読み出す（読み取りのみ）
 - **diff** — 正本ファイルとの差分を表示する（読み取りのみ。既定の動作）
 - **push** — 差分のある欄だけを書き換えて**下書き保存**し、読み込み直して正本と一致するか照合する
-- **画像**: 設定のアイテムに `images` があれば、`pull`・`diff`・`push` はストアの掲載画像（ショップ アイコン・スクリーンショット・小タイル・マーキー）も扱います。`--only text|images` と `--image-scope all|global|localized` で絞れます。
+- **画像**: 設定のアイテムに `images` があれば、`pull`・`diff`・`push` はストアの掲載画像（ショップ アイコン・スクリーンショット・小タイル・マーキー）も扱います。`--only text|images|privacy` と `--image-scope all|global|localized` で絞れます。
+- **「プライバシー」タブ**: 設定のアイテムに `privacy` があれば、`pull`・`diff`・`push` はダッシュボードの「プライバシー」タブ（Privacy practices: 単一用途の説明・権限ごとの正当性・データ使用の開示）も扱います。`--only privacy` で絞れます。下書き保存までで、審査には送信しません。
 - **submit** — 1 件ずつ審査に送信する（「審査の合格後に自動的に公開する」の設定は変更しません）
 - **login** — 専用プロファイルの Chrome を開き、Google へのログインを利用者に行ってもらう
 - **update** — 新しい版があればダウンロードして差し替える（Setup でインストールしたときだけ。ログオン時にも自動で行う）
@@ -128,6 +129,37 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)
 edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
+
+#### 「プライバシー」タブ（任意）
+
+拡張機能に権限を足すと、ダッシュボードの**「プライバシー」タブ**（Privacy practices）に権限の正当性などを入力しないと審査に送信できません。アイテムに `privacy` を書くと、その欄を正本ファイルから読み取り・比較・下書き保存できます。ほかの欄と同じく、**書いていないキーは触りません**。
+
+```jsonc
+"privacy": {
+  // Text fields use the same "file + sectionStart / sectionEnd" as `description`
+  "singlePurpose": { "file": "webstore/store-listing.txt", "sectionStart": "^■ Single purpose$", "sectionEnd": "^■ Data usage$" },
+  "permissions": {                                  // manifest permission name -> justification; host permissions use the special key "host"
+    "activeTab": { "file": "webstore/store-listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  scripting:$" },
+    "host": { "file": "webstore/store-listing.txt", "sectionStart": "^  Host permissions:$", "sectionEnd": "^■ Privacy policy URL$" }
+  },
+  "dataUsage": {
+    "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
+    "certify": true                                            // checks the three declarations; only true is allowed
+  }
+}
+```
+
+- 本文は `description` と同じく、ファイルから区間を切り出します（上を参照）。先頭の空行を除き、全行に共通する字下げを取り除くので、`  activeTab:` の下に字下げして書いた正当性もそのまま使えます。どの本文も空にはできず、1,000 文字以内にします。Chrome を開く前に確かめます（終了コード 2）。
+- `collected` に書けるのは `personallyIdentifiable`・`health`・`financial`・`authentication`・`personalCommunications`・`location`・`webHistory`・`userActivity`・`websiteContent` です（書いたものだけチェックし、残りは外します）。`certify` は `true` だけを指定できます（「販売しない」など 3 つの宣誓を入れる意味です）。`false` や省略は設定エラーです。
+- **権限の一覧も照合します。** `permissions` を書いたとき、設定にあるのに画面に無い権限、または画面にあるのに設定に無い権限は、比較結果に表示され、`push` は何も書かずに止まります（設定へ足すか、manifest を直してください）。
+- `remoteCode`（`{ "uses": false }`、または `{ "uses": true, "justification": {...} }`）は設定に書けますが、ダッシュボード上の該当欄を実画面で確認できていないため、書くと `diff` はエラーを報告し、`push` は止まります。今は書かないでください。
+- ダッシュボードが日本語表示のときだけ使えます（英語の文言は未確認です）。下書き保存までで、審査には送信しません。
+- `locales` や `images` を書かず `privacy` だけのアイテムも作れます。
+
+```powershell
+edictora diff --only privacy --item <id>          # Privacy practices tab only (read-only)
+edictora push --only privacy --item <id> --yes    # Rewrite differing fields, save as draft, reload and verify
 ```
 
 ### 2. ログインする
@@ -238,6 +270,7 @@ MCP のゲートウェイ（Toolport など）を使っている場合は、ゲ�
 - Chrome は自動化フラグを付けずに起動し、終了時は正常終了させます。**プロファイルは削除しません。**
 - 失敗時の画面は `%LOCALAPPDATA%\Edictora.Data\diagnostics` に保存します（リポジトリには置きません）。
 - 画像の更新は、差分のあるスロットだけを入れ替えます。並べ替えには触れず、審査への送信も呼べません（画像の処理にその経路がありません）。
+- 「プライバシー」タブの更新は、差分のある欄だけを書き換え、審査には送信できません（コードに呼び出す手段がありません）。ダッシュボードの権限が設定と合わないときは、何も書かずに止まります。
 
 ## 保存場所
 

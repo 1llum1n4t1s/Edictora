@@ -35,6 +35,8 @@ pub mod kinds {
     pub const TEXT_INPUT: &str = "textInput";
     pub const DIALOG_BUTTON: &str = "dialogButton";
     pub const DIALOG_CHECKBOX: &str = "dialogCheckbox";
+    /// ページ本体のチェックボックス（ダイアログの外。「プライバシー」タブのデータ使用・宣誓）
+    pub const CHECKBOX: &str = "checkbox";
     /// 画像アセットの `input[type=file]`（非表示でも集める）。`text` はその入力だけを含む最大の祖先の文字列
     pub const FILE_INPUT: &str = "fileInput";
     /// 画像 1 枚の `<img>`（スロットの中のもの。`collect_slot` で集める）

@@ -22,7 +22,8 @@ It runs as a single command-line tool (`edictora.exe`). It's written in Rust and
 - **pull**: reads the current values from the dashboard (description, official URL, homepage URL and support URL). Read-only.
 - **diff**: shows the differences from your source files. Read-only, and the default command.
 - **push**: rewrites only the fields that differ, **saves them as a draft**, then reloads the page and checks the saved values against your source files.
-- **Images**: when an item has `images` in the config, `pull`, `diff` and `push` also handle its store images (store icon, screenshots, small promo tile and marquee). Narrow them with `--only text|images` and `--image-scope all|global|localized`.
+- **Images**: when an item has `images` in the config, `pull`, `diff` and `push` also handle its store images (store icon, screenshots, small promo tile and marquee). Narrow them with `--only text|images|privacy` and `--image-scope all|global|localized`.
+- **Privacy practices tab**: when an item has `privacy` in the config, `pull`, `diff` and `push` also handle the dashboard's "Privacy" tab (Privacy practices): the single purpose description, the justification of each permission, and the data usage disclosure. Narrow them with `--only privacy`. Saved as a draft only; never submitted for review.
 - **submit**: submits one item for review. It doesn't change the "publish automatically after review" setting.
 - **login**: opens Chrome with the dedicated profile so you can sign in to Google yourself.
 - **update**: downloads and installs a newer version, if there is one. This only works when you installed Edictora with Setup, and it also runs automatically when you sign in to Windows.
@@ -125,6 +126,37 @@ Add `images` to an item to manage its store images. Like every other field, **ke
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)
 edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
+
+#### Privacy practices tab (optional)
+
+When you add a permission to an extension, the dashboard's **Privacy** tab (Privacy practices) needs a justification for it before the item can be submitted for review. Add `privacy` to an item to read, compare and save those fields from your source files as a draft. Like every other field, **keys you leave out are never touched**.
+
+```jsonc
+"privacy": {
+  // Text fields use the same "file + sectionStart / sectionEnd" as `description`
+  "singlePurpose": { "file": "webstore/store-listing.txt", "sectionStart": "^■ Single purpose$", "sectionEnd": "^■ Data usage$" },
+  "permissions": {                                  // manifest permission name -> justification; host permissions use the special key "host"
+    "activeTab": { "file": "webstore/store-listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  scripting:$" },
+    "host": { "file": "webstore/store-listing.txt", "sectionStart": "^  Host permissions:$", "sectionEnd": "^■ Privacy policy URL$" }
+  },
+  "dataUsage": {
+    "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
+    "certify": true                                            // checks the three declarations; only true is allowed
+  }
+}
+```
+
+- Text is cut out of your file like `description` (see above). Leading blank lines are removed and the common indentation is stripped, so justifications indented under `  activeTab:` work as they are. No text may be empty, and each must fit the 1,000-character limit; Edictora checks this before opening Chrome (exit code 2).
+- `collected` takes any of `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` and `websiteContent` (only the ones you list are checked; the rest are unchecked). `certify` must be `true` (it checks the three declarations such as "I do not sell…"); `false` or leaving it out is a config error.
+- **The set of permissions is checked too.** If you write `permissions`, a permission that is in the config but missing on the dashboard (or the other way around) is shown in the result, and `push` stops before writing anything: add it to the config or fix the manifest.
+- `remoteCode` (`{ "uses": false }`, or `{ "uses": true, "justification": {...} }`) is accepted in the config, but the dashboard section for it could not be checked against a real screen yet, so writing it makes `diff` report an error and `push` stop. Leave it out for now.
+- Works only while the dashboard is shown in Japanese (the English labels are unverified). Saved as a draft only; Edictora never submits for review.
+- An item may have `privacy` without `locales` or `images` (Privacy practices tab only).
+
+```powershell
+edictora diff --only privacy --item <id>          # Privacy practices tab only (read-only)
+edictora push --only privacy --item <id> --yes    # Rewrite differing fields, save as draft, reload and verify
 ```
 
 ### 2. Sign in
@@ -246,6 +278,7 @@ If you use an MCP gateway (such as Toolport), register the same command (stdio, 
 - Chrome is started without automation flags and shut down cleanly. **The profile is never deleted.**
 - Screenshots taken on failure are saved to `%LOCALAPPDATA%\Edictora.Data\diagnostics`, never to your repository.
 - Image updates replace only the slots that differ. They never reorder images, and they can never submit for review (the image code has no way to call it).
+- Privacy practices updates change only the fields that differ, never submit for review (the code has no way to call it), and stop without writing anything if the permissions on the dashboard don't match the config.
 
 ## Where files are stored
 

@@ -24,6 +24,7 @@ use crate::listing::{
     build_expected_images,
 };
 use crate::logging::{LogLevel, log, log_error_detail, redact};
+use crate::privacy::{self, PrivacySnapshot};
 use crate::redirect;
 use crate::services::{self, ImageSnapshot, LocalePushOutcome};
 use crate::update::UpdateOutcome;
@@ -408,6 +409,14 @@ impl<'a> CliApp<'a> {
                     ));
                 }
                 failed |= self.print_pulled_images(&snapshot);
+                header_done = true;
+            }
+            if expected.has_privacy() {
+                let snapshot = services::pull_privacy(&mut page, expected, &progress, cancel)?;
+                if !header_done {
+                    self.outln(&item_header(expected, snapshot.status_text.as_deref(), &[]));
+                }
+                failed |= self.print_pulled_privacy(expected, &snapshot);
             }
             self.outln("");
         }
@@ -451,6 +460,51 @@ impl<'a> CliApp<'a> {
                     self.outln(&format!("-- [{}] {}", locale.code, field.display_name()));
                 }
                 self.outln(&value);
+            }
+        }
+        failed
+    }
+
+    /// pull の「プライバシー」タブ部分を表示する（正本に書いた欄の現在値）。失敗があれば true
+    fn print_pulled_privacy(&self, expected: &ExpectedItem, snapshot: &PrivacySnapshot) -> bool {
+        if let Some(err) = &snapshot.error {
+            self.outln(&format!("  {}", error_line(err)));
+            return true;
+        }
+        let (Some(targets), Some(reading)) = (&expected.privacy, &snapshot.reading) else {
+            return true;
+        };
+        // 画面に無い欄・未対応の欄の理由は、比較と同じ文にする（欄ごとの Error 行を借りる）
+        let comparison = privacy::compare(
+            &expected.item_id,
+            &expected.display_name,
+            targets,
+            Some(reading),
+        );
+        let mut failed = false;
+        for row in &comparison.rows {
+            let name = row.field.display_name();
+            match (&row.status, &row.current) {
+                (ComparisonStatus::Error, _) => {
+                    failed = true;
+                    self.out_raw(&privacy::describe(row));
+                }
+                (_, Some(value)) => {
+                    if row.field.is_long_text() {
+                        self.outln(&tr!(
+                            "cli.privacy_characters",
+                            label = name,
+                            length = format_n0(utf16_len(value))
+                        ));
+                    } else {
+                        self.outln(&tr!("cli.privacy_field_header", label = name));
+                    }
+                    self.outln(value);
+                }
+                _ => {
+                    failed = true;
+                    self.outln(&tr!("cli.privacy_field_not_read", label = name));
+                }
             }
         }
         failed
@@ -550,6 +604,28 @@ impl<'a> CliApp<'a> {
                         ComparisonStatus::Error | ComparisonStatus::NotFetched
                     );
                 }
+                header_done = true;
+            }
+            if expected.has_privacy() {
+                let (snapshot, comparison) =
+                    services::diff_privacy(&mut page, expected, &progress, cancel)?;
+                if !header_done {
+                    self.outln(&item_header(expected, snapshot.status_text.as_deref(), &[]));
+                }
+                if let Some(err) = &snapshot.error {
+                    self.outln(&format!("  {}", error_line(err)));
+                    any_error = true;
+                }
+                if snapshot.error.is_none() {
+                    for row in &comparison.rows {
+                        self.out_raw(&privacy::describe(row));
+                        any_diff |= row.status == ComparisonStatus::Different;
+                        any_error |= matches!(
+                            row.status,
+                            ComparisonStatus::Error | ComparisonStatus::NotFetched
+                        );
+                    }
+                }
             }
             self.outln("");
         }
@@ -618,6 +694,23 @@ impl<'a> CliApp<'a> {
                 }
                 for label in &result.unchanged {
                     self.outln(&tr!("cli.images_no_changes", label = label));
+                }
+            }
+            // 「プライバシー」タブは、テキスト・画像の保存・照合が終わってから（別の保存として行う）
+            if expected.has_privacy() {
+                let result = services::push_privacy(&mut page, expected, &progress, cancel)?;
+                if expected.locales.is_empty() && !expected.has_images() {
+                    self.outln(&item_title(&result.item_name, &result.item_id));
+                }
+                if result.updated.is_empty() {
+                    self.outln(trs!("cli.privacy_no_changes"));
+                } else {
+                    let names: Vec<String> =
+                        result.updated.iter().map(|f| f.display_name()).collect();
+                    self.outln(&tr!(
+                        "cli.privacy_saved_as_draft_and_verified",
+                        text = names.join(trs!("cli.name_separator"))
+                    ));
                 }
             }
         }
@@ -697,6 +790,8 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
     for item in items {
         let want_text = command.only.text() && !item.locales.is_empty();
         let want_images = command.only.images() && item.images.is_some();
+        // 「プライバシー」タブは全言語共通なので、--locale では絞らない（全言語向けの画像と同じ）
+        let want_privacy = command.only.privacy() && item.privacy.is_some();
 
         // ロケールの指定が、このアイテムのどこに当たるか（テキストの言語・ローカライズ版スクリーンショットの言語）
         let in_text = |c: &str| want_text && item.locales.iter().any(|l| eq_ic(&l.code, c));
@@ -751,13 +846,19 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
                 display_name: item.display_name.clone(),
                 locales: Vec::new(),
                 images: None,
+                privacy: None,
             }
         };
         if want_images {
             expected.images = build_expected_images(item, command.image_scope, codes)?;
         }
 
-        let has_work = !expected.locales.is_empty() || expected.has_images();
+        if want_privacy {
+            expected.privacy = privacy::build_expected(item)?;
+        }
+
+        let has_work =
+            !expected.locales.is_empty() || expected.has_images() || expected.has_privacy();
         if !has_work {
             if explicit {
                 return Err(Error::Config(tr!(

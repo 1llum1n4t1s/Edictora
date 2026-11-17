@@ -22,7 +22,8 @@ Es läuft als einzelnes Befehlszeilenwerkzeug (`edictora.exe`), ist in Rust gesc
 - **pull**: liest die aktuellen Werte aus dem Dashboard (Beschreibung, offizielle URL, Homepage-URL und Support-URL). Nur lesend.
 - **diff**: zeigt die Unterschiede zu Ihren Quelldateien. Nur lesend und der Standardbefehl.
 - **push**: schreibt nur die abweichenden Felder um, **speichert sie als Entwurf**, lädt die Seite neu und prüft die gespeicherten Werte anhand Ihrer Quelldateien.
-- **Bilder**: Hat ein Eintrag in der Konfiguration `images`, behandeln `pull`, `diff` und `push` auch seine Store-Bilder (Shop-Symbol, Screenshots, kleine Werbekachel und Marquee). Mit `--only text|images` und `--image-scope all|global|localized` lässt sich das eingrenzen.
+- **Bilder**: Hat ein Eintrag in der Konfiguration `images`, behandeln `pull`, `diff` und `push` auch seine Store-Bilder (Shop-Symbol, Screenshots, kleine Werbekachel und Marquee). Mit `--only text|images|privacy` und `--image-scope all|global|localized` lässt sich das eingrenzen.
+- **Registerkarte „Datenschutz“**: Hat ein Eintrag in der Konfiguration `privacy`, behandeln `pull`, `diff` und `push` auch die Registerkarte „Datenschutz“ des Dashboards (Privacy practices: Beschreibung des einzigen Zwecks, Begründung jeder Berechtigung und Angaben zur Datennutzung). Mit `--only privacy` lässt sich das eingrenzen. Es wird nur als Entwurf gespeichert und nie zur Prüfung eingereicht.
 - **submit**: reicht ein Element zur Prüfung ein. Die Einstellung „Nach der Prüfung automatisch veröffentlichen“ wird dabei nicht geändert.
 - **login**: öffnet Chrome mit dem eigenen Profil, damit Sie sich selbst bei Google anmelden können.
 - **update**: lädt eine neuere Version herunter und installiert sie, falls es eine gibt. Das funktioniert nur, wenn Sie Edictora mit Setup installiert haben, und läuft außerdem automatisch bei Ihrer Windows-Anmeldung.
@@ -125,6 +126,37 @@ Fügen Sie einem Eintrag `images` hinzu, um seine Store-Bilder zu verwalten. Wie
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)
 edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
+
+#### Registerkarte „Datenschutz“ (optional)
+
+Wenn Sie einer Erweiterung eine Berechtigung hinzufügen, verlangt die Registerkarte **„Datenschutz“** des Dashboards (Privacy practices) eine Begründung, bevor der Eintrag zur Prüfung eingereicht werden kann. Fügen Sie einem Eintrag `privacy` hinzu, um diese Felder aus Ihren Quelldateien zu lesen, zu vergleichen und als Entwurf zu speichern. Wie bei allen anderen Feldern **werden Schlüssel, die Sie weglassen, nie angetastet**.
+
+```jsonc
+"privacy": {
+  // Text fields use the same "file + sectionStart / sectionEnd" as `description`
+  "singlePurpose": { "file": "webstore/store-listing.txt", "sectionStart": "^■ Single purpose$", "sectionEnd": "^■ Data usage$" },
+  "permissions": {                                  // manifest permission name -> justification; host permissions use the special key "host"
+    "activeTab": { "file": "webstore/store-listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  scripting:$" },
+    "host": { "file": "webstore/store-listing.txt", "sectionStart": "^  Host permissions:$", "sectionEnd": "^■ Privacy policy URL$" }
+  },
+  "dataUsage": {
+    "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
+    "certify": true                                            // checks the three declarations; only true is allowed
+  }
+}
+```
+
+- Die Texte werden wie `description` aus der Datei geschnitten (siehe oben). Führende Leerzeilen und der gemeinsame Einzug werden entfernt, sodass auch unter `  activeTab:` eingerückte Begründungen direkt funktionieren. Kein Text darf leer sein, und jeder muss in 1.000 Zeichen passen; Edictora prüft das, bevor Chrome geöffnet wird (Exitcode 2).
+- `collected` akzeptiert `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` und `websiteContent` (nur die genannten werden angehakt, alle anderen abgewählt). `certify` darf nur `true` sein (hakt die drei Erklärungen wie „Ich verkaufe nicht …“ an); `false` oder Weglassen ist ein Konfigurationsfehler.
+- **Auch die Menge der Berechtigungen wird geprüft.** Schreiben Sie `permissions`, erscheint eine Berechtigung, die in der Konfiguration steht, im Dashboard aber fehlt (oder umgekehrt), im Ergebnis, und `push` hält an, bevor etwas geschrieben wird: Ergänzen Sie sie in der Konfiguration oder korrigieren Sie das Manifest.
+- `remoteCode` (`{ "uses": false }` oder `{ "uses": true, "justification": {...} }`) wird in der Konfiguration akzeptiert, aber der zugehörige Bereich im Dashboard konnte noch nicht an einer echten Oberfläche geprüft werden; schreiben Sie ihn, meldet `diff` einen Fehler und `push` hält an. Lassen Sie ihn vorerst weg.
+- Funktioniert nur, solange das Dashboard auf Japanisch angezeigt wird (die englischen Bezeichnungen sind nicht verifiziert). Es wird nur als Entwurf gespeichert; Edictora reicht nie zur Prüfung ein.
+- Ein Eintrag darf `privacy` ohne `locales` und `images` haben (nur die Registerkarte „Datenschutz“).
+
+```powershell
+edictora diff --only privacy --item <id>          # Privacy practices tab only (read-only)
+edictora push --only privacy --item <id> --yes    # Rewrite differing fields, save as draft, reload and verify
 ```
 
 ### 2. Anmelden
@@ -246,6 +278,7 @@ Wenn Sie ein MCP-Gateway verwenden (etwa Toolport), registrieren Sie denselben B
 - Chrome wird ohne Automatisierungs-Flags gestartet und sauber beendet. **Das Profil wird nie gelöscht.**
 - Bei einem Fehler aufgenommene Screenshots werden unter `%LOCALAPPDATA%\Edictora.Data\diagnostics` gespeichert, nie in Ihrem Repository.
 - Bild-Updates ersetzen nur die Plätze, die abweichen. Sie ordnen keine Bilder um, und sie können nie zur Prüfung einreichen (der Bildcode hat keinen Weg, das aufzurufen).
+- Aktualisierungen der Registerkarte „Datenschutz“ ändern nur die abweichenden Felder, reichen nie zur Prüfung ein (der Code hat keine Möglichkeit, das aufzurufen) und halten an, ohne etwas zu schreiben, wenn die Berechtigungen im Dashboard nicht zur Konfiguration passen.
 
 ## Speicherorte der Dateien
 

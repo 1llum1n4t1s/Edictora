@@ -119,6 +119,28 @@ pub struct DashboardText {
     pub delete_image_confirm_marker: &'static str,
     /// その確認ダイアログの確定ボタン（前後の空白を除いた完全一致で探す）
     pub delete_image_confirm_button: &'static str,
+
+    /// 「プライバシー」タブの文言。None の言語では、このタブの読み書きを許さない（文言を推測で足さない）
+    pub privacy: Option<PrivacyText>,
+}
+
+/// 「プライバシー」タブ（編集画面の `/privacy`）の文言。
+///
+/// 日本語は 2026-11-18 に実画面（15 アイテム）で確認した。タブの名前は「プライバシー」（URL は `<編集画面>/privacy`）。
+/// 単一用途の説明・権限の正当性は textarea（最大 1,000 文字）で、見出しが aria-labelledby でラベルになる。
+/// データ使用の 9 種類と 3 つの宣誓は `input[type=checkbox]`（aria-label が項目の文言そのもの）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrivacyText {
+    /// 単一用途の説明の欄のラベル
+    pub single_purpose_label: &'static str,
+    /// 権限の正当性の欄のラベルの後半（「<権限名> が必要な理由」の「が必要な理由」。空白は照合で無視する）
+    pub permission_label_suffix: &'static str,
+    /// ホスト権限の欄の権限名（設定では特別なキー `host`）
+    pub host_permission_name: &'static str,
+    /// データの種類 9 つのチェックボックスのラベル（`DataKind::ALL` と同じ並び）
+    pub data_kind_labels: [&'static str; 9],
+    /// 3 つの宣誓チェックのラベル（画面の並び）
+    pub certify_labels: [&'static str; 3],
 }
 
 impl DashboardText {
@@ -162,6 +184,27 @@ pub const JA: DashboardText = DashboardText {
     delete_image_prefix: "画像を削除 ",
     delete_image_confirm_marker: "この画像を削除してもよろしいですか",
     delete_image_confirm_button: "削除",
+    privacy: Some(PrivacyText {
+        single_purpose_label: "単一用途の説明",
+        permission_label_suffix: "が必要な理由",
+        host_permission_name: "ホスト権限",
+        data_kind_labels: [
+            "個人を特定できる情報",
+            "健康に関する情報",
+            "財務状況や支払いに関する情報",
+            "認証に関する情報",
+            "個人的コミュニケーション",
+            "位置情報",
+            "ウェブ履歴",
+            "ユーザーのアクティビティ",
+            "ウェブサイトのコンテンツ",
+        ],
+        certify_labels: [
+            "私は、承認されている以外の用途で第三者にユーザーデータを販売、転送しません",
+            "私はアイテムの唯一の目的と関係のない目的でユーザーデータを使用または転送しません",
+            "私は信用力を判断する目的または融資目的でユーザーデータを使用または転送しません",
+        ],
+    }),
 };
 
 /// 英語表示のダッシュボードの文言。
@@ -202,6 +245,8 @@ pub const EN: DashboardText = DashboardText {
     delete_image_prefix: "Delete image ",
     delete_image_confirm_marker: "delete this image",
     delete_image_confirm_button: "Delete",
+    // 英語の画面の「プライバシー」タブの文言は実画面で未確認なので、このタブは日本語の画面だけで扱う
+    privacy: None,
 };
 
 impl DashboardLang {

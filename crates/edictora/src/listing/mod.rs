@@ -8,6 +8,7 @@ use crate::config::section::extract_source;
 use crate::config::{ItemConfig, normalize_locale_code};
 use crate::error::{Error, Result};
 use crate::images::{ExpectedImages, ExpectedSlot, ImageScope, ImageSlot, build_expected_slot};
+use crate::privacy::ExpectedPrivacy;
 use crate::util::{eq_ic, format_n0, utf16_len};
 use crate::{tr, trs};
 
@@ -113,12 +114,19 @@ pub struct ExpectedItem {
     pub locales: Vec<ExpectedLocale>,
     /// 掲載画像の正本（対象にするスロットだけ。`build_expected` では None で、`select_targets` が足す）
     pub images: Option<ExpectedImages>,
+    /// 「プライバシー」タブの正本（対象にする欄だけ。`build_expected` では None で、`select_targets` が足す）
+    pub privacy: Option<ExpectedPrivacy>,
 }
 
 impl ExpectedItem {
     /// 掲載画像の対象スロットが 1 つ以上あるか
     pub fn has_images(&self) -> bool {
         self.images.as_ref().is_some_and(|i| !i.is_empty())
+    }
+
+    /// 「プライバシー」タブの対象欄が 1 つ以上あるか
+    pub fn has_privacy(&self) -> bool {
+        self.privacy.as_ref().is_some_and(|p| !p.is_empty())
     }
 
     /// ロケールで絞り込む（空なら全ロケール）。未設定のロケールを指定したら `Config` エラー
@@ -182,6 +190,7 @@ pub fn build_expected(item: &ItemConfig) -> Result<ExpectedItem> {
         display_name: item.display_name.clone(),
         locales,
         images: None,
+        privacy: None,
     })
 }
 

@@ -13,24 +13,31 @@ use crate::{tr, trs};
 /// 対象の種類（`--only`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Only {
-    /// テキストと画像の両方（既定）
+    /// テキスト・画像・「プライバシー」タブのすべて（既定。設定に書いたものだけが対象になる）
     #[default]
-    Both,
+    All,
     /// テキスト（説明・URL）だけ
     Text,
     /// 掲載画像だけ
     Images,
+    /// 「プライバシー」タブ（単一用途・権限の正当性・データ使用）だけ
+    Privacy,
 }
 
 impl Only {
     /// テキストを対象にするか
     pub fn text(self) -> bool {
-        self != Only::Images
+        matches!(self, Only::All | Only::Text)
     }
 
     /// 画像を対象にするか
     pub fn images(self) -> bool {
-        self != Only::Text
+        matches!(self, Only::All | Only::Images)
+    }
+
+    /// 「プライバシー」タブを対象にするか
+    pub fn privacy(self) -> bool {
+        matches!(self, Only::All | Only::Privacy)
     }
 }
 
@@ -132,7 +139,7 @@ pub struct CliCommand {
     pub item_ids: Vec<String>,
     /// 指定されたロケール（未指定なら空。「-」区切りに正規化・重複なし）
     pub locale_codes: Vec<String>,
-    /// 対象の種類（未指定ならテキストと画像の両方）
+    /// 対象の種類（未指定ならテキスト・画像・プライバシー タブのすべて）
     pub only: Only,
     /// 画像の対象範囲（未指定なら全言語向けとローカライズ版の両方）
     pub image_scope: ImageScope,
@@ -150,7 +157,7 @@ impl CliCommand {
             chrome_path: None,
             item_ids: Vec::new(),
             locale_codes: Vec::new(),
-            only: Only::Both,
+            only: Only::All,
             image_scope: ImageScope::All,
             yes: false,
             login_wait: None,
@@ -253,6 +260,7 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
                 cmd.only = match v.trim().to_ascii_lowercase().as_str() {
                     "text" => Only::Text,
                     "images" => Only::Images,
+                    "privacy" => Only::Privacy,
                     _ => {
                         return Err(Error::Usage(tr!("cli.invalid_value_for_only", value = v)));
                     }

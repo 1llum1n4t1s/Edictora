@@ -1,6 +1,6 @@
 # AGENTS.md — Edictora 開発ガイド（LLM / 開発者向け）
 
-Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームページ URL・サポート URL と、掲載画像）を、各拡張機能リポジトリの正本ファイルから一括で読み出し・比較・更新する Windows 向け CLI（`edictora.exe`）。ほかの人にも配る前提。
+Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームページ URL・サポート URL と、掲載画像、「プライバシー」タブ）を、各拡張機能リポジトリの正本ファイルから一括で読み出し・比較・更新する Windows 向け CLI（`edictora.exe`）。ほかの人にも配る前提。
 CWS API v2 に掲載情報の読み書きがなく、拡張機能からの CWS 操作は Chrome が拒否するため、専用プロファイルの Chrome を CDP で操作してデベロッパー ダッシュボードの画面を書き換える。
 全体設計・2026-11-13 の実画面検証で確かめた画面構成と操作方法は [DESIGN.md](DESIGN.md) を正本とする。
 
@@ -15,12 +15,13 @@ crates/edictora/
 │  ├─ main.rs / lib.rs
 │  ├─ cdp/            … client.rs（CDP JSON-RPC・flatten sessionId・入出力スレッド）/ page.rs（評価・マウス・キー・遷移）
 │  ├─ chrome/         … locator.rs（chrome.exe 検出）/ launcher.rs（専用プロファイルで起動 or 既存へ接続、Browser.close で終了）
-│  ├─ config/         … mod.rs（config.json の読込・検証）/ section.rs（正本の区間切り出し）/ images.rs（`images` の読込）
+│  ├─ config/         … mod.rs（config.json の読込・検証）/ section.rs（正本の区間切り出し）/ images.rs（`images` の読込）/ privacy.rs（`privacy` の読込）
 │  ├─ images/         … mod.rs（掲載画像のモデル・正本の検証・画素ダイジェストの比較）/ png.rs（PNG のデコードと画素ダイジェスト。zlib の展開を自前で持つ）/ fetch.rs（画像の原本を `=s0` で取得。trait `ImageFetcher`）
+│  ├─ privacy/        … 「プライバシー」タブのモデル（データの種類・正本・現在値）・本文の字下げ除去と文字数の検証・比較（権限の一覧の照合を含む）。画面操作は持たない
 │  ├─ listing/        … 欄・正本と現在値のモデル・完全一致の比較 / text_diff.rs（行差分）
 │  ├─ dashboard/      … urls.rs / text.rs（画面の文言）/ page_scripts.rs（埋め込み JS の呼び出し）/ selectors.rs（要素の選択）
 │  │                    write_gate.rs（書き込み可否）/ item_page.rs（1 操作ずつの実装）/ browser.rs（接続とログイン確認）
-│                    mod.rs の trait `EditorPage`（共通）/ `ListingPage`（テキストと審査送信）/ `ImagePage`（画像。審査送信なし）が手順と画面操作の境目
+│                    mod.rs の trait `EditorPage`（共通）/ `ListingPage`（テキストと審査送信）/ `ImagePage`（画像。審査送信なし）/ `PrivacyPage`（「プライバシー」タブ。審査送信なし）が手順と画面操作の境目
 │  ├─ net/winhttp.rs  … WinHTTP の FFI（GET だけ、メモリかファイルへ受ける）。自動更新と、画像の原本の取得が使う
 │  ├─ update/         … 自動更新: locate.rs / manifest.rs（sq.version）/ feed.rs / version.rs（SemVer）/ source.rs（配信元）
 │  │                    download.rs（ダウンロードと検証）/ hash.rs（CNG）/ lock.rs / apply.rs（Update.exe の起動）
@@ -42,7 +43,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 
 ## 設計上の重要な前提（このとおりに実装する）
 
-- **手順は `services.rs` に置き、CLI は呼ぶだけにする。** 画面操作は trait（`ListingPage`・`ImagePage`）越しに行い、手順はテスト用の偽ページでブラウザなしに検証する。
+- **手順は `services.rs` に置き、CLI は呼ぶだけにする。** 画面操作は trait（`ListingPage`・`ImagePage`・`PrivacyPage`）越しに行い、手順はテスト用の偽ページでブラウザなしに検証する。
 - **ページ内の JS は候補要素の情報を集めて返すだけ。** どれを選ぶかは Rust の純粋関数（`dashboard/selectors.rs`）で判断し、テストで固める。dist は直接編集せず `bun run build` で作り、`bun run check` で最新か確かめる。exe と `cargo build` に Bun を要らせない（`include_str!` で埋め込む）。
 - **Chrome の起動引数は最小限**（`--user-data-dir`・`--remote-debugging-port=0`・`--no-first-run`・`--no-default-browser-check` と描画の間引き抑止 3 つ・`--disable-features=CalculateNativeWinOcclusion`、ヘッドレス時だけ `--headless=new --window-size=1280,900`）。`--enable-automation` などの自動化フラグや画面外配置は付けない（Google ログインを弾かれる恐れ）。変える場合は実画面でログインを再検証する。Chrome の stdout/stderr は捨てる。
 - **プロファイルは秘密情報で、ツールは絶対に削除しない。** 終了は `Browser.close`、応答しないときだけプロセスを止める。ログイン待ちの間はタブに接続しない。
@@ -52,7 +53,8 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **ページ内スクリプトに利用者の入力値を埋め込まない。** 書き込む文字列は CDP の `Input.insertText` で渡す。
 - **書き込みの安全策**: `write_gate.rs` は確認済みの状態（許可リスト）以外を止める。審査の取り消しはしない。言語ごとに「切替 → 書換 → 全欄照合 → 保存 → 再読込 → 照合」、最後に全言語を読み直す。途中で失敗したら、そのアイテムの残りは行わない。beforeunload が出たら「留まる」を選び、変更を捨てずに中止する。
 - **審査送信は 1 件ずつ明示**（`submit --item <id> --yes`）。「自動的に公開する」チェックは変えずに報告する。
-- **掲載画像**（`images`・`services::push_images`）: 画像の手順は `&mut dyn ImagePage` だけを受け取る（`ImagePage` に審査送信は無い。`EditorPage` ← `ListingPage` / `ImagePage` の分離を崩さない）。**比較はファイルのバイト列ではなく、デコードした画素の SHA-256**（ダッシュボードは PNG を再エンコードして保存する。`images/png.rs`）。原本は `=s0` を Cookie なしの `net/winhttp.rs`（https の `*.googleusercontent.com` だけ、16 MB まで）で取得し、取得・デコードできなければ「比較不能」で止める（一致扱いにも常に置換にもしない）。スロットは `selectors::pick_image_slot` が寸法の表記と見出しの行で 1 つに絞る（絞れなければ止める）。画像まわりのクリックは削除ボタン（aria-label が「画像を削除 <alt>」に完全一致）と削除確認ダイアログの「削除」だけ。並べ替えには触れない。**ストア アイコン（`images.icon`、128x128、ダッシュボード上は「ショップ アイコン」）も同じスロットの仕組みで扱い、全言語共通なので `--image-scope global` に含める（処理順は小タイルより前）。アイコンだけは透過（RGBA）の PNG を許し、比較はアルファ込みの画素ダイジェスト（`png::pixel_digest_rgba`。完全に透明な画素の色は無視）で行う（`images::digest_for_slot`）。**書き込みは日本語の画面だけ。**画像の削除はサーバーへ即座に反映される**ので、途中で止まると下書きから画像が欠ける（再実行で整える）。ローカライズ版が対象でロケールがダッシュボードに無い・言語が 1 つのアイテムなら、何も触らず止めて `--image-scope global` か `--locale` を案内する。審査待ちなどでは最初の削除の前と各保存の直前に止める。CLI は `--only text|images`・`--image-scope all|global|localized`（MCP は `only`・`imageScope`）。
+- **掲載画像**（`images`・`services::push_images`）: 画像の手順は `&mut dyn ImagePage` だけを受け取る（`ImagePage` に審査送信は無い。`EditorPage` ← `ListingPage` / `ImagePage` の分離を崩さない）。**比較はファイルのバイト列ではなく、デコードした画素の SHA-256**（ダッシュボードは PNG を再エンコードして保存する。`images/png.rs`）。原本は `=s0` を Cookie なしの `net/winhttp.rs`（https の `*.googleusercontent.com` だけ、16 MB まで）で取得し、取得・デコードできなければ「比較不能」で止める（一致扱いにも常に置換にもしない）。スロットは `selectors::pick_image_slot` が寸法の表記と見出しの行で 1 つに絞る（絞れなければ止める）。画像まわりのクリックは削除ボタン（aria-label が「画像を削除 <alt>」に完全一致）と削除確認ダイアログの「削除」だけ。並べ替えには触れない。**ストア アイコン（`images.icon`、128x128、ダッシュボード上は「ショップ アイコン」）も同じスロットの仕組みで扱い、全言語共通なので `--image-scope global` に含める（処理順は小タイルより前）。アイコンだけは透過（RGBA）の PNG を許し、比較はアルファ込みの画素ダイジェスト（`png::pixel_digest_rgba`。完全に透明な画素の色は無視）で行う（`images::digest_for_slot`）。**書き込みは日本語の画面だけ。**画像の削除はサーバーへ即座に反映される**ので、途中で止まると下書きから画像が欠ける（再実行で整える）。ローカライズ版が対象でロケールがダッシュボードに無い・言語が 1 つのアイテムなら、何も触らず止めて `--image-scope global` か `--locale` を案内する。審査待ちなどでは最初の削除の前と各保存の直前に止める。CLI は `--only text|images|privacy`・`--image-scope all|global|localized`（MCP は `only`・`imageScope`）。
+- **「プライバシー」タブ**（`privacy`・`services::push_privacy`）: 拡張機能に権限を足すと、ダッシュボードの「プライバシー」タブ（URL は `<編集画面>/privacy`、日本語の画面の見出し「単一用途」「権限が必要な理由」「データ使用」）に権限の正当性などを入れないと審査に送信できない。**設定の `privacy` に書いた欄だけ**（`singlePurpose`・`permissions`・`remoteCode`・`dataUsage`）を、説明文と同じ「ファイル + sectionStart / sectionEnd」で指した正本から読み取り・比較・下書き保存する（`config/section.rs` を再利用。固定書式は解析しない）。取り出した本文は前後の空行を除き共通の字下げを取り除き（`privacy::dedent`）、空・1,000 文字超過は Chrome を開く前に終了コード 2 で止める。`permissions` のキーは manifest の権限名で、ホスト権限だけ特別なキー `host`。`dataUsage.certify` は true だけを許す（false・省略は設定エラー）。手順は `&mut dyn PrivacyPage` だけを受け取る（`PrivacyPage` に審査送信は無い。`EditorPage` ← `ListingPage` / `ImagePage` / `PrivacyPage` の分離を崩さない）。**`permissions` を書いたときは権限の一覧そのものも照合する**: 設定にあって画面に無い権限、画面にあって設定に無い権限は、比較結果にエラー行で出し、`diff` は終了コード 1、`push` は何も書かずに止める（`WriteBlocked`）。textarea はラベルの行（「単一用途の説明」「<権限名> が必要な理由」）、チェックボックスは aria-label の 1 行の完全一致で、`selectors::classify_privacy_textareas` などが 1 つに絞る（絞れなければ止める）。チェックボックスはページ内 JS の `checkbox` 種別で集め、実際のマウス入力で押して状態の変化を待つ。push は「タブを開く → 書き込み可否 → 読んで比較 → 不整合があれば止める → 差分のある欄だけ書き換え → 保存前に照合 → 下書き保存 → 読み直して照合」で、テキスト・画像の保存の後に別の保存として行う。**日本語の画面だけ**扱う（`PrivacyText` は日本語だけが持つ）。**リモートコードは未対応**（実画面のどのアイテムにも欄が無く DOM を確かめられていない。設定に書くと `diff` がエラー、`push` が止まる）。`--only privacy` で絞れ、`--locale` では絞らない（全言語共通）。
 - **区間切り出しは検証スクリプト（push.mjs）と同じ結果にする。** 見出しが無ければエラー。`sectionStart` / `sectionEnd` は Rust の `regex` で解釈するため、先読み・後読み・後方参照は使えない（設定の契約）。`crates/edictora/tests/fixtures/ReplaceTranslator` の SHA-256・文字数（ja=1492 / en=3172）のテストを壊さない。
 - **設定に書いていない欄は、読み出し・比較・書き換えの対象外。** 未知のキーはエラー。URL 欄はキーなし＝対象外、`""`＝空欄が正本。
 - **引数と設定の誤りは Chrome を開く前に終了コード 2 で止める。** 終了コードは 0 / 1 / 2 / 3（差分あり）/ 4（書き込み中止）/ 5（ログインが必要）/ 130（中断）。進捗は標準エラー、結果は標準出力。
@@ -105,6 +107,7 @@ cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
 
 - ダッシュボードの英語表示は認識するが、英語の文言は実画面で未確認（日本語の画面だけ確認済み）
 - 実画面で確認済み: `pull` / `diff`（ヘッドレス）、2026-11-15 に 9 言語のアイテムでの `push`（説明欄）と `submit`、ステータス「拒否」での書き込み、掲載画像の読み出し（単一言語・9 言語）と SearchClock での全言語向け画像の `push`（削除・アップロード・保存まで。画素比較に変えた後は置換を伴う実行を未実施で、「変更なし」だけ確認。DESIGN.md「実画面での確認状況」）。画像の規格外アップロード時のエラー表示と、ローカライズ版の書き込みは未確認。Ctrl+C での中断、beforeunload の扱いは Rust 版ではまだ実画面で確かめていない
+- 2026-11-18 に「プライバシー」タブを実画面（ReviewForMD、公開済み・下書きあり）で確認: `diff`・`push`（テキスト欄とデータの種類のチェックの書き換え → 保存 → 読み直して照合）・不整合の設定での停止。宣誓チェックの付け直し・リモートコードの欄・審査待ちでの書き込み拒否は未確認（DESIGN.md「実画面での確認状況」）
 - 未確認の画面状態: 審査待ちアイテムの編集画面、URL 欄の書き換えと保存、言語が 1 つだけのアイテム。`write_gate.rs` の許可リスト（公開済み・下書き・拒否）は実画面の表記で確かめて更新する
 - **「拒否」を許可したことの未確認のリスク**: 拒否のアイテムを再提出した直後も表記は「拒否」のままだった。審査中でも「拒否」と出続けるなら、審査中のアイテムに書き込めてしまう。再提出後の表記を実画面で確かめるまで、拒否のアイテムへの push は利用者の確認のうえで行う（DESIGN.md「実画面での確認状況」）
 - MCP の未確認: 実画面での操作、`notifications/cancelled` での中断、本物の Update.exe で「待機中の MCP があると適用を見送る」こと（ロックの保持は結合テスト `tests/mcp_running_lock.rs` で確認済み）、本物の `claude` / `codex` CLI での自動登録・解除（`mcp get` の出力に exe のパスがそのまま出るか、`mcp get` が健康診断でサーバーを起動するか）、`codex mcp add` の書式

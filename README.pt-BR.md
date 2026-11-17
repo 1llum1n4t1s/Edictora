@@ -22,7 +22,8 @@ Ele funciona como uma única ferramenta de linha de comando (`edictora.exe`). É
 - **pull**: lê os valores atuais do painel (descrição, URL oficial, URL da página inicial e URL de suporte). Somente leitura.
 - **diff**: mostra as diferenças em relação aos seus arquivos de origem. Somente leitura e é o comando padrão.
 - **push**: reescreve apenas os campos que diferem, **salva como rascunho**, depois recarrega a página e confere os valores salvos com os seus arquivos de origem.
-- **Imagens**: se um item tiver `images` na configuração, `pull`, `diff` e `push` também tratam as imagens da página (ícone da loja, capturas de tela, bloco promocional pequeno e marquee). Restrinja com `--only text|images` e `--image-scope all|global|localized`.
+- **Imagens**: se um item tiver `images` na configuração, `pull`, `diff` e `push` também tratam as imagens da página (ícone da loja, capturas de tela, bloco promocional pequeno e marquee). Restrinja com `--only text|images|privacy` e `--image-scope all|global|localized`.
+- **Guia Privacidade**: se um item tiver `privacy` na configuração, `pull`, `diff` e `push` também tratam a guia «Privacidade» do painel (Privacy practices: descrição da finalidade única, justificativa de cada permissão e declaração de uso de dados). Restrinja com `--only privacy`. Salva apenas como rascunho; nunca envia para revisão.
 - **submit**: envia um item para revisão. Não altera a configuração "publicar automaticamente após a revisão".
 - **login**: abre o Chrome com o perfil dedicado para que você mesmo faça login no Google.
 - **update**: baixa e instala uma versão mais recente, se houver. Só funciona quando você instalou o Edictora com o Setup, e também é executado automaticamente quando você faz login no Windows.
@@ -125,6 +126,37 @@ Adicione `images` a um item para gerenciar as imagens dele. Como nos demais camp
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)
 edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
+
+#### Guia Privacidade (opcional)
+
+Ao adicionar uma permissão a uma extensão, a guia **Privacidade** do painel (Privacy practices) exige uma justificativa antes que o item possa ser enviado para revisão. Adicione `privacy` a um item para ler, comparar e salvar esses campos como rascunho a partir dos seus arquivos de origem. Como nos demais campos, **as chaves que você não escrever nunca são tocadas**.
+
+```jsonc
+"privacy": {
+  // Text fields use the same "file + sectionStart / sectionEnd" as `description`
+  "singlePurpose": { "file": "webstore/store-listing.txt", "sectionStart": "^■ Single purpose$", "sectionEnd": "^■ Data usage$" },
+  "permissions": {                                  // manifest permission name -> justification; host permissions use the special key "host"
+    "activeTab": { "file": "webstore/store-listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  scripting:$" },
+    "host": { "file": "webstore/store-listing.txt", "sectionStart": "^  Host permissions:$", "sectionEnd": "^■ Privacy policy URL$" }
+  },
+  "dataUsage": {
+    "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
+    "certify": true                                            // checks the three declarations; only true is allowed
+  }
+}
+```
+
+- O texto é extraído do arquivo como em `description` (veja acima). As linhas em branco iniciais e o recuo comum são removidos, então justificativas recuadas sob `  activeTab:` funcionam como estão. Nenhum texto pode ficar vazio e todos devem caber em 1.000 caracteres; o Edictora verifica isso antes de abrir o Chrome (código de saída 2).
+- `collected` aceita `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` e `websiteContent` (só os indicados são marcados; os demais são desmarcados). `certify` só pode ser `true` (marca as três declarações, como «não vendo…»); `false` ou omiti-lo é um erro de configuração.
+- **O conjunto de permissões também é conferido.** Se você escrever `permissions`, uma permissão que está na configuração mas não no painel (ou o contrário) aparece no resultado e o `push` para antes de gravar qualquer coisa: adicione-a à configuração ou corrija o manifest.
+- `remoteCode` (`{ "uses": false }` ou `{ "uses": true, "justification": {...} }`) é aceito na configuração, mas a seção correspondente do painel ainda não pôde ser conferida em uma tela real; se você o escrever, o `diff` relata um erro e o `push` para. Por enquanto, não o escreva.
+- Só funciona com o painel em japonês (os rótulos em inglês não foram verificados). Salva somente como rascunho; o Edictora nunca envia para revisão.
+- Um item pode ter `privacy` sem `locales` nem `images` (somente a guia Privacidade).
+
+```powershell
+edictora diff --only privacy --item <id>          # Privacy practices tab only (read-only)
+edictora push --only privacy --item <id> --yes    # Rewrite differing fields, save as draft, reload and verify
 ```
 
 ### 2. Faça login
@@ -246,6 +278,7 @@ Se você usa um gateway MCP (como o Toolport), registre o mesmo comando (stdio, 
 - O Chrome é iniciado sem flags de automação e encerrado de forma limpa. **O perfil nunca é excluído.**
 - As capturas de tela feitas em caso de falha são salvas em `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca no seu repositório.
 - As atualizações de imagens substituem apenas os locais que diferem. Não reordenam imagens, e nunca podem enviar para revisão (o código de imagens não tem como chamá-lo).
+- As atualizações da guia Privacidade alteram apenas os campos que diferem, nunca enviam para revisão (o código não tem como chamá-lo) e param sem gravar nada se as permissões do painel não corresponderem à configuração.
 
 ## Onde os arquivos ficam
 

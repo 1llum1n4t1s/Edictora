@@ -28,6 +28,7 @@ type Kind =
   | "textInput"
   | "dialogButton"
   | "dialogCheckbox"
+  | "checkbox"
   | "fileInput"
   | "slotImage"
   | "imageButton";
@@ -184,6 +185,10 @@ function createApi(): EdictoraApi {
       const d = allDialogs();
       return d.length === 1 ? [...d[0].querySelectorAll("input[type=checkbox], [role=checkbox]")] : [];
     },
+    // ページ本体のチェックボックス（ダイアログの外）。「プライバシー」タブのデータ使用の 9 種類と 3 つの宣誓チェック。
+    // 実画面では input 自体が 48x48・不透明度 0 で、クリックはその input に届く（覆われていない）
+    checkbox: () =>
+      [...document.querySelectorAll("input[type=checkbox], [role=checkbox]")].filter((c) => visible(c) && !inDialog(c)),
     fileInput: () => [...document.querySelectorAll("input[type=file]")],
     // slotImage / imageButton は collectSlot で集める（単独では空）
     slotImage: () => [],

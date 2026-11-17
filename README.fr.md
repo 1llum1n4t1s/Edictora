@@ -22,7 +22,8 @@ Il s'exécute sous la forme d'un unique outil en ligne de commande (`edictora.ex
 - **pull** : lit les valeurs actuelles du tableau de bord (description, URL officielle, URL de la page d'accueil et URL d'assistance). Lecture seule.
 - **diff** : affiche les différences avec vos fichiers sources. Lecture seule, et commande par défaut.
 - **push** : réécrit uniquement les champs qui diffèrent, **les enregistre en brouillon**, puis recharge la page et compare les valeurs enregistrées à vos fichiers sources.
-- **Images** : si un élément a `images` dans la configuration, `pull`, `diff` et `push` gèrent aussi ses images de fiche (icône de la boutique, captures d'écran, petite tuile promotionnelle et marquee). Limitez-les avec `--only text|images` et `--image-scope all|global|localized`.
+- **Images** : si un élément a `images` dans la configuration, `pull`, `diff` et `push` gèrent aussi ses images de fiche (icône de la boutique, captures d'écran, petite tuile promotionnelle et marquee). Limitez-les avec `--only text|images|privacy` et `--image-scope all|global|localized`.
+- **Onglet Confidentialité** : si un élément a `privacy` dans la configuration, `pull`, `diff` et `push` gèrent aussi l'onglet « Confidentialité » du tableau de bord (Privacy practices : description de l'objectif unique, justification de chaque permission et déclaration d'utilisation des données). Limitez-les avec `--only privacy`. Enregistré uniquement comme brouillon ; jamais soumis à l'examen.
 - **submit** : envoie un élément pour examen. Il ne modifie pas le paramètre « publier automatiquement après examen ».
 - **login** : ouvre Chrome avec le profil dédié pour que vous puissiez vous connecter vous-même à Google.
 - **update** : télécharge et installe une version plus récente, s'il y en a une. Cela ne fonctionne que si vous avez installé Edictora avec Setup, et la commande s'exécute aussi automatiquement à l'ouverture de votre session Windows.
@@ -125,6 +126,37 @@ Ajoutez `images` à un élément pour gérer ses images. Comme pour les autres c
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)
 edictora push --only images --image-scope global --item <id> --yes      # Replace global images, save as draft, verify
+```
+
+#### Onglet Confidentialité (facultatif)
+
+Lorsque vous ajoutez une permission à une extension, l'onglet **Confidentialité** du tableau de bord (Privacy practices) exige une justification avant que l'élément puisse être soumis à l'examen. Ajoutez `privacy` à un élément pour lire, comparer et enregistrer ces champs comme brouillon depuis vos fichiers sources. Comme pour les autres champs, **les clés que vous n'écrivez pas ne sont jamais touchées**.
+
+```jsonc
+"privacy": {
+  // Text fields use the same "file + sectionStart / sectionEnd" as `description`
+  "singlePurpose": { "file": "webstore/store-listing.txt", "sectionStart": "^■ Single purpose$", "sectionEnd": "^■ Data usage$" },
+  "permissions": {                                  // manifest permission name -> justification; host permissions use the special key "host"
+    "activeTab": { "file": "webstore/store-listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  scripting:$" },
+    "host": { "file": "webstore/store-listing.txt", "sectionStart": "^  Host permissions:$", "sectionEnd": "^■ Privacy policy URL$" }
+  },
+  "dataUsage": {
+    "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
+    "certify": true                                            // checks the three declarations; only true is allowed
+  }
+}
+```
+
+- Le texte est extrait du fichier comme `description` (voir plus haut). Les lignes vides initiales sont retirées, ainsi que l'indentation commune ; les justifications indentées sous `  activeTab:` fonctionnent donc telles quelles. Aucun texte ne peut être vide et chacun doit tenir dans 1 000 caractères ; Edictora le vérifie avant d'ouvrir Chrome (code de sortie 2).
+- `collected` accepte `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` et `websiteContent` (seuls ceux indiqués sont cochés, les autres sont décochés). `certify` ne peut valoir que `true` (il coche les trois déclarations, comme « je ne vends pas… ») ; `false` ou l'omettre est une erreur de configuration.
+- **L'ensemble des permissions est aussi vérifié.** Si vous écrivez `permissions`, une permission présente dans la configuration mais absente du tableau de bord (ou l'inverse) apparaît dans le résultat et `push` s'arrête avant d'écrire quoi que ce soit : ajoutez-la à la configuration ou corrigez le manifest.
+- `remoteCode` (`{ "uses": false }` ou `{ "uses": true, "justification": {...} }`) est accepté dans la configuration, mais la section correspondante du tableau de bord n'a pas encore pu être vérifiée sur un écran réel ; si vous l'écrivez, `diff` signale une erreur et `push` s'arrête. Ne l'écrivez pas pour l'instant.
+- Ne fonctionne que lorsque le tableau de bord est en japonais (les libellés anglais ne sont pas vérifiés). Enregistré uniquement comme brouillon ; Edictora ne soumet jamais à l'examen.
+- Un élément peut avoir `privacy` sans `locales` ni `images` (onglet Confidentialité seulement).
+
+```powershell
+edictora diff --only privacy --item <id>          # Privacy practices tab only (read-only)
+edictora push --only privacy --item <id> --yes    # Rewrite differing fields, save as draft, reload and verify
 ```
 
 ### 2. Se connecter
@@ -246,6 +278,7 @@ Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même comma
 - Chrome est démarré sans indicateurs d'automatisation et fermé proprement. **Le profil n'est jamais supprimé.**
 - Les captures d'écran prises en cas d'échec sont enregistrées dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, jamais dans votre dépôt.
 - Les mises à jour d'images ne remplacent que les emplacements qui diffèrent. Elles ne touchent pas à l'ordre des images, et ne peuvent jamais soumettre à l'examen (le code des images n'a aucun moyen de l'appeler).
+- Les mises à jour de l'onglet Confidentialité ne modifient que les champs qui diffèrent, ne soumettent jamais à l'examen (le code n'a aucun moyen de l'appeler) et s'arrêtent sans rien écrire si les permissions du tableau de bord ne correspondent pas à la configuration.
 
 ## Où les fichiers sont stockés
 

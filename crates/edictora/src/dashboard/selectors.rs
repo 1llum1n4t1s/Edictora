@@ -6,17 +6,19 @@
 //! 曖昧なときに「最初の 1 つ」を選ぶと、別の欄を書き換える事故につながる。
 //! そのため、候補がちょうど 1 つに絞れないときは必ず止める（`Dashboard` エラー）。
 
+use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::Value;
 
 use crate::dashboard::PageImage;
-use crate::dashboard::text::{DashboardLang, DashboardText};
+use crate::dashboard::text::{DashboardLang, DashboardText, PrivacyText};
 use crate::dashboard::write_gate::ItemPageState;
 use crate::error::{Error, Result};
 use crate::images::ImageSlot;
 use crate::listing::ListingField;
+use crate::privacy::{DataKind, HOST_PERMISSION_KEY};
 use crate::util::{contains_ic, eq_ic};
 use crate::{tr, trs};
 
@@ -775,4 +777,219 @@ pub fn image_error_messages<S: AsRef<str>>(t: &DashboardText, messages: &[S]) ->
         .into_iter()
         .filter(|m| MARKERS.iter().any(|k| contains_ic(m, k)))
         .collect()
+}
+
+// ───────── 「プライバシー」タブ ─────────
+
+/// 「プライバシー」タブの textarea を分類した結果
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivacyTextAreas<'a> {
+    /// 単一用途の説明の欄（無ければ None）
+    pub single_purpose: Option<&'a ElementInfo>,
+    /// 権限の正当性の欄（キーは manifest の権限名か `host`。画面の並び）
+    pub permissions: Vec<(String, &'a ElementInfo)>,
+}
+
+/// 行（ラベル候補の 1 行）が「<権限名> が必要な理由」の形なら、権限名を返す。
+///
+/// 空白の有無は区別しない（「ホスト権限 が必要な理由」と「ホスト権限が必要な理由」を同じに見る）。
+/// 説明文の行（「ホスト権限は、拡張機能のマニフェストの…」など）は、後半が一致しないので当たらない。
+fn permission_name_of_line(p: &PrivacyText, line: &str) -> Option<String> {
+    let compact = remove_white_space(line);
+    let suffix = remove_white_space(p.permission_label_suffix);
+    let name = compact.strip_suffix(&suffix)?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// 「プライバシー」タブの textarea を、ラベルの行で「単一用途の説明」と「権限ごとの正当性」に分ける。
+///
+/// - 権限名の照合は行単位（`has_label_line` と同じ考え方）。ホスト権限の名前は特別なキー `host` に直す
+/// - どちらにも当たらない textarea（リモートコードの理由など、未対応の欄）は無視する
+/// - 1 つの textarea が複数の権限名に当たる・同じ権限の欄が複数ある・単一用途の欄が複数あるなど、
+///   1 つに絞れないときは止める（別の欄を書き換える事故を防ぐ）
+pub fn classify_privacy_textareas<'a>(
+    p: &PrivacyText,
+    textareas: &'a [ElementInfo],
+) -> Result<PrivacyTextAreas<'a>> {
+    let host = remove_white_space(p.host_permission_name);
+    let mut single: Option<&ElementInfo> = None;
+    let mut permissions: Vec<(String, &ElementInfo)> = Vec::new();
+    for textarea in textareas {
+        let is_single = has_label_line(Some(&textarea.label), p.single_purpose_label);
+        let mut names: Vec<String> = Vec::new();
+        for line in textarea.label.split('\n') {
+            if let Some(name) = permission_name_of_line(p, line)
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
+        }
+        if is_single && !names.is_empty() {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.privacy_textarea_is_ambiguous",
+                label = p.single_purpose_label
+            )));
+        }
+        if is_single {
+            if single.is_some() {
+                return Err(Error::Dashboard(tr!(
+                    "dashboard.privacy_found_several_fields",
+                    label = p.single_purpose_label
+                )));
+            }
+            single = Some(textarea);
+            continue;
+        }
+        match names.as_slice() {
+            [] => {}
+            [name] => {
+                let key = if *name == host {
+                    HOST_PERMISSION_KEY.to_string()
+                } else {
+                    name.clone()
+                };
+                if permissions.iter().any(|(k, _)| *k == key) {
+                    return Err(Error::Dashboard(tr!(
+                        "dashboard.privacy_found_several_fields",
+                        label = key
+                    )));
+                }
+                permissions.push((key, textarea));
+            }
+            _ => {
+                return Err(Error::Dashboard(tr!(
+                    "dashboard.privacy_textarea_is_ambiguous",
+                    label = names.join(" / ")
+                )));
+            }
+        }
+    }
+    Ok(PrivacyTextAreas {
+        single_purpose: single,
+        permissions,
+    })
+}
+
+/// ラベルの行が `label` に完全一致するチェックボックスを 1 つ選ぶ。見つからなければ None、複数なら止める
+fn find_checkbox<'a>(checks: &'a [ElementInfo], label: &str) -> Result<Option<&'a ElementInfo>> {
+    let found: Vec<&ElementInfo> = checks
+        .iter()
+        .filter(|c| c.checked.is_some() && has_label_line(Some(&c.label), label))
+        .collect();
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(Some(found[0])),
+        n => Err(Error::Dashboard(tr!(
+            "dashboard.privacy_found_several_checkboxes",
+            count = n,
+            label = label
+        ))),
+    }
+}
+
+/// データの種類のチェックボックスを 1 つ選ぶ（見つからなければ止める）
+pub fn pick_data_kind_checkbox<'a>(
+    p: &PrivacyText,
+    checks: &'a [ElementInfo],
+    kind: DataKind,
+) -> Result<&'a ElementInfo> {
+    let label = p.data_kind_labels[kind_index(kind)];
+    find_checkbox(checks, label)?.ok_or_else(|| {
+        Error::Dashboard(tr!(
+            "dashboard.privacy_checkbox_was_not_found",
+            label = label
+        ))
+    })
+}
+
+/// 宣誓チェック（0〜2 番目）を 1 つ選ぶ（見つからなければ止める）
+pub fn pick_certify_checkbox<'a>(
+    p: &PrivacyText,
+    checks: &'a [ElementInfo],
+    index: usize,
+) -> Result<&'a ElementInfo> {
+    let label = p.certify_labels[index];
+    find_checkbox(checks, label)?.ok_or_else(|| {
+        Error::Dashboard(tr!(
+            "dashboard.privacy_checkbox_was_not_found",
+            label = label
+        ))
+    })
+}
+
+fn kind_index(kind: DataKind) -> usize {
+    DataKind::ALL
+        .iter()
+        .position(|k| *k == kind)
+        .expect("ALL に全種類がある")
+}
+
+/// チェックされているデータの種類を読む。9 つのチェックボックスが 1 つでも見つからなければ None
+/// （この欄が画面に無いものとして扱う）。ラベルが重なって絞れないときは止める
+pub fn collected_kinds(
+    p: &PrivacyText,
+    checks: &[ElementInfo],
+) -> Result<Option<BTreeSet<DataKind>>> {
+    let mut set = BTreeSet::new();
+    for kind in DataKind::ALL {
+        match find_checkbox(checks, p.data_kind_labels[kind_index(kind)])? {
+            None => return Ok(None),
+            Some(c) => {
+                if c.checked == Some(true) {
+                    set.insert(kind);
+                }
+            }
+        }
+    }
+    Ok(Some(set))
+}
+
+/// 3 つの宣誓チェックがすべて入っているか。3 つが 1 つでも見つからなければ None
+pub fn certified(p: &PrivacyText, checks: &[ElementInfo]) -> Result<Option<bool>> {
+    let mut all = true;
+    for label in p.certify_labels {
+        match find_checkbox(checks, label)? {
+            None => return Ok(None),
+            Some(c) => all &= c.checked == Some(true),
+        }
+    }
+    Ok(Some(all))
+}
+
+/// 「プライバシー」タブで書き込み可否の判断材料（[`ItemPageState`]）を組み立てる。
+///
+/// 「主の入力欄」は単一用途の説明（ちょうど 1 つ）、保存ボタンは編集画面と同じ文言。
+/// 分類できない（絞れない）ときは、見つからなかった扱いにして止める
+pub fn privacy_page_state(
+    t: &DashboardText,
+    p: &PrivacyText,
+    status: Option<String>,
+    textareas: &[ElementInfo],
+    buttons: &[ElementInfo],
+) -> ItemPageState {
+    let main: Vec<ElementInfo> = classify_privacy_textareas(p, textareas)
+        .ok()
+        .and_then(|areas| areas.single_purpose.cloned())
+        .into_iter()
+        .collect();
+    item_page_state(t, status, &main, buttons)
+}
+
+/// 書き込み先のテキスト欄として使えるか確かめる（textarea で、編集できること）
+pub fn ensure_privacy_text_writable(element: &ElementInfo, name: &str) -> Result<()> {
+    if element.tag != "textarea" {
+        return Err(Error::Dashboard(tr!(
+            "dashboard.the_field_is_not_a_text_input",
+            name = name,
+            tag = element.tag,
+            input_type = element.r#type
+        )));
+    }
+    if element.disabled || element.read_only {
+        return Err(Error::WriteBlocked(tr!(
+            "dashboard.the_field_cannot_be_edited",
+            name = name
+        )));
+    }
+    Ok(())
 }

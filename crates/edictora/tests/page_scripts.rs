@@ -109,3 +109,14 @@ fn 画像の収集関数を持ち_srcが空のimgは数えない() {
     assert!(!BUNDLE.contains(".click()"));
     assert!(!BUNDLE.contains("DataTransfer"));
 }
+
+#[test]
+fn チェックボックスの収集はダイアログの外だけで_クリックはページ側で行わない() {
+    // 「プライバシー」タブのデータ使用・宣誓のチェックボックス（ダイアログの外）
+    assert!(BUNDLE.contains("checkbox: () =>"));
+    assert!(BUNDLE.contains("input[type=checkbox], [role=checkbox]"));
+    let e = collect(&JA, kinds::CHECKBOX);
+    assert!(e.contains("return window.__edictora.collect(\"checkbox\");"));
+    // 押すのは CDP の実際のマウス入力（ページ内スクリプトから .click() しない）
+    assert!(!BUNDLE.contains(".click()"));
+}

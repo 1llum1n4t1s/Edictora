@@ -9,10 +9,15 @@
 //!
 //! 掲載画像（`pull_images` / `diff_images` / `push_images`）は別の手順で、画面操作は [`ImagePage`] だけを受け取る。
 //! `ImagePage` に審査送信は無いので、画像の手順は型の上で審査送信を呼べない。
+//!
+//! 「プライバシー」タブ（`pull_privacy` / `diff_privacy` / `push_privacy`）も同じ作りで、画面操作は [`PrivacyPage`] だけを受け取る
+//! （審査送信は持たない）。
 
 use crate::cancel::CancelToken;
 use crate::dashboard::write_gate::ensure_allowed;
-use crate::dashboard::{EditorPage, ImagePage, ListingPage, SubmitConfirm, SubmitResult};
+use crate::dashboard::{
+    EditorPage, ImagePage, ListingPage, PrivacyPage, SubmitConfirm, SubmitResult,
+};
 use crate::error::{Error, Result};
 use crate::images::fetch::ImageFetcher;
 use crate::images::{
@@ -23,6 +28,9 @@ use crate::listing::{
     LocaleComparison, LocaleSnapshot, compare, compare_value,
 };
 use crate::logging::{LogLevel, log, redact};
+use crate::privacy::{
+    self, ExpectedPrivacy, PrivacyComparison, PrivacyField, PrivacyReading, PrivacySnapshot,
+};
 use crate::util::eq_ic;
 use crate::{tr, trs};
 
@@ -1024,4 +1032,264 @@ fn verify_slot(
             phase = phase
         ))),
     }
+}
+
+// ───────── 「プライバシー」タブ ─────────
+//
+// テキストの push・画像の push とは別の手順（別の保存）で、画面操作は [`PrivacyPage`] だけを受け取る。
+// `PrivacyPage` に審査送信は無いので、この手順は型の上で審査送信を呼べない（画像と同じ保証）。
+
+/// 「プライバシー」タブの書き換え結果
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivacyPushResult {
+    pub item_id: String,
+    pub item_name: String,
+    /// 書き換えて下書き保存し、読み直して一致を確認した欄（差分がなければ空）
+    pub updated: Vec<PrivacyField>,
+    /// 最後に読み直して照合した結果
+    pub final_comparison: PrivacyComparison,
+}
+
+/// 「プライバシー」タブの現在値を読む（読み取りのみ）。失敗はアイテム単位のエラーとして返し、他のアイテムは続ける
+pub fn pull_privacy(
+    page: &mut dyn PrivacyPage,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<PrivacySnapshot> {
+    progress(&tr!(
+        "services.opening_the_privacy_tab",
+        display_name = expected.display_name
+    ));
+    match pull_privacy_core(page, expected, cancel) {
+        Ok(s) => Ok(s),
+        Err(Error::LoginRequired) => Err(Error::LoginRequired),
+        Err(e) if e.is_dashboard() => {
+            let shot = capture_read_failure(page, &expected.item_id, None, progress);
+            log(
+                &format!(
+                    "プライバシー タブの読み出し失敗 {}: {}{}",
+                    expected.item_id,
+                    e,
+                    log_shot_suffix(&shot)
+                ),
+                LogLevel::Warning,
+            );
+            Ok(PrivacySnapshot {
+                item_id: expected.item_id.clone(),
+                status_text: None,
+                reading: None,
+                error: Some(redact(&format!("{}{}", e.message(), shot_suffix(&shot)))),
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn pull_privacy_core(
+    page: &mut dyn PrivacyPage,
+    expected: &ExpectedItem,
+    cancel: &CancelToken,
+) -> Result<PrivacySnapshot> {
+    let privacy = expected.privacy.clone().unwrap_or_else(empty_privacy);
+    page.open_privacy(&expected.item_id, cancel)?;
+    let state = page.get_state(cancel)?;
+    let reading = page.read_privacy(&privacy, cancel)?;
+    Ok(PrivacySnapshot {
+        item_id: expected.item_id.clone(),
+        status_text: state.status_text,
+        reading: Some(reading),
+        error: None,
+    })
+}
+
+fn empty_privacy() -> ExpectedPrivacy {
+    ExpectedPrivacy {
+        single_purpose: None,
+        permissions: None,
+        remote_code: None,
+        data_usage: None,
+    }
+}
+
+/// 読み出して正本と比べる（読み取りのみ）
+pub fn diff_privacy(
+    page: &mut dyn PrivacyPage,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<(PrivacySnapshot, PrivacyComparison)> {
+    let snapshot = pull_privacy(page, expected, progress, cancel)?;
+    let row = compare_privacy(expected, &snapshot);
+    Ok((snapshot, row))
+}
+
+/// 「プライバシー」タブの現在値と正本を比べる。アイテム全体の読み出し失敗は、全欄「未取得」＋エラー
+pub fn compare_privacy(expected: &ExpectedItem, snapshot: &PrivacySnapshot) -> PrivacyComparison {
+    let privacy = expected.privacy.clone().unwrap_or_else(empty_privacy);
+    let mut comparison = privacy::compare(
+        &expected.item_id,
+        &expected.display_name,
+        &privacy,
+        snapshot.reading.as_ref(),
+    );
+    comparison.error = snapshot.error.clone();
+    comparison
+}
+
+/// 差分のある欄を書き換えて下書き保存し、読み直して照合する。
+///
+/// 順序: 編集画面（プライバシー タブ）を開く → 書き込み可否 → 現在値を読んで比較 → 画面に無い欄・設定に無い権限があれば
+/// 何も書かずに止める → 差分のある欄だけ書き換え → 保存前に全欄を照合 → 書き込み可否 → 下書き保存 → 読み込み直して全欄を再照合。
+/// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時は画面を診断用に保存する
+pub fn push_privacy(
+    page: &mut dyn PrivacyPage,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<PrivacyPushResult> {
+    match push_privacy_core(page, expected, progress, cancel) {
+        Ok(r) => Ok(r),
+        Err(e) if e.is_dashboard() && e != Error::LoginRequired => {
+            report_failure(page, "push-privacy", &expected.item_id, &e, progress);
+            Err(e)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn push_privacy_core(
+    page: &mut dyn PrivacyPage,
+    expected: &ExpectedItem,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<PrivacyPushResult> {
+    let name = &expected.display_name;
+    let privacy = expected.privacy.clone().unwrap_or_else(empty_privacy);
+    progress(&tr!("services.opening_the_privacy_tab_2", name = name));
+    page.open_privacy(&expected.item_id, cancel)?;
+    // 最初の書き換えの前に書き込み可否を確かめる（審査待ちなどでは何も触らない）
+    ensure_allowed(&page.get_state(cancel)?)?;
+
+    progress(&tr!("services.checking_the_privacy_tab", name = name));
+    let current = page.read_privacy(&privacy, cancel)?;
+    let before = privacy::compare(&expected.item_id, name, &privacy, Some(&current));
+    // 画面に無い欄・設定に無い権限・未対応の欄は、書き換えでは直せない。何も書かずに止める
+    let blockers = before.blockers();
+    if !blockers.is_empty() {
+        return Err(Error::WriteBlocked(tr!(
+            "services.the_privacy_tab_does_not_match_the_config",
+            text = blockers.join(trs!("services.list_separator"))
+        )));
+    }
+    let targets: Vec<PrivacyField> = before.different_fields().into_iter().cloned().collect();
+    if targets.is_empty() {
+        progress(&tr!(
+            "services.the_privacy_tab_matches_the_source",
+            name = name
+        ));
+        return Ok(PrivacyPushResult {
+            item_id: expected.item_id.clone(),
+            item_name: name.clone(),
+            updated: Vec::new(),
+            final_comparison: before,
+        });
+    }
+
+    for field in &targets {
+        cancel.check()?;
+        progress(&tr!(
+            "services.updating_the_privacy_field",
+            display_name = field.display_name(),
+            name = name
+        ));
+        write_privacy_field(page, &privacy, field, cancel)?;
+    }
+
+    // 保存前に、対象の全欄が正本どおりか確かめる（書き換えていない欄が動いていないかも含む）
+    ensure_privacy_matches(
+        &expected.item_id,
+        name,
+        &privacy,
+        &page.read_privacy(&privacy, cancel)?,
+        trs!("services.pre_save_check"),
+    )?;
+
+    // 保存の直前にも状態を確かめる
+    ensure_allowed(&page.get_state(cancel)?)?;
+    progress(&tr!(
+        "services.saving_the_privacy_tab_as_draft",
+        name = name
+    ));
+    page.save_draft(cancel)?;
+
+    // 読み込み直して、保存された値を確かめる
+    page.reload(cancel)?;
+    let after = ensure_privacy_matches(
+        &expected.item_id,
+        name,
+        &privacy,
+        &page.read_privacy(&privacy, cancel)?,
+        trs!("services.post_save_check"),
+    )?;
+    progress(&tr!(
+        "services.the_privacy_tab_saved_reloaded_and_confirmed",
+        name = name
+    ));
+    Ok(PrivacyPushResult {
+        item_id: expected.item_id.clone(),
+        item_name: name.clone(),
+        updated: targets,
+        final_comparison: after,
+    })
+}
+
+/// 欄 1 つを書き換える（未保存）
+fn write_privacy_field(
+    page: &mut dyn PrivacyPage,
+    privacy: &ExpectedPrivacy,
+    field: &PrivacyField,
+    cancel: &CancelToken,
+) -> Result<()> {
+    match field {
+        PrivacyField::SinglePurpose | PrivacyField::Permission(_) => {
+            let value = privacy.value_of(field).unwrap_or_default();
+            page.write_privacy_text(field, &value, cancel)
+        }
+        PrivacyField::DataCollected => match &privacy.data_usage {
+            Some(usage) => page.set_data_kinds(&usage.collected, cancel),
+            None => Ok(()),
+        },
+        PrivacyField::Certify => page.check_certifications(cancel),
+        // 画面側が未対応の欄。比較の段階で止まるので、ここには来ない（来たら書かずに止める）
+        PrivacyField::RemoteCodeUses | PrivacyField::RemoteCodeJustification => Err(
+            Error::WriteBlocked(trs!("privacy.remote_code_is_not_supported").to_string()),
+        ),
+    }
+}
+
+/// 対象の全欄が正本と一致するか確かめて、比較結果を返す。一致しない欄があれば、その欄名を並べた `Dashboard` エラー。
+/// `phase` は表示言語に合わせた照合の名前（呼び出し側で `trs!` で渡す）
+fn ensure_privacy_matches(
+    item_id: &str,
+    name: &str,
+    privacy: &ExpectedPrivacy,
+    reading: &PrivacyReading,
+    phase: &str,
+) -> Result<PrivacyComparison> {
+    let rows = privacy::compare(item_id, name, privacy, Some(reading));
+    if rows.status() == ComparisonStatus::Match {
+        return Ok(rows);
+    }
+    let bad: Vec<String> = rows
+        .rows
+        .iter()
+        .filter(|r| r.status != ComparisonStatus::Match)
+        .map(|r| r.field.display_name())
+        .collect();
+    Err(Error::Dashboard(tr!(
+        "services.some_privacy_fields_do_not_match_the_source",
+        text = bad.join(trs!("cli.name_separator")),
+        phase = phase
+    )))
 }

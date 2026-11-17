@@ -277,6 +277,7 @@ fn item(slots: Vec<ExpectedSlot>) -> ExpectedItem {
         display_name: "テスト".to_string(),
         locales: Vec::new(),
         images: Some(ExpectedImages { slots }),
+        privacy: None,
     }
 }
 

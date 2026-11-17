@@ -340,7 +340,7 @@ fn parse_onlyとimage_scopeを読む() {
     use edictora::images::ImageScope;
 
     let cmd = parse(&["diff"]).unwrap();
-    assert_eq!((cmd.only, cmd.image_scope), (Only::Both, ImageScope::All));
+    assert_eq!((cmd.only, cmd.image_scope), (Only::All, ImageScope::All));
 
     let cmd = parse(&["push", "--only", "images", "--image-scope=global", "--yes"]).unwrap();
     assert_eq!(
@@ -354,9 +354,10 @@ fn parse_onlyとimage_scopeを読む() {
         (cmd.only, cmd.image_scope),
         (Only::Text, ImageScope::Localized)
     );
-    assert!(Only::Both.text() && Only::Both.images());
-    assert!(Only::Text.text() && !Only::Text.images());
-    assert!(!Only::Images.text() && Only::Images.images());
+    assert!(Only::All.text() && Only::All.images() && Only::All.privacy());
+    assert!(Only::Text.text() && !Only::Text.images() && !Only::Text.privacy());
+    assert!(!Only::Images.text() && Only::Images.images() && !Only::Images.privacy());
+    assert!(!Only::Privacy.text() && !Only::Privacy.images() && Only::Privacy.privacy());
 }
 
 #[test]
@@ -444,4 +445,28 @@ fn ヘルプにonlyとimage_scopeがある() {
     assert_eq!(code, 0);
     assert!(output.contains("--only"));
     assert!(output.contains("--image-scope"));
+}
+
+#[test]
+fn only_privacyを受け付ける() {
+    use edictora::cli::args::Only;
+
+    let cmd = parse(&["diff", "--only", "privacy"]).unwrap();
+    assert_eq!(cmd.only, Only::Privacy);
+    let cmd = parse(&["push", "--only=PRIVACY", "--yes"]).unwrap();
+    assert_eq!(cmd.only, Only::Privacy);
+    // 値の誤りは使い方の誤り
+    assert!(parse(&["diff", "--only", "perms"]).is_err());
+    // submit には --only は無い
+    assert!(
+        parse(&[
+            "submit",
+            "--item",
+            "abcdefghijklmnopabcdefghijklmnop",
+            "--yes",
+            "--only",
+            "privacy"
+        ])
+        .is_err()
+    );
 }

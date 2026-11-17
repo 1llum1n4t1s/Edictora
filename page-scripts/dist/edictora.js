@@ -73,6 +73,7 @@
         const d = allDialogs();
         return d.length === 1 ? [...d[0].querySelectorAll("input[type=checkbox], [role=checkbox]")] : [];
       },
+      checkbox: () => [...document.querySelectorAll("input[type=checkbox], [role=checkbox]")].filter((c) => visible(c) && !inDialog(c)),
       fileInput: () => [...document.querySelectorAll("input[type=file]")],
       slotImage: () => [],
       imageButton: () => []

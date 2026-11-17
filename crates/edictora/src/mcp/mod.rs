@@ -46,7 +46,7 @@ pub fn is_mcp_command<S: AsRef<str>>(args: &[S]) -> bool {
 
 /// initialize で返す、サーバーの使い方の案内（クライアントが AI に渡す文言なので英語に統一する）
 const INSTRUCTIONS: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, and support URL) \
-with the source files in each extension repository and fixes them in bulk. Store images (store icon, screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The CWS API cannot read or write store listings, \
+with the source files in each extension repository and fixes them in bulk. Store images (store icon, screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The Privacy practices tab (single purpose description, permission justifications, data usage disclosure) is handled too: only=privacy narrows to it; it is written as a draft and never submitted for review. The CWS API cannot read or write store listings, \
 so Edictora drives the Developer Dashboard with a dedicated Chrome profile running without a window (headless). \
 To view or fix store listings, first call edictora_list_items to check the items and languages, review the differences with edictora_diff, \
 then use edictora_push (confirm: true saves as draft) and edictora_submit (confirm: true submits for review, one item at a time). \
@@ -82,8 +82,8 @@ fn target_properties() -> Map<String, Value> {
         "only".into(),
         json!({
             "type": "string",
-            "enum": ["text", "images"],
-            "description": "What to process: text (description and URLs) or images (store images: store icon, screenshots, small tile, marquee). Omit for both"
+            "enum": ["text", "images", "privacy"],
+            "description": "What to process: text (description and URLs), images (store images: store icon, screenshots, small tile, marquee), or privacy (the Privacy practices tab: single purpose, permission justifications, data usage). Omit for all"
         }),
     );
     m.insert(
@@ -170,7 +170,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "edictora_diff",
             "Edictora: store listing differences",
             "Chrome Web Store (CWS) store listing description, URLs, and images (store icon, screenshots, small tile, marquee): reads the current values from the Developer Dashboard \
-                 and shows the differences from the source files in each repository (read-only. Chrome runs without a window and does not appear on screen). \
+                 and shows the differences from the source files in each repository (the Privacy practices tab too; read-only. Chrome runs without a window and does not appear on screen). \
                  Differences are not a failure (exit code 3).",
             target_properties(),
             &[],
@@ -179,7 +179,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "edictora_pull",
             "Edictora: current store listing",
-            "Chrome Web Store (CWS) store listing description and URLs: shows the current values on the dashboard as they are (read-only. Chrome does not appear on screen).",
+            "Chrome Web Store (CWS) store listing description and URLs (and the Privacy practices tab fields written in the config): shows the current values on the dashboard as they are (read-only. Chrome does not appear on screen).",
             target_properties(),
             &[],
             true,
@@ -187,8 +187,8 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "edictora_push",
             "Edictora: save store listing to match source files",
-            "Chrome Web Store (CWS) store listing description and image update: updates only the fields and images that differ from the source files, saves as draft, \
-                 then reloads and verifies (images are replaced whole slot by slot; only=images / imageScope narrow it). Without confirm: true it shows the differences and stops. If the item cannot be written (for example, pending review) \
+            "Chrome Web Store (CWS) store listing description, image, and Privacy practices tab update: updates only the fields and images that differ from the source files, saves as draft, \
+                 then reloads and verifies (images are replaced whole slot by slot; only=images / imageScope narrow it; only=privacy limits it to the Privacy practices tab). Without confirm: true it shows the differences and stops. If the item cannot be written (for example, pending review) \
                  it stops without changing anything (exit code 4). Does not submit for review (use edictora_submit).",
             push_props,
             &[],
@@ -305,7 +305,7 @@ pub fn build_cli_args(
     }
     // 対象の種類と画像の範囲（CLI の --only / --image-scope）。値は列挙に限る（他の値は CLI のオプションと解釈させない）
     for (key, flag, allowed) in [
-        ("only", "--only", &["text", "images"][..]),
+        ("only", "--only", &["text", "images", "privacy"][..]),
         (
             "imageScope",
             "--image-scope",
@@ -460,6 +460,23 @@ fn list_items(paths: &AppPaths) -> Value {
                 ));
             }
             text.push_str(&format!("  - images: {}\n", slots.join(", ")));
+        }
+        if let Some(privacy) = &item.privacy {
+            let mut parts = Vec::new();
+            if let Some(s) = &privacy.single_purpose {
+                parts.push(format!("singlePurpose <- {}", s.file_path.display()));
+            }
+            if let Some(list) = &privacy.permissions {
+                let keys: Vec<&str> = list.iter().map(|(k, _)| k.as_str()).collect();
+                parts.push(format!("permissions ({})", keys.join(", ")));
+            }
+            if let Some(remote) = &privacy.remote_code {
+                parts.push(format!("remoteCode (uses: {})", remote.uses));
+            }
+            if let Some(usage) = &privacy.data_usage {
+                parts.push(format!("dataUsage ({} kinds)", usage.collected.len()));
+            }
+            text.push_str(&format!("  - privacy: {}\n", parts.join("; ")));
         }
         for locale in &item.locales {
             let mut fields = Vec::new();

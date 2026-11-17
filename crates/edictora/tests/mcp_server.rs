@@ -573,3 +573,35 @@ fn ツール定義にonlyとimage_scopeがあり審査送信には無い() {
     let submit = props("edictora_submit");
     assert!(!submit.contains(&"only".to_string()) && !submit.contains(&"imageScope".to_string()));
 }
+
+#[test]
+fn build_cli_args_only_privacyを通す() {
+    let args = |name: &str, v: Value| build_cli_args(name, &v).unwrap().unwrap();
+    assert_eq!(
+        args(
+            "edictora_diff",
+            json!({ "items": [ITEM], "only": "privacy" })
+        ),
+        ["diff", "--item", ITEM, "--only", "privacy"]
+    );
+    assert_eq!(
+        args(
+            "edictora_push",
+            json!({ "only": "privacy", "confirm": true })
+        ),
+        ["push", "--only", "privacy", "--yes"]
+    );
+    // 列挙の外の値は通さない
+    let err = build_cli_args("edictora_diff", &json!({ "only": "permissions" })).unwrap_err();
+    assert!(err.0.contains("only"));
+    // スキーマの列挙にも出る
+    let tools = tool_definitions();
+    let diff = tools.iter().find(|t| t["name"] == "edictora_diff").unwrap();
+    let values: Vec<&str> = diff["inputSchema"]["properties"]["only"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(values, ["text", "images", "privacy"]);
+}
