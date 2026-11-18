@@ -116,10 +116,10 @@ cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
 
 ## リリース
 
-詳細は [docs/release.md](docs/release.md)。通常の公開は、`/vava` が main と `release/<version>` を push すると、`release/**` への push で CI の `release.yml`（Environment `release`、承認待ちなし）が自動で起動して行い、手元から重ねて配信しない。`workflow_dispatch` は同じ `release/<version>` を指定した再実行にだけ使う（main 指定は Environment `release` が `release/*` だけを許可するため拒否される。タグは使わない）。`vpk pack`（Velopack 1.2.161、packId `Edictora`、チャンネル `win`）の中で Sigilune（Certum SimplySign のクラウド鍵）が 1 ファイルずつ署名し、nupkg・Setup・Portable とフィード `releases.win.json` を R2（`edictora-updates`、`https://edictora.kagayoi.com`）へ配信する。CI は `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` / `CLOUDFLARE_API_TOKEN` を Environment の Secrets から受け取る。
+詳細は [docs/release.md](docs/release.md)。通常の公開は、`/vava` が版を上げた main へ軽量タグ `v<version>` を付けて push すると、そのタグの push で CI の `release.yml`（Environment `release`、承認待ちなし）が自動で起動して行い、手元から重ねて配信しない。`workflow_dispatch` は同じタグを指定した再実行にだけ使う（ブランチ指定は `guard` ジョブと Environment `release` の tag ポリシー `v[0-9]*.[0-9]*.[0-9]*` が拒否する。`guard` は Secrets なしで、タグであること・軽量タグで同じ commit を指すこと・main の祖先であること・`Cargo.toml` の版とタグの一致を確かめる。GitHub Release は作らない）。`vpk pack`（Velopack 1.2.161、packId `Edictora`、チャンネル `win`）の中で Sigilune（Certum SimplySign のクラウド鍵）が 1 ファイルずつ署名し、nupkg・Setup・Portable とフィード `releases.win.json` を R2（`edictora-updates`、`https://edictora.kagayoi.com`）へ配信する。CI は `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` / `CLOUDFLARE_API_TOKEN` を Environment の Secrets から受け取る。
 
 ```powershell
-gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref release/<version>
+gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref v<version>
 ```
 
 ローカル実行は検証（`-SkipUpload`）に使う。事前に Sigilune のクラウドログインを確認し、失敗時は `sigilune status` で登録を確認するよう案内し、ログインを自動再試行しない。

@@ -29,14 +29,14 @@ EdictoraのWindows配布物は、Rust版CLI `edictora.exe` と自動更新用の
 初回配信の前に確認するもの:
 
 2. リリース用の `cloudflare.api_token`（ローカル）と Environment `release` の `CLOUDFLARE_API_TOKEN`（CI）が、`edictora-updates` のR2編集、zone `kagayoi.com` の参照とキャッシュパージに必要な最小権限を持つこと。
-3. Environment `release` に署名用の `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` があること（ブランチ制限だけを付け、承認者は付けない。`/vava` を離席中も最後まで進めるため）。
+3. Environment `release` に署名用の `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` があること（tag ポリシー `v[0-9]*.[0-9]*.[0-9]*` だけを付け、承認者は付けない。`/vava` を離席中も最後まで進めるため）。
 
 ## アプリのリリース
 
-通常のリリースは、`/vava` が main と `release/<version>` を push すると、`release/**` への push で GitHub Actions の Release ワークフローが自動で起動し、承認待ちなしで `scripts/release-local.ps1` が実行されます（Secrets は Environment `release` から渡します。workflow が vpk 1.2.161 を導入します）。手動起動（`workflow_dispatch`）は、同じ `release/<version>` を指定した再実行にだけ使います。main を指定した実行は、Environment `release` が `release/*` だけを許可するため拒否されます。タグは使いません。
+通常のリリースは、`/vava` が版を上げた main へ軽量タグ `v<version>` を付けて push すると、そのタグの push で GitHub Actions の Release ワークフローが自動で起動し、承認待ちなしで `scripts/release-local.ps1` が実行されます（Secrets は Environment `release` から渡します。workflow が vpk 1.2.161 を導入します）。手動起動（`workflow_dispatch`）は、同じタグを指定した再実行にだけ使います。ブランチを指定した実行は、`guard` ジョブと Environment `release` の tag ポリシーが拒否します。`guard` ジョブは Secrets なしで、タグであること・軽量タグで同じ commit を指すこと・main の祖先であること・`Cargo.toml` の版とタグの一致を確かめます。GitHub Release は作りません。
 
 ```powershell
-gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref release/<version>
+gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref v<version>
 # 公開せずに確認: -f skip_upload=true / 古い版の削除も行う: -f cleanup=true
 ```
 
