@@ -13,7 +13,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::dashboard::PageImage;
-use crate::dashboard::text::{DashboardLang, DashboardText, PrivacyText};
+use crate::dashboard::text::{CategoryText, DashboardLang, DashboardText, PrivacyText};
 use crate::dashboard::write_gate::ItemPageState;
 use crate::error::{Error, Result};
 use crate::images::ImageSlot;
@@ -79,9 +79,17 @@ pub struct ElementInfo {
     pub accept: String,
     /// `fileInput` のみ: スロットの中の画像（画面の並び順）
     pub images: Vec<PageImage>,
-    /// `slotImage` / `imageButton` のみ: 枠の大きさ（0 ならまだ表示されていない）
+    /// `slotImage` / `imageButton` のみ: 枠の大きさ（0 ならまだ表示されていない）。
+    /// `listboxOption` では、所属する一覧の枠の大きさ（閉じている間は 0）
     pub width: i32,
     pub height: i32,
+    /// `listboxOption` のみ: `data-value` 属性（無ければ空）
+    pub data_value: String,
+    /// `listboxOption` のみ: aria-selected（"true" / "false" 以外・無ければ None）
+    pub selected: Option<bool>,
+    /// `listboxOption` のみ: 所属する一覧の、ページ内の `[role=listbox]` の通し番号（一覧に属さなければ -1）。
+    /// 同じラベルの一覧が複数あっても、選択肢が混ざったことに気づけるようにする
+    pub group: i32,
 }
 
 /// 言語の選択肢 1 つ（「日本語 – ja」「英語 – en （デフォルト）」）
@@ -207,6 +215,13 @@ pub fn parse_elements(array: &Value) -> Vec<ElementInfo> {
                 .unwrap_or_default(),
             width: e.get("width").and_then(Value::as_i64).unwrap_or(0) as i32,
             height: e.get("height").and_then(Value::as_i64).unwrap_or(0) as i32,
+            data_value: str_of(e, "dataValue"),
+            selected: match e.get("selected").and_then(Value::as_str) {
+                Some("true") => Some(true),
+                Some("false") => Some(false),
+                _ => None,
+            },
+            group: e.get("group").and_then(Value::as_i64).unwrap_or(-1) as i32,
         })
         .collect()
 }
@@ -992,4 +1007,182 @@ pub fn ensure_privacy_text_writable(element: &ElementInfo, name: &str) -> Result
         )));
     }
     Ok(())
+}
+
+/// プライバシー ポリシー URL の入力欄（`input[type=text]`）を、ラベルの 1 行の完全一致で探す。
+/// 画面に無ければ None（欄が無い扱い）、複数あれば止める（別の欄を書き換える事故を防ぐ）
+pub fn find_policy_url_input<'a>(
+    p: &PrivacyText,
+    inputs: &'a [ElementInfo],
+) -> Result<Option<&'a ElementInfo>> {
+    let found: Vec<&ElementInfo> = inputs
+        .iter()
+        .filter(|i| has_label_line(Some(&i.label), p.policy_url_label))
+        .collect();
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(Some(found[0])),
+        _ => Err(Error::Dashboard(tr!(
+            "dashboard.privacy_found_several_fields",
+            label = p.policy_url_label
+        ))),
+    }
+}
+
+/// 書き込み先のプライバシー ポリシー URL 欄として使えるか確かめる（input の 1 行テキストで、編集できること）。
+/// textarea 用の [`ensure_privacy_text_writable`] とは別（textarea の検査を広げない）
+pub fn ensure_privacy_url_writable(element: &ElementInfo, name: &str) -> Result<()> {
+    if element.tag != "input" || !matches!(element.r#type.as_str(), "" | "text" | "url") {
+        return Err(Error::Dashboard(tr!(
+            "dashboard.the_field_is_not_a_text_input",
+            name = name,
+            tag = element.tag,
+            input_type = element.r#type
+        )));
+    }
+    if element.disabled || element.read_only {
+        return Err(Error::WriteBlocked(tr!(
+            "dashboard.the_field_cannot_be_edited",
+            name = name
+        )));
+    }
+    Ok(())
+}
+
+// ───────── カテゴリ ─────────
+
+/// カテゴリ欄のコンボボックスを選ぶ。ラベルの 1 行が完全一致するものだけ（言語欄などの親要素の説明文に
+/// 「カテゴリ」が含まれても当たらない）。ちょうど 1 つに絞れなければ止める
+pub fn pick_category_combobox<'a>(
+    c: &CategoryText,
+    comboboxes: &'a [ElementInfo],
+) -> Result<&'a ElementInfo> {
+    let label = c.label;
+    exactly_one(
+        comboboxes.iter().filter(|b| {
+            has_label_line(Some(&b.label), label) || has_label_line(Some(&b.text), label)
+        }),
+        || tr!("dashboard.the_combo_box_was_not_found_check", label = label),
+        |n| {
+            tr!(
+                "dashboard.found_combo_boxes_cannot_identify_which_one",
+                count = n,
+                label = label
+            )
+        },
+    )
+}
+
+/// カテゴリの一覧（ラベルの 1 行が完全一致する `[role=listbox]`）に属する選択肢だけを返す（閉じて見えないものも含む）。
+/// 一覧がちょうど 1 つ（`group` が 1 種類）でなければ止める。同名の一覧が 2 つあるのに混ぜてしまわないため
+pub fn category_options<'a>(
+    c: &CategoryText,
+    options: &'a [ElementInfo],
+) -> Result<Vec<&'a ElementInfo>> {
+    let found: Vec<&ElementInfo> = options
+        .iter()
+        .filter(|o| o.group >= 0 && has_label_line(Some(&o.label), c.label))
+        .collect();
+    let mut groups: Vec<i32> = found.iter().map(|o| o.group).collect();
+    groups.sort_unstable();
+    groups.dedup();
+    match groups.len() {
+        0 => Err(Error::Dashboard(tr!(
+            "dashboard.category_options_not_found",
+            label = c.label
+        ))),
+        1 => Ok(found),
+        n => Err(Error::Dashboard(tr!(
+            "dashboard.category_found_several_lists",
+            count = n,
+            label = c.label
+        ))),
+    }
+}
+
+/// いま選ばれているカテゴリの `data-value` を読む（一覧を閉じたまま読める）。
+/// `aria-selected="true"` の選択肢がちょうど 1 つでなければ止める。未選択（プレースホルダー）はその値のまま返す
+pub fn selected_category(c: &CategoryText, options: &[ElementInfo]) -> Result<String> {
+    let all = category_options(c, options)?;
+    let selected: Vec<&&ElementInfo> = all.iter().filter(|o| o.selected == Some(true)).collect();
+    match selected.as_slice() {
+        [one] if !one.data_value.is_empty() => Ok(one.data_value.clone()),
+        [_] => Err(Error::Dashboard(tr!(
+            "dashboard.category_selected_option_has_no_value",
+            label = c.label
+        ))),
+        many => Err(Error::Dashboard(tr!(
+            "dashboard.category_selected_count",
+            count = many.len(),
+            label = c.label
+        ))),
+    }
+}
+
+/// カテゴリの読み取りが落ち着いているか（純粋関数）。再読込の直後は、選択中の option が一時的にプレースホルダー
+/// だったり、コンボボックスの表示値と選択中の option の表示文言が食い違ったりすることがある。
+/// 選択中がプレースホルダーでなく、コンボボックスの表示値（最後の空でない行）が選択中の option の文言と一致するとき true。
+/// コンボボックスが無い（None）ときは、表示値の照合を省く。選択中がちょうど 1 つに読めなければ false
+pub fn category_reading_is_stable(
+    c: &CategoryText,
+    combobox: Option<&ElementInfo>,
+    options: &[ElementInfo],
+) -> bool {
+    let Ok(all) = category_options(c, options) else {
+        return false;
+    };
+    let selected: Vec<&&ElementInfo> = all.iter().filter(|o| o.selected == Some(true)).collect();
+    let [one] = selected.as_slice() else {
+        return false;
+    };
+    if one.data_value.is_empty() || one.data_value == crate::listing::category::PLACEHOLDER_VALUE {
+        return false;
+    }
+    let Some(combobox) = combobox else {
+        return true;
+    };
+    let shown = combobox
+        .text
+        .split('\n')
+        .map(str::trim)
+        .rfind(|line| !line.is_empty());
+    shown == Some(one.text.trim())
+}
+
+/// カテゴリの一覧が開いて見えているか（一覧の枠に大きさがあるか。閉じている間は 0×0）
+pub fn category_list_visible(c: &CategoryText, options: &[ElementInfo]) -> bool {
+    category_options(c, options)
+        .map(|all| all.iter().any(|o| o.width > 0 && o.height > 0))
+        .unwrap_or(false)
+}
+
+/// `data-value` が一致するカテゴリの選択肢を 1 つ選ぶ。未選択のプレースホルダーは選ばない
+pub fn pick_category_option<'a>(
+    c: &CategoryText,
+    options: &'a [ElementInfo],
+    data_value: &str,
+) -> Result<&'a ElementInfo> {
+    let not_found = || {
+        tr!(
+            "dashboard.category_option_not_found",
+            label = c.label,
+            value = data_value
+        )
+    };
+    if data_value.is_empty() || data_value == crate::listing::category::PLACEHOLDER_VALUE {
+        return Err(Error::Dashboard(not_found()));
+    }
+    let all = category_options(c, options)?;
+    exactly_one(
+        all.into_iter().filter(|o| o.data_value == data_value),
+        not_found,
+        |n| {
+            tr!(
+                "dashboard.category_found_several_options",
+                count = n,
+                label = c.label,
+                value = data_value
+            )
+        },
+    )
 }

@@ -18,6 +18,8 @@
 //! `permissions` のキーは manifest の権限名で、ホスト権限だけは特別なキー `host`。
 //! `remoteCode.uses` が true のときは `justification`（区間の指定）が必須、false のときは書けない。
 //! `dataUsage.certify` は true だけを許す（「販売しない」など 3 つの宣誓チェックを入れる意味。false・省略は設定エラー）。
+//! `policyUrl`（プライバシー ポリシー URL）は、公式 URL などと同じ契約: キーなし＝対象外、`""`＝空欄が正本、
+//! それ以外は http(s) の絶対 URL だけ（2,048 文字以内）。
 
 use std::collections::HashSet;
 use std::fmt;
@@ -29,7 +31,7 @@ use serde::de::{MapAccess, Visitor};
 use crate::config::{TextSource, TextSourceDto, expand, full_path, section};
 use crate::error::{Error, Result};
 use crate::privacy::DataKind;
-use crate::util::is_blank;
+use crate::util::{format_n0, is_blank, parse_absolute_url, utf16_len};
 use crate::{tr, trs};
 
 /// リモートコードの設定（検証済み）
@@ -59,7 +61,12 @@ pub struct PrivacyConfig {
     pub permissions: Option<Vec<(String, TextSource)>>,
     pub remote_code: Option<RemoteCodeConfig>,
     pub data_usage: Option<DataUsageConfig>,
+    /// プライバシー ポリシー URL（前後の空白は除去済み。空文字は「空欄が正本」。None なら対象外）
+    pub policy_url: Option<String>,
 }
+
+/// プライバシー ポリシー URL の上限（ダッシュボードの文字数カウンタ「n/2,048」。UTF-16 単位）
+pub const POLICY_URL_MAX_LENGTH: usize = 2_048;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -68,6 +75,7 @@ pub(super) struct PrivacyDto {
     permissions: Option<OrderedPermissions>,
     remote_code: Option<RemoteCodeDto>,
     data_usage: Option<DataUsageDto>,
+    policy_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,10 +249,38 @@ pub(super) fn parse_privacy(
         });
     }
 
+    if let Some(value) = dto.policy_url {
+        // キーなしは対象外。空文字は「空欄が正本」。それ以外は http(s) の絶対 URL だけ
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let ok = parse_absolute_url(trimmed)
+                .is_some_and(|u| (u.scheme == "https" || u.scheme == "http") && !u.host.is_empty());
+            if !ok {
+                return Err(Error::Config(tr!(
+                    "config.specify_an_absolute_http_s_url",
+                    config_key = "policyUrl",
+                    place = place,
+                    value = value
+                )));
+            }
+            let length = utf16_len(trimmed);
+            if length > POLICY_URL_MAX_LENGTH {
+                return Err(Error::Config(tr!(
+                    "config.privacy_policy_url_too_long",
+                    place = place,
+                    length = format_n0(length),
+                    max = format_n0(POLICY_URL_MAX_LENGTH)
+                )));
+            }
+        }
+        config.policy_url = Some(trimmed.to_string());
+    }
+
     if config.single_purpose.is_none()
         && config.permissions.is_none()
         && config.remote_code.is_none()
         && config.data_usage.is_none()
+        && config.policy_url.is_none()
     {
         return Err(Error::Config(tr!(
             "config.privacy_specify_at_least_one",

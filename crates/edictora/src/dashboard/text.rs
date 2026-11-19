@@ -120,8 +120,22 @@ pub struct DashboardText {
     /// その確認ダイアログの確定ボタン（前後の空白を除いた完全一致で探す）
     pub delete_image_confirm_button: &'static str,
 
+    /// カテゴリ欄の文言。None の言語では、カテゴリの読み書きを許さない（文言を推測で足さない）
+    pub category: Option<CategoryText>,
+
     /// 「プライバシー」タブの文言。None の言語では、このタブの読み書きを許さない（文言を推測で足さない）
     pub privacy: Option<PrivacyText>,
+}
+
+/// 「ストアの掲載情報」タブのカテゴリ欄の文言。
+///
+/// 日本語は 2026-11-19 に実画面（SearchClock）で読み取った。コンボボックス（`div[role=combobox]`）は
+/// aria-labelledby の参照先が「カテゴリ」で、一覧は `ul[role=listbox][aria-label="カテゴリ"]`。
+/// 選択肢の `data-value` は言語に依らない識別子なので、文言は欄のラベルだけで足りる（対応表は `listing::category`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CategoryText {
+    /// カテゴリ欄のラベル（コンボボックスと一覧の両方を、ラベルの 1 行の完全一致で探す）
+    pub label: &'static str,
 }
 
 /// 「プライバシー」タブ（編集画面の `/privacy`）の文言。
@@ -141,6 +155,8 @@ pub struct PrivacyText {
     pub data_kind_labels: [&'static str; 9],
     /// 3 つの宣誓チェックのラベル（画面の並び）
     pub certify_labels: [&'static str; 3],
+    /// プライバシー ポリシー URL 欄のラベル（`input[type=text]`。aria-labelledby の参照先の文字列）
+    pub policy_url_label: &'static str,
 }
 
 impl DashboardText {
@@ -184,6 +200,9 @@ pub const JA: DashboardText = DashboardText {
     delete_image_prefix: "画像を削除 ",
     delete_image_confirm_marker: "この画像を削除してもよろしいですか",
     delete_image_confirm_button: "削除",
+    category: Some(CategoryText {
+        label: "カテゴリ"
+    }),
     privacy: Some(PrivacyText {
         single_purpose_label: "単一用途の説明",
         permission_label_suffix: "が必要な理由",
@@ -204,6 +223,7 @@ pub const JA: DashboardText = DashboardText {
             "私はアイテムの唯一の目的と関係のない目的でユーザーデータを使用または転送しません",
             "私は信用力を判断する目的または融資目的でユーザーデータを使用または転送しません",
         ],
+        policy_url_label: "プライバシー ポリシーの URL",
     }),
 };
 
@@ -245,7 +265,8 @@ pub const EN: DashboardText = DashboardText {
     delete_image_prefix: "Delete image ",
     delete_image_confirm_marker: "delete this image",
     delete_image_confirm_button: "Delete",
-    // 英語の画面の「プライバシー」タブの文言は実画面で未確認なので、このタブは日本語の画面だけで扱う
+    // 英語の画面のカテゴリ欄・「プライバシー」タブの文言は実画面で未確認なので、日本語の画面だけで扱う
+    category: None,
     privacy: None,
 };
 

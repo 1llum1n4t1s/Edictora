@@ -10,7 +10,9 @@
 //!   設定の検証・終了コード・publisherId の伏せ字・書き込みの安全策・実行中ロック・失敗時の画面保存を、
 //!   CLI と同じ実装で使うため。手順を二重に持たない。
 //! - **画面表示・ログイン・プロファイルや chrome.exe の指定は、ツールに持たせない。** `--show-browser` を
-//!   選べないようにし、利用者の画面に Chrome が出ない形でしか呼べなくする（login は利用者が端末で行う）。
+//!   選べないようにし、通常は利用者の画面に Chrome が出ない形でしか呼べなくする。**唯一の例外**として、入口の
+//!   確認で再ログインが要ると分かったときだけ、CLI 側（`open_logged_in`）が表示つきの Chrome を自動で開いて
+//!   ログインを待つ（最大 10 分。済めば閉じて続ける。失敗は終了コード 5）。ツールの引数では制御できない。
 //!   スキーマに無い引数は、黙って無視せずエラーにする。
 //! - 書き込み（push / submit）は `confirm: true` が無ければ実行しない（CLI の `--yes` と同じ）。
 //!   ツールには `destructiveHint` を付け、クライアントに利用者の承認を求めさせる。
@@ -45,12 +47,12 @@ pub fn is_mcp_command<S: AsRef<str>>(args: &[S]) -> bool {
 }
 
 /// initialize で返す、サーバーの使い方の案内（クライアントが AI に渡す文言なので英語に統一する）
-const INSTRUCTIONS: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, and support URL) \
-with the source files in each extension repository and fixes them in bulk. Store images (store icon, screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The Privacy practices tab (single purpose description, permission justifications, data usage disclosure) is handled too: only=privacy narrows to it; it is written as a draft and never submitted for review. The CWS API cannot read or write store listings, \
-so Edictora drives the Developer Dashboard with a dedicated Chrome profile running without a window (headless). \
+const INSTRUCTIONS: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, support URL, and category) \
+with the source files in each extension repository and fixes them in bulk. Store images (store icon, screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The Privacy practices tab (single purpose description, permission justifications, data usage disclosure, privacy policy URL) is handled too: only=privacy narrows to it; it is written as a draft and never submitted for review. The CWS API cannot read or write store listings, \
+so Edictora drives the Developer Dashboard with a dedicated Chrome profile running without a window (headless) in normal operation (only the sign-in window described below is visible). \
 To view or fix store listings, first call edictora_list_items to check the items and languages, review the differences with edictora_diff, \
 then use edictora_push (confirm: true saves as draft) and edictora_submit (confirm: true submits for review, one item at a time). \
-Ask the user before writing or submitting for review. If sign-in is required, ask the user to run `edictora login` in a terminal. \
+Ask the user before writing or submitting for review. If the dashboard sign-in has expired, Edictora opens a visible Chrome window for the user to sign in and waits for it (up to 10 minutes) before continuing, so tell the user to expect that window; if the wait fails, ask the user to run `edictora login` in a terminal. \
 When something fails, investigate with the error message in the result (it includes the covering element and the viewport size) \
 and the failure screenshots (%LOCALAPPDATA%\\Edictora.Data\\diagnostics).";
 
@@ -170,7 +172,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "edictora_diff",
             "Edictora: store listing differences",
             "Chrome Web Store (CWS) store listing description, URLs, and images (store icon, screenshots, small tile, marquee): reads the current values from the Developer Dashboard \
-                 and shows the differences from the source files in each repository (the Privacy practices tab too; read-only. Chrome runs without a window and does not appear on screen). \
+                 and shows the differences from the source files in each repository (the Privacy practices tab too; read-only. Chrome runs without a window and does not appear on screen, except that if the dashboard sign-in has expired a visible Chrome window for signing in opens). \
                  Differences are not a failure (exit code 3).",
             target_properties(),
             &[],
@@ -179,7 +181,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "edictora_pull",
             "Edictora: current store listing",
-            "Chrome Web Store (CWS) store listing description and URLs (and the Privacy practices tab fields written in the config): shows the current values on the dashboard as they are (read-only. Chrome does not appear on screen).",
+            "Chrome Web Store (CWS) store listing description and URLs (and the Privacy practices tab fields written in the config): shows the current values on the dashboard as they are (read-only. Chrome does not appear on screen, except that if the dashboard sign-in has expired a visible Chrome window for signing in opens).",
             target_properties(),
             &[],
             true,
@@ -379,8 +381,9 @@ pub fn tool_result_from_cli(code: i32, stdout: &str, stderr: &str) -> Value {
     let is_error = !matches!(code, exit_codes::SUCCESS | exit_codes::DIFFERENCES);
     let mut text = format!("Exit code: {code} ({})\n", exit_code_meaning(code));
     if code == exit_codes::LOGIN_REQUIRED {
-        text.push_str("The dashboard sign-in has expired. This tool cannot sign in. \
-             Ask the user to run `edictora login` in a terminal and sign in with Chrome, then call this tool again.\n");
+        text.push_str("Either the automatic sign-in did not finish (a visible Chrome window was opened and waited for up to 10 minutes; it may have timed out, been closed, or been blocked by a windowless Chrome on the same profile) \
+             or the sign-in expired in the middle of the work (no window is opened in that case). Calling this tool again opens a sign-in window if one is needed; if it keeps failing, \
+             ask the user to run `edictora login` in a terminal and sign in with Chrome.\n");
     }
     let stdout = stdout.trim_end();
     let stderr = stderr.trim_end();
@@ -439,6 +442,9 @@ fn list_items(paths: &AppPaths) -> Value {
             item.item_id,
             item.base_directory.display()
         ));
+        if let Some(category) = &item.category {
+            text.push_str(&format!("  - category: {category}\n"));
+        }
         if let Some(images) = &item.images {
             let mut slots = Vec::new();
             if images.icon.is_some() {
@@ -475,6 +481,12 @@ fn list_items(paths: &AppPaths) -> Value {
             }
             if let Some(usage) = &privacy.data_usage {
                 parts.push(format!("dataUsage ({} kinds)", usage.collected.len()));
+            }
+            if let Some(url) = &privacy.policy_url {
+                parts.push(format!(
+                    "policyUrl ({})",
+                    if url.is_empty() { "empty" } else { url }
+                ));
             }
             text.push_str(&format!("  - privacy: {}\n", parts.join("; ")));
         }

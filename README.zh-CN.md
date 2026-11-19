@@ -97,6 +97,19 @@ Edictora 的消息、差异输出和帮助文本提供九种语言：日语、�
 - 没有键的 URL 字段会被忽略。`""` 表示该字段应为空。
 - 未知的键（例如拼写错误）会报错。允许使用注释和尾随逗号。
 
+#### 类别（可选）
+
+在项目中添加 `category`，即可读取、比较并保存商店的类别（信息中心的“类别”字段，所有语言共用）。请写小写的键。与其他字段一样，**不写就不会改动类别**。
+
+```jsonc
+"category": "productivity"    // one of the keys below; leave it out to skip the category
+```
+
+- 键：`productivity`, `communication`, `tools`, `developer_tools`, `workflow_and_planning`, `education`, `lifestyle`, `art_and_design`, `entertainment`, `games`, `shopping`, `social_networking`, `news_and_weather`, `well_being`, `household`, `travel`, `just_for_fun`, `make_chrome_yours`, `privacy_and_security`, `accessibility`, `functionality_and_ui`。未知的键属于配置错误（退出代码 2）。“未选择类别”不能作为源值。
+- 类别由所有语言共用，因此每个项目只读写一次（而不是每种语言一次）。它包含在 `--only text` 中，`--locale` 不会缩小其范围。`push --yes` 仅在有差异时才改写，保存为草稿，重新加载后再次核对。
+- 项目可以只有 `category` 而没有 `locales`（仅管理类别）。
+- 仅在信息中心以日语显示时可用（英语界面的文案尚未验证）。
+
 #### 商店图片（可选）
 
 在项目中添加 `images` 即可管理商店图片。与其他字段一样，**没有写的键不会被触碰**。路径相对于 `baseDir`。
@@ -143,13 +156,15 @@ edictora push --only images --image-scope global --item <id> --yes      # Replac
   "dataUsage": {
     "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
     "certify": true                                            // checks the three declarations; only true is allowed
-  }
+  },
+  "policyUrl": "https://example.com/privacy"            // absolute http(s) URL; "" means the field should be empty
 }
 ```
 
 - 正文与 `description` 一样，从文件中截取区段（见上文）。会去掉开头的空行，并去掉所有行共有的缩进，因此缩进写在 `  activeTab:` 下面的理由也可以直接使用。每段正文不能为空，且不超过 1,000 个字符；Edictora 会在打开 Chrome 之前检查（退出码 2）。
 - `collected` 可写 `personallyIdentifiable`、`health`、`financial`、`authentication`、`personalCommunications`、`location`、`webHistory`、`userActivity`、`websiteContent`（只勾选写出的，其余取消勾选）。`certify` 只能为 `true`（表示勾选“不出售”等三项声明）；`false` 或省略都会报配置错误。
 - **权限列表本身也会核对。** 写了 `permissions` 时，配置中有而控制台上没有的权限（或相反）会显示在比较结果中，`push` 会在写入任何内容之前停止：请在配置中补上，或修正 manifest。
+- `policyUrl` 是隐私权政策网址字段：http(s) 绝对 URL（最多 2,048 个字符），或表示应为空的 `""`。不写则不会改动。它与此标签页的其他字段一起保存为草稿。
 - `remoteCode`（`{ "uses": false }`，或 `{ "uses": true, "justification": {...} }`）可以写在配置中，但控制台上对应的字段尚未在实际界面中确认，因此写了之后 `diff` 会报告错误，`push` 会停止。目前请不要写。
 - 仅当控制台以日语显示时可用（英文文案尚未确认）。只保存为草稿，Edictora 绝不会提交审核。
 - 项目可以只写 `privacy` 而不写 `locales` 和 `images`（仅“隐私”标签页）。
@@ -187,13 +202,13 @@ edictora submit --item <id> --yes               # Submit one item for review
 | 2 | 参数或配置无效（不会打开 Chrome） |
 | 3 | 发现差异（`diff`，或未带 `--yes` 的 `push`） |
 | 4 | 写入已中止（审核中，或无法确定状态） |
-| 5 | 需要登录 |
+| 5 | 需要登录（自动等待登录未完成，或工作途中登录已过期；再次运行时，如有需要会打开登录窗口） |
 | 130 | 已中断（Ctrl+C） |
 
 进度输出到标准错误，结果输出到标准输出。
 
 `pull`、`diff`、`push` 和 `submit` 在无窗口（无头）状态下运行 Chrome，因此 Chrome 绝不会跳到您的工作窗口前面。
-如果想观看运行过程，请添加 `--show-browser`。`login` 始终显示窗口，因为需要您手动操作。
+如果想观看运行过程，请添加 `--show-browser`。`login` 始终显示窗口，因为需要您手动操作。 如果 Google 登录已过期，`pull`、`diff`、`push` 和 `submit` 会自行打开带窗口的 Chrome，等待您完成登录（最长 10 分钟），然后关闭窗口并继续。登录未完成（超时、窗口被关闭，或同一配置文件下仍有无窗口的 Chrome 导致无法显示窗口），或工作途中登录过期（此时不会打开窗口，请再次运行）时，会以退出代码 5 停止。
 
 > [!WARNING]
 > `--show-browser` 供人观看屏幕时使用。通过 AI 代理或脚本运行 Edictora 时请勿使用：Chrome 窗口会弹出到用户的屏幕上，而且 AI 本来也看不到它。
@@ -260,8 +275,8 @@ args = ["mcp"]
 | `edictora_submit` | 将一个项目提交审核。必须提供 `item` 和 `confirm: true`。 |
 
 - 这些工具运行与 CLI 相同的代码，具有相同的保护措施和退出码。每个结果都以退出码及其含义开头。发现差异（3）不被视为错误。
-- 客户端无法选择显示浏览器（`--show-browser`）、运行 `login`，也无法设置配置文件或 chrome.exe。Chrome 始终在无窗口状态下运行。
-- 如果您的登录已过期，工具会请您在终端中运行 `edictora login`。登录由您自己完成。
+- 客户端无法选择显示浏览器（`--show-browser`）、运行 `login`，也无法设置配置文件或 chrome.exe。除下面所说的登录窗口外，Chrome 始终在无窗口状态下运行。
+- 如果您的登录已过期，Edictora 会在您的屏幕上打开登录用的 Chrome，等待您完成登录（最长 10 分钟），然后继续执行工具调用。若登录未完成，工具会请您在终端中运行 `edictora login`。
 - 调用按顺序逐个运行。您可以用 `notifications/cancelled` 取消正在运行的调用。
 - 对所有项目执行 `diff` 可能需要几分钟，因此请给您的客户端设置较宽裕的超时时间。
 

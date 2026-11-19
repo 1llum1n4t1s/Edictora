@@ -97,6 +97,19 @@ For each item, map each locale to its source files. **Fields you leave out are n
 - A URL field without a key is ignored. `""` means the field should be empty.
 - Unknown keys (such as typos) are errors. Comments and trailing commas are allowed.
 
+#### Category (optional)
+
+Add `category` to an item to read, compare and save its store category (the dashboard's "Category" field, shared by all languages). Write a lowercase key. Like every other field, **if you leave it out, the category is never touched**.
+
+```jsonc
+"category": "productivity"    // one of the keys below; leave it out to skip the category
+```
+
+- Keys: `productivity`, `communication`, `tools`, `developer_tools`, `workflow_and_planning`, `education`, `lifestyle`, `art_and_design`, `entertainment`, `games`, `shopping`, `social_networking`, `news_and_weather`, `well_being`, `household`, `travel`, `just_for_fun`, `make_chrome_yours`, `privacy_and_security`, `accessibility`, `functionality_and_ui`. An unknown key is a config error (exit code 2). "No category selected" can't be a source value.
+- The category is shared by all languages, so it is read and written once per item (not once per language). It is included in `--only text`, and `--locale` does not narrow it. `push --yes` writes it only when it differs, saves a draft, reloads and checks again.
+- An item may have `category` without `locales` (category only).
+- Works only while the dashboard is shown in Japanese (the English labels are unverified).
+
 #### Store images (optional)
 
 Add `images` to an item to manage its store images. Like every other field, **keys you leave out are never touched**. Paths are relative to `baseDir`.
@@ -143,13 +156,15 @@ When you add a permission to an extension, the dashboard's **Privacy** tab (Priv
   "dataUsage": {
     "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
     "certify": true                                            // checks the three declarations; only true is allowed
-  }
+  },
+  "policyUrl": "https://example.com/privacy"            // absolute http(s) URL; "" means the field should be empty
 }
 ```
 
 - Text is cut out of your file like `description` (see above). Leading blank lines are removed and the common indentation is stripped, so justifications indented under `  activeTab:` work as they are. No text may be empty, and each must fit the 1,000-character limit; Edictora checks this before opening Chrome (exit code 2).
 - `collected` takes any of `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` and `websiteContent` (only the ones you list are checked; the rest are unchecked). `certify` must be `true` (it checks the three declarations such as "I do not sell…"); `false` or leaving it out is a config error.
 - **The set of permissions is checked too.** If you write `permissions`, a permission that is in the config but missing on the dashboard (or the other way around) is shown in the result, and `push` stops before writing anything: add it to the config or fix the manifest.
+- `policyUrl` is the privacy policy URL field: an absolute http(s) URL (up to 2,048 characters), or `""` to mean the field should be empty. A key you leave out is never touched. It is saved together with the other fields of this tab.
 - `remoteCode` (`{ "uses": false }`, or `{ "uses": true, "justification": {...} }`) is accepted in the config, but the dashboard section for it could not be checked against a real screen yet, so writing it makes `diff` report an error and `push` stop. Leave it out for now.
 - Works only while the dashboard is shown in Japanese (the English labels are unverified). Saved as a draft only; Edictora never submits for review.
 - An item may have `privacy` without `locales` or `images` (Privacy practices tab only).
@@ -187,13 +202,13 @@ edictora submit --item <id> --yes               # Submit one item for review
 | 2 | Invalid arguments or config (Chrome isn't opened) |
 | 3 | Differences found (`diff`, or `push` without `--yes`) |
 | 4 | Write aborted (pending review, or the state couldn't be determined) |
-| 5 | Sign-in required |
+| 5 | Sign-in required (the automatic sign-in wait didn't finish, or the sign-in expired in the middle of the work; running it again opens a sign-in window if one is needed) |
 | 130 | Interrupted (Ctrl+C) |
 
 Progress goes to standard error and results go to standard output.
 
 `pull`, `diff`, `push` and `submit` run Chrome without a window (headless), so Chrome never jumps in front of your work.
-To watch what happens, add `--show-browser`. `login` always shows a window, because you operate it by hand.
+To watch what happens, add `--show-browser`. `login` always shows a window, because you operate it by hand. If your Google sign-in has expired, `pull`, `diff`, `push` and `submit` open a visible Chrome window by themselves, wait for you to sign in (up to 10 minutes), close it and carry on. They stop with exit code 5 if that sign-in doesn't finish (timeout, window closed, or a windowless Chrome on the same profile is still running and blocks the window), or if the sign-in expires in the middle of the work (no window opens then; run it again).
 
 > [!WARNING]
 > `--show-browser` is for people watching the screen. Don't use it when running Edictora from an AI agent or a script: a Chrome window would pop up on the user's screen, and the AI can't see it anyway.
@@ -260,8 +275,8 @@ If you use an MCP gateway (such as Toolport), register the same command (stdio, 
 | `edictora_submit` | Submits one item for review. `item` and `confirm: true` are required. |
 
 - The tools run the same code as the CLI, with the same safeguards and exit codes. Each result starts with the exit code and its meaning. Differences found (3) isn't treated as an error.
-- Clients can't choose to show the browser (`--show-browser`), run `login`, or set the profile or chrome.exe. Chrome always runs without a window.
-- If your sign-in has expired, the tool asks you to run `edictora login` in a terminal. You sign in yourself.
+- Clients can't choose to show the browser (`--show-browser`), run `login`, or set the profile or chrome.exe. Chrome runs without a window, except for the sign-in window described next.
+- If your sign-in has expired, Edictora opens a visible Chrome window on your screen, waits for you to sign in (up to 10 minutes), then continues the tool call. If that doesn't finish, the tool asks you to run `edictora login` in a terminal.
 - Calls run one at a time, in order. You can cancel a running call with `notifications/cancelled`.
 - A `diff` across all items can take a few minutes, so give your client a generous timeout.
 

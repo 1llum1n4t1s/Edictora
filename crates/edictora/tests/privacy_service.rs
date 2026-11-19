@@ -26,6 +26,8 @@ struct Screen {
     permissions: Vec<(String, String)>,
     collected: BTreeSet<DataKind>,
     certified: bool,
+    /// プライバシー ポリシー URL（None なら画面にその欄が無い）
+    policy_url: Option<String>,
 }
 
 struct FakePrivacy {
@@ -53,6 +55,7 @@ fn screen() -> Screen {
         ],
         collected: [DataKind::PersonallyIdentifiable].into_iter().collect(),
         certified: false,
+        policy_url: Some("https://old.example.com/privacy".to_string()),
     }
 }
 
@@ -157,6 +160,9 @@ impl PrivacyPage for FakePrivacy {
             r.collected = Some(self.editing.collected.clone());
             r.certified = Some(self.editing.certified);
         }
+        if targets.policy_url.is_some() {
+            r.policy_url = self.editing.policy_url.clone();
+        }
         Ok(r)
     }
 
@@ -199,6 +205,17 @@ impl PrivacyPage for FakePrivacy {
         self.editing.certified = true;
         Ok(())
     }
+
+    fn write_policy_url(&mut self, value: &str, _: &CancelToken) -> Result<()> {
+        self.log.push("write-url".to_string());
+        if self.editing.policy_url.is_none() {
+            return Err(Error::Dashboard(
+                "プライバシー ポリシーの欄がありません".to_string(),
+            ));
+        }
+        self.editing.policy_url = Some(value.to_string());
+        Ok(())
+    }
 }
 
 fn expected_privacy() -> ExpectedPrivacy {
@@ -210,6 +227,7 @@ fn expected_privacy() -> ExpectedPrivacy {
             ("host".to_string(), "ホスト".to_string()),
         ]),
         remote_code: None,
+        policy_url: None,
         data_usage: Some(ExpectedDataUsage {
             collected: [DataKind::PersonallyIdentifiable, DataKind::Authentication]
                 .into_iter()
@@ -225,6 +243,7 @@ fn item(privacy: ExpectedPrivacy) -> ExpectedItem {
         display_name: "テスト".to_string(),
         locales: Vec::new(),
         images: None,
+        category: None,
         privacy: Some(privacy),
     }
 }
@@ -456,6 +475,7 @@ fn 書いていない欄は動かさない() {
         single_purpose: None,
         permissions: None,
         remote_code: None,
+        policy_url: None,
         data_usage: Some(ExpectedDataUsage {
             collected: BTreeSet::new(),
             certify: true,
@@ -487,6 +507,7 @@ fn 読み出しはテキストの正本に書いた欄だけを返す() {
             single_purpose: Some("x".to_string()),
             permissions: None,
             remote_code: None,
+            policy_url: None,
             data_usage: None,
         }),
         &no_progress,
@@ -575,6 +596,9 @@ fn ログイン切れはそのまま返す() {
         fn check_certifications(&mut self, c: &CancelToken) -> Result<()> {
             self.0.check_certifications(c)
         }
+        fn write_policy_url(&mut self, v: &str, c: &CancelToken) -> Result<()> {
+            self.0.write_policy_url(v, c)
+        }
     }
     let mut page = LoggedOut(FakePrivacy::new());
     let e = item(expected_privacy());
@@ -606,4 +630,109 @@ fn diffは読み取りだけで書かない() {
         page.count("write") + page.count("save") + page.count("set-kinds"),
         0
     );
+}
+
+// ───────── プライバシー ポリシー URL ─────────
+
+fn only_policy_url(url: &str) -> ExpectedPrivacy {
+    ExpectedPrivacy {
+        single_purpose: None,
+        permissions: None,
+        remote_code: None,
+        data_usage: None,
+        policy_url: Some(url.to_string()),
+    }
+}
+
+#[test]
+fn policyurlだけを書いたアイテムも対象になる() {
+    let p = only_policy_url("https://example.com/privacy");
+    assert!(!p.is_empty());
+    assert_eq!(p.fields(), vec![PrivacyField::PolicyUrl]);
+    assert!(item(p).has_privacy());
+    // 空文字は「空欄が正本」で、対象として残る
+    assert!(!only_policy_url("").is_empty());
+}
+
+#[test]
+fn policyurlの差分だけを書き換え他の欄は動かさない() {
+    let mut page = FakePrivacy::new();
+    let result = services::push_privacy(
+        &mut page,
+        &item(only_policy_url("https://example.com/privacy")),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert_eq!(result.updated, vec![PrivacyField::PolicyUrl]);
+    assert_eq!(page.count("write-url"), 1);
+    assert_eq!(page.count("write "), 0);
+    assert_eq!(
+        page.saved.policy_url.as_deref(),
+        Some("https://example.com/privacy")
+    );
+    assert_eq!(page.saved.single_purpose, "目的");
+    assert_eq!(page.count("save"), 1);
+}
+
+#[test]
+fn policyurlが一致していれば書かず保存もしない() {
+    let mut page = FakePrivacy::new();
+    let result = services::push_privacy(
+        &mut page,
+        &item(only_policy_url("https://old.example.com/privacy")),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert!(result.updated.is_empty());
+    assert_eq!(page.count("write-url"), 0);
+    assert_eq!(page.count("save"), 0);
+}
+
+#[test]
+fn policyurlの空文字の正本は空欄へ書き換える() {
+    let mut page = FakePrivacy::new();
+    let result = services::push_privacy(
+        &mut page,
+        &item(only_policy_url("")),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert_eq!(result.updated, vec![PrivacyField::PolicyUrl]);
+    assert_eq!(page.saved.policy_url.as_deref(), Some(""));
+}
+
+#[test]
+fn policyurlの欄が画面に無ければ何も書かずに止める() {
+    let mut page = FakePrivacy::new();
+    page.saved.policy_url = None;
+    let e = services::push_privacy(
+        &mut page,
+        &item(only_policy_url("https://example.com/privacy")),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap_err();
+    assert!(matches!(e, Error::WriteBlocked(_)));
+    assert_eq!(page.count("write-url"), 0);
+    assert_eq!(page.count("save"), 0);
+}
+
+#[test]
+fn policyurlの差分は1行の差分として出る() {
+    let mut page = FakePrivacy::new();
+    let (_, comparison) = services::diff_privacy(
+        &mut page,
+        &item(only_policy_url("https://example.com/privacy")),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert_eq!(comparison.rows.len(), 1);
+    let text = edictora::privacy::describe(&comparison.rows[0]);
+    assert!(text.contains("- https://old.example.com/privacy"), "{text}");
+    assert!(text.contains("+ https://example.com/privacy"), "{text}");
+    assert!(!PrivacyField::PolicyUrl.is_long_text());
 }

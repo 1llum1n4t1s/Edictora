@@ -1,5 +1,6 @@
 //! 掲載情報の欄・正本と現在値のモデル・比較（C# の `Edictora.Core.Listing`）。
 
+pub mod category;
 pub mod text_diff;
 
 use std::collections::BTreeMap;
@@ -15,7 +16,8 @@ use crate::{tr, trs};
 /// Edictora が読み書きする掲載情報の欄。
 ///
 /// ダッシュボードの「ストアの掲載情報」で編集できる欄のうち、テキストで正本を持てるものだけを扱う。
-/// カテゴリ・プロモーション動画は対象外（アイコンを含む掲載画像は `images` モジュールが別に扱う）。設定ファイルに書かれていない欄は、
+/// プロモーション動画は対象外（アイコンを含む掲載画像は `images` モジュールが別に扱う）。カテゴリは全言語共通の
+/// アイテム単位の欄なので、この列挙には入れず `ExpectedItem::category` で別に持つ（`category` モジュール）。設定ファイルに書かれていない欄は、
 /// 読み出し・比較・書き換えのどれにも使わない。並び順（Ord）は処理・表示の順番と同じ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ListingField {
@@ -112,6 +114,8 @@ pub struct ExpectedItem {
     pub display_name: String,
     /// ロケールごとの正本（テキスト）。`--only images` や画像だけのアイテムでは空
     pub locales: Vec<ExpectedLocale>,
+    /// カテゴリの正本（`category::CATEGORIES` のキー。全言語共通なのでロケールの外。対象外なら None）
+    pub category: Option<String>,
     /// 掲載画像の正本（対象にするスロットだけ。`build_expected` では None で、`select_targets` が足す）
     pub images: Option<ExpectedImages>,
     /// 「プライバシー」タブの正本（対象にする欄だけ。`build_expected` では None で、`select_targets` が足す）
@@ -119,6 +123,11 @@ pub struct ExpectedItem {
 }
 
 impl ExpectedItem {
+    /// 「ストアの掲載情報」タブに対象があるか（テキストのロケール、またはカテゴリ）
+    pub fn has_text(&self) -> bool {
+        !self.locales.is_empty() || self.category.is_some()
+    }
+
     /// 掲載画像の対象スロットが 1 つ以上あるか
     pub fn has_images(&self) -> bool {
         self.images.as_ref().is_some_and(|i| !i.is_empty())
@@ -189,6 +198,7 @@ pub fn build_expected(item: &ItemConfig) -> Result<ExpectedItem> {
         item_id: item.item_id.clone(),
         display_name: item.display_name.clone(),
         locales,
+        category: item.category.clone(),
         images: None,
         privacy: None,
     })
@@ -306,6 +316,9 @@ pub struct ItemSnapshot {
     pub available_locales: Vec<String>,
     /// 読み出したロケール
     pub locales: Vec<LocaleSnapshot>,
+    /// カテゴリの現在値。None は読んでいない（正本にカテゴリが無い）。Ok は選ばれている選択肢の `data-value`、
+    /// Err は読み出し失敗の理由（ロケールの読み出しとは独立に、この欄だけの失敗として扱う）
+    pub category: Option<std::result::Result<String, String>>,
     /// アイテム全体の読み出し失敗の理由（成功なら None）
     pub error: Option<String>,
 }

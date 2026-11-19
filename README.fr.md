@@ -97,6 +97,19 @@ Pour chaque élément, associez chaque locale à ses fichiers sources. **Les cha
 - Un champ d'URL sans clé est ignoré. `""` signifie que le champ doit être vide.
 - Les clés inconnues (comme les fautes de frappe) sont des erreurs. Les commentaires et les virgules finales sont autorisés.
 
+#### Catégorie (facultatif)
+
+Ajoutez `category` à un élément pour lire, comparer et enregistrer la catégorie de la fiche (le champ « Catégorie » du tableau de bord, commun à toutes les langues). Écrivez une clé en minuscules. Comme pour tout autre champ, **si vous l'omettez, la catégorie n'est jamais modifiée**.
+
+```jsonc
+"category": "productivity"    // one of the keys below; leave it out to skip the category
+```
+
+- Clés : `productivity`, `communication`, `tools`, `developer_tools`, `workflow_and_planning`, `education`, `lifestyle`, `art_and_design`, `entertainment`, `games`, `shopping`, `social_networking`, `news_and_weather`, `well_being`, `household`, `travel`, `just_for_fun`, `make_chrome_yours`, `privacy_and_security`, `accessibility`, `functionality_and_ui`. Une clé inconnue est une erreur de configuration (code de sortie 2). « Aucune catégorie sélectionnée » ne peut pas être une valeur source.
+- La catégorie est commune à toutes les langues : elle est donc lue et écrite une seule fois par élément (et non une fois par langue). Elle est incluse dans `--only text`, et `--locale` ne la restreint pas. `push --yes` ne l'écrit que si elle diffère, enregistre un brouillon, recharge et vérifie à nouveau.
+- Un élément peut avoir `category` sans `locales` (catégorie uniquement).
+- Ne fonctionne que lorsque le tableau de bord est affiché en japonais (les libellés anglais ne sont pas vérifiés).
+
 #### Images de la fiche (facultatif)
 
 Ajoutez `images` à un élément pour gérer ses images. Comme pour les autres champs, **les clés que vous n'écrivez pas ne sont jamais touchées**. Les chemins sont relatifs à `baseDir`.
@@ -143,13 +156,15 @@ Lorsque vous ajoutez une permission à une extension, l'onglet **Confidentialit�
   "dataUsage": {
     "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
     "certify": true                                            // checks the three declarations; only true is allowed
-  }
+  },
+  "policyUrl": "https://example.com/privacy"            // absolute http(s) URL; "" means the field should be empty
 }
 ```
 
 - Le texte est extrait du fichier comme `description` (voir plus haut). Les lignes vides initiales sont retirées, ainsi que l'indentation commune ; les justifications indentées sous `  activeTab:` fonctionnent donc telles quelles. Aucun texte ne peut être vide et chacun doit tenir dans 1 000 caractères ; Edictora le vérifie avant d'ouvrir Chrome (code de sortie 2).
 - `collected` accepte `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` et `websiteContent` (seuls ceux indiqués sont cochés, les autres sont décochés). `certify` ne peut valoir que `true` (il coche les trois déclarations, comme « je ne vends pas… ») ; `false` ou l'omettre est une erreur de configuration.
 - **L'ensemble des permissions est aussi vérifié.** Si vous écrivez `permissions`, une permission présente dans la configuration mais absente du tableau de bord (ou l'inverse) apparaît dans le résultat et `push` s'arrête avant d'écrire quoi que ce soit : ajoutez-la à la configuration ou corrigez le manifest.
+- `policyUrl` est le champ de l'URL de la politique de confidentialité : une URL http(s) absolue (2 048 caractères au maximum) ou `""` pour indiquer que le champ doit être vide. Une clé omise n'est jamais modifiée. Elle est enregistrée avec les autres champs de cet onglet.
 - `remoteCode` (`{ "uses": false }` ou `{ "uses": true, "justification": {...} }`) est accepté dans la configuration, mais la section correspondante du tableau de bord n'a pas encore pu être vérifiée sur un écran réel ; si vous l'écrivez, `diff` signale une erreur et `push` s'arrête. Ne l'écrivez pas pour l'instant.
 - Ne fonctionne que lorsque le tableau de bord est en japonais (les libellés anglais ne sont pas vérifiés). Enregistré uniquement comme brouillon ; Edictora ne soumet jamais à l'examen.
 - Un élément peut avoir `privacy` sans `locales` ni `images` (onglet Confidentialité seulement).
@@ -187,13 +202,13 @@ edictora submit --item <id> --yes               # Submit one item for review
 | 2 | Arguments ou configuration non valides (Chrome n'est pas ouvert) |
 | 3 | Différences détectées (`diff`, ou `push` sans `--yes`) |
 | 4 | Écriture interrompue (examen en attente, ou état impossible à déterminer) |
-| 5 | Connexion requise |
+| 5 | Connexion requise (l'attente automatique de connexion n'a pas abouti, ou la session a expiré en cours de travail ; en relançant la commande, une fenêtre de connexion s'ouvre si nécessaire) |
 | 130 | Interrompu (Ctrl+C) |
 
 La progression est envoyée sur la sortie d'erreur standard et les résultats sur la sortie standard.
 
 `pull`, `diff`, `push` et `submit` exécutent Chrome sans fenêtre (headless), de sorte que Chrome ne vienne jamais se placer devant votre travail.
-Pour observer ce qui se passe, ajoutez `--show-browser`. `login` affiche toujours une fenêtre, car vous la manipulez à la main.
+Pour observer ce qui se passe, ajoutez `--show-browser`. `login` affiche toujours une fenêtre, car vous la manipulez à la main. Si votre connexion Google a expiré, `pull`, `diff`, `push` et `submit` ouvrent eux-mêmes une fenêtre Chrome, attendent que vous vous connectiez (10 minutes au maximum), la ferment, puis poursuivent. Ils s'arrêtent avec le code de sortie 5 si cette connexion n'aboutit pas (délai dépassé, fenêtre fermée, ou Chrome sans fenêtre du même profil qui empêche de l'afficher), ou si la session expire en cours de travail (aucune fenêtre ne s'ouvre alors ; relancez la commande).
 
 > [!WARNING]
 > `--show-browser` est destiné aux personnes qui regardent l'écran. Ne l'utilisez pas lorsque vous exécutez Edictora depuis un agent IA ou un script : une fenêtre Chrome apparaîtrait sur l'écran de l'utilisateur, et l'IA ne peut de toute façon pas la voir.
@@ -260,8 +275,8 @@ Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même comma
 | `edictora_submit` | Envoie un élément pour examen. `item` et `confirm: true` sont obligatoires. |
 
 - Les outils exécutent le même code que la CLI, avec les mêmes protections et les mêmes codes de sortie. Chaque résultat commence par le code de sortie et sa signification. Des différences détectées (3) ne sont pas traitées comme une erreur.
-- Les clients ne peuvent pas choisir d'afficher le navigateur (`--show-browser`), exécuter `login`, ni définir le profil ou chrome.exe. Chrome s'exécute toujours sans fenêtre.
-- Si votre connexion a expiré, l'outil vous demande d'exécuter `edictora login` dans un terminal. Vous vous connectez vous-même.
+- Les clients ne peuvent pas choisir d'afficher le navigateur (`--show-browser`), exécuter `login`, ni définir le profil ou chrome.exe. Chrome s'exécute toujours sans fenêtre, sauf la fenêtre de connexion décrite ci-dessous.
+- Si votre connexion a expiré, Edictora ouvre sur votre écran une fenêtre Chrome pour vous connecter, attend que vous ayez terminé (10 minutes au maximum), puis poursuit l'appel de l'outil. Si elle n'aboutit pas, l'outil vous demande d'exécuter `edictora login` dans un terminal.
 - Les appels s'exécutent un par un, dans l'ordre. Vous pouvez annuler un appel en cours avec `notifications/cancelled`.
 - Un `diff` portant sur tous les éléments peut prendre plusieurs minutes ; prévoyez donc un délai d'expiration généreux dans votre client.
 

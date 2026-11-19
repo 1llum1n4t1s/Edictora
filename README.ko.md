@@ -97,6 +97,19 @@ Edictora의 메시지, diff 출력, 도움말은 일본어, 영어, 중국어 �
 - 키가 없는 URL 필드는 무시됩니다. `""`는 해당 필드를 비워야 한다는 뜻입니다.
 - 알 수 없는 키(오타 등)는 오류입니다. 주석과 후행 쉼표는 허용됩니다.
 
+#### 카테고리(선택)
+
+항목에 `category`를 추가하면 스토어 카테고리(대시보드의 '카테고리' 필드, 모든 언어 공통)를 읽고 비교하고 초안으로 저장할 수 있습니다. 소문자 키로 적습니다. 다른 필드와 마찬가지로 **적지 않으면 카테고리는 건드리지 않습니다**.
+
+```jsonc
+"category": "productivity"    // one of the keys below; leave it out to skip the category
+```
+
+- 키: `productivity`, `communication`, `tools`, `developer_tools`, `workflow_and_planning`, `education`, `lifestyle`, `art_and_design`, `entertainment`, `games`, `shopping`, `social_networking`, `news_and_weather`, `well_being`, `household`, `travel`, `just_for_fun`, `make_chrome_yours`, `privacy_and_security`, `accessibility`, `functionality_and_ui`. 알 수 없는 키는 설정 오류입니다(종료 코드 2). '카테고리 미선택'은 원본 값이 될 수 없습니다.
+- 카테고리는 모든 언어에 공통이므로 언어별이 아니라 항목당 한 번만 읽고 씁니다. `--only text`에 포함되며 `--locale`로는 좁혀지지 않습니다. `push --yes`는 차이가 있을 때만 바꾸고, 초안으로 저장한 뒤 다시 불러와 한 번 더 대조합니다.
+- `locales` 없이 `category`만 가진 항목도 쓸 수 있습니다.
+- 대시보드가 일본어로 표시될 때만 동작합니다(영어 화면의 문구는 확인되지 않았습니다).
+
 #### 스토어 이미지(선택)
 
 항목에 `images`를 추가하면 스토어 이미지도 관리할 수 있습니다. 다른 항목과 마찬가지로 **쓰지 않은 키는 건드리지 않습니다**. 경로는 `baseDir` 기준입니다.
@@ -143,13 +156,15 @@ edictora push --only images --image-scope global --item <id> --yes      # Replac
   "dataUsage": {
     "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
     "certify": true                                            // checks the three declarations; only true is allowed
-  }
+  },
+  "policyUrl": "https://example.com/privacy"            // absolute http(s) URL; "" means the field should be empty
 }
 ```
 
 - 본문은 `description`과 같이 파일에서 구간을 잘라 냅니다(위 참조). 앞쪽 빈 줄을 없애고 모든 줄에 공통인 들여쓰기를 제거하므로, `  activeTab:` 아래에 들여써서 적은 사유도 그대로 쓸 수 있습니다. 어떤 본문도 비어 있으면 안 되며 1,000자 이내여야 합니다. Edictora는 Chrome을 열기 전에 이를 확인합니다(종료 코드 2).
 - `collected`에는 `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity`, `websiteContent`를 쓸 수 있습니다(쓴 것만 체크하고 나머지는 해제합니다). `certify`는 `true`만 지정할 수 있습니다('판매하지 않음' 등 세 가지 선언에 체크한다는 의미). `false`나 생략은 설정 오류입니다.
 - **권한 목록 자체도 대조합니다.** `permissions`를 쓴 경우, 설정에는 있는데 화면에 없는 권한(또는 그 반대)은 비교 결과에 표시되고 `push`는 아무것도 쓰지 않고 멈춥니다. 설정에 추가하거나 manifest를 고치세요.
+- `policyUrl`은 개인정보처리방침 URL 필드입니다. http(s) 절대 URL(2,048자 이하) 또는 비워 두는 것이 원본임을 뜻하는 `""`. 적지 않으면 건드리지 않습니다. 이 탭의 다른 필드와 함께 초안으로 저장됩니다.
 - `remoteCode`(`{ "uses": false }` 또는 `{ "uses": true, "justification": {...} }`)는 설정에 쓸 수 있지만, 대시보드의 해당 입력란을 실제 화면에서 확인하지 못했기 때문에 쓰면 `diff`가 오류를 보고하고 `push`가 멈춥니다. 지금은 쓰지 마세요.
 - 대시보드가 일본어로 표시될 때만 사용할 수 있습니다(영어 문구는 확인되지 않았습니다). 임시 저장까지만 하며, Edictora는 절대 심사에 제출하지 않습니다.
 - 항목에 `locales`나 `images` 없이 `privacy`만 둘 수도 있습니다('개인정보 보호' 탭 전용).
@@ -187,13 +202,13 @@ edictora submit --item <id> --yes               # Submit one item for review
 | 2 | 잘못된 인수 또는 설정(Chrome을 열지 않음) |
 | 3 | 차이 있음(`diff`, 또는 `--yes` 없는 `push`) |
 | 4 | 쓰기 중단(심사 대기 중이거나 상태를 확인할 수 없음) |
-| 5 | 로그인 필요 |
+| 5 | 로그인 필요(자동 로그인 대기가 끝나지 않았거나 작업 도중 로그인이 만료됨. 다시 실행하면 필요할 때 로그인 창이 열립니다) |
 | 130 | 중단됨(Ctrl+C) |
 
 진행 상황은 표준 오류로, 결과는 표준 출력으로 나옵니다.
 
 `pull`, `diff`, `push`, `submit`은 Chrome을 창 없이(헤드리스) 실행하므로, Chrome이 작업 중인 화면 앞으로 튀어나오는 일이 없습니다.
-동작을 지켜보려면 `--show-browser`를 추가하십시오. `login`은 직접 조작해야 하므로 항상 창을 표시합니다.
+동작을 지켜보려면 `--show-browser`를 추가하십시오. `login`은 직접 조작해야 하므로 항상 창을 표시합니다. Google 로그인이 만료되었으면 `pull`, `diff`, `push`, `submit`이 스스로 창이 있는 Chrome을 열고 로그인이 끝날 때까지(최대 10분) 기다린 뒤 창을 닫고 이어서 진행합니다. 로그인이 끝나지 않았을 때(시간 초과, 창을 닫음, 같은 프로필에 창 없는 Chrome이 남아 있어 창을 띄울 수 없음)나 작업 도중 로그인이 만료되었을 때(이 경우 창은 열리지 않으므로 다시 실행하십시오) 종료 코드 5로 멈춥니다.
 
 > [!WARNING]
 > `--show-browser`는 사람이 화면을 지켜보는 용도입니다. AI 에이전트나 스크립트에서 Edictora를 실행할 때는 사용하지 마십시오. 사용자의 화면에 Chrome 창이 나타나는데, AI는 그 창을 볼 수도 없습니다.
@@ -260,8 +275,8 @@ MCP 게이트웨이(Toolport 등)를 사용한다면, 게이트웨이에도 같�
 | `edictora_submit` | 항목 하나를 심사에 제출합니다. `item`과 `confirm: true`가 필요합니다. |
 
 - 이 도구들은 CLI와 같은 코드, 같은 안전장치, 같은 종료 코드를 사용합니다. 각 결과는 종료 코드와 그 의미로 시작합니다. 차이 있음(3)은 오류로 취급하지 않습니다.
-- 클라이언트는 브라우저 표시(`--show-browser`), `login` 실행, 프로필 또는 chrome.exe 지정을 선택할 수 없습니다. Chrome은 항상 창 없이 실행됩니다.
-- 로그인이 만료되면 도구가 터미널에서 `edictora login`을 실행하라고 안내합니다. 로그인은 직접 하십시오.
+- 클라이언트는 브라우저 표시(`--show-browser`), `login` 실행, 프로필 또는 chrome.exe 지정을 선택할 수 없습니다. Chrome은 아래의 로그인용 창을 제외하면 항상 창 없이 실행됩니다.
+- 로그인이 만료되면 Edictora가 사용자의 화면에 로그인용 Chrome을 열고 로그인이 끝날 때까지(최대 10분) 기다린 뒤 도구 호출을 이어서 처리합니다. 끝나지 않으면 도구가 터미널에서 `edictora login`을 실행하라고 안내합니다.
 - 호출은 한 번에 하나씩 순서대로 실행됩니다. 실행 중인 호출은 `notifications/cancelled`로 취소할 수 있습니다.
 - 모든 항목에 대한 `diff`는 몇 분이 걸릴 수 있으므로, 클라이언트의 시간 제한을 넉넉하게 설정하십시오.
 

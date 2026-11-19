@@ -19,7 +19,7 @@ use crate::cancel::CancelToken;
 use crate::cdp::CdpPage;
 use crate::dashboard::page_scripts::{self as scripts, kinds};
 use crate::dashboard::selectors::{self as sel, ElementInfo};
-use crate::dashboard::text::{DashboardLang, DashboardText, PrivacyText};
+use crate::dashboard::text::{CategoryText, DashboardLang, DashboardText, PrivacyText};
 use crate::dashboard::urls;
 use crate::dashboard::write_gate::ItemPageState;
 use crate::dashboard::{
@@ -573,6 +573,89 @@ impl ListingPage for DashboardItemPage<'_> {
         self.rewrite_text(kind, &element, field.display_name(), value, cancel)
     }
 
+    fn read_category(&mut self, cancel: &CancelToken) -> Result<String> {
+        let c = self.category_text()?;
+        self.page.prepare_for_input(cancel)?;
+        // 一覧は閉じたまま読む（閉じた一覧にも選択肢は全部ある）。reload 直後は選択肢が揃うまで少し待ち、
+        // 待ち切れなければ最後の失敗（見つからない・複数など）をそのまま返す
+        // 選択中がプレースホルダーのままだったり、コンボボックスの表示値と食い違ったりする間（再読込の直後の
+        // 一時的な状態）も上限つき（8 秒）で待ち、上限に達したらその時点の値で判定する
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let settle_deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            cancel.check()?;
+            let options = self.collect(kinds::LISTBOX_OPTION, cancel)?;
+            match sel::selected_category(c, &options) {
+                Ok(value) => {
+                    let combos = self.collect(kinds::COMBOBOX, cancel)?;
+                    let combo = sel::pick_category_combobox(c, &combos).ok();
+                    if sel::category_reading_is_stable(c, combo, &options)
+                        || Instant::now() >= settle_deadline
+                    {
+                        return Ok(value);
+                    }
+                    cancel.sleep(POLL_INTERVAL)?;
+                }
+                Err(e) if Instant::now() >= deadline => return Err(e),
+                Err(_) => cancel.sleep(POLL_INTERVAL)?,
+            }
+        }
+    }
+
+    fn write_category(&mut self, data_value: &str, cancel: &CancelToken) -> Result<()> {
+        let c = self.category_text()?;
+        self.page.prepare_for_input(cancel)?;
+        let combos = self.collect(kinds::COMBOBOX, cancel)?;
+        let combo = sel::pick_category_combobox(c, &combos)?;
+        if combo.disabled {
+            return Err(Error::WriteBlocked(tr!(
+                "dashboard.the_field_cannot_be_edited",
+                name = c.label
+            )));
+        }
+        let what = tr!("dashboard.the_category_combo_box");
+        self.click(kinds::COMBOBOX, combo.index, &what, cancel)?;
+
+        // 一覧が開いて見えるまで待ち、選ぶ選択肢をちょうど 1 つに絞る（言語切替と同じ流れ）
+        let option_index = poll(
+            || {
+                let options = self.collect(kinds::LISTBOX_OPTION, cancel)?;
+                if !sel::category_list_visible(c, &options) {
+                    return Ok(None);
+                }
+                Ok(Some(
+                    sel::pick_category_option(c, &options, data_value)?.index,
+                ))
+            },
+            Duration::from_secs(10),
+            &tr!("dashboard.the_category_options_to_appear"),
+            cancel,
+        )?;
+        self.click(
+            kinds::LISTBOX_OPTION,
+            option_index,
+            &tr!("dashboard.the_category_option", value = data_value),
+            cancel,
+        )?;
+
+        // 一覧が閉じ、選んだ選択肢が選択状態になるまで待つ
+        let settled = try_poll(
+            || Ok(self.category_settled(c, data_value, cancel)?.then_some(())),
+            Duration::from_secs(5),
+            cancel,
+        )?;
+        if !settled {
+            // 閉じなければ言語切替と同じく Escape で閉じる。選択が違っていれば（閉じても）止める
+            self.page.press_key("Escape", 27, cancel)?;
+        }
+        poll(
+            || Ok(self.category_settled(c, data_value, cancel)?.then_some(())),
+            Duration::from_secs(5),
+            &tr!("dashboard.the_category_to_be_selected", value = data_value),
+            cancel,
+        )
+    }
+
     fn submit_for_review(
         &mut self,
         confirm: &mut SubmitConfirm<'_>,
@@ -779,6 +862,32 @@ impl DashboardItemPage<'_> {
         Ok(())
     }
 
+    /// カテゴリ欄の文言（日本語の画面だけ。英語の画面は文言が未確認なので、書き込みも読み出しも止める）
+    fn category_text(&self) -> Result<&'static CategoryText> {
+        self.t()?.category.as_ref().ok_or_else(|| {
+            Error::Dashboard(tr!(
+                "dashboard.the_category_is_only_supported_on_a_japanese_dashboard"
+            ))
+        })
+    }
+
+    /// カテゴリ欄の一覧が閉じ（コンボボックスの aria-expanded が "false"）、`data_value` の選択肢だけが
+    /// 選択状態になっているか
+    fn category_settled(
+        &self,
+        c: &CategoryText,
+        data_value: &str,
+        cancel: &CancelToken,
+    ) -> Result<bool> {
+        let combos = self.collect(kinds::COMBOBOX, cancel)?;
+        let combo = sel::pick_category_combobox(c, &combos)?;
+        if combo.expanded.as_deref() != Some("false") {
+            return Ok(false);
+        }
+        let options = self.collect(kinds::LISTBOX_OPTION, cancel)?;
+        Ok(sel::selected_category(c, &options).is_ok_and(|v| v == data_value))
+    }
+
     /// 「プライバシー」タブの文言（日本語の画面だけ。英語の画面は文言が未確認なので止める）
     fn privacy_text(&self) -> Result<&'static PrivacyText> {
         self.t()?.privacy.as_ref().ok_or_else(|| {
@@ -806,6 +915,26 @@ impl DashboardItemPage<'_> {
             &what,
             cancel,
         )
+    }
+
+    /// プライバシー ポリシー URL 欄が出るまで上限つき（15 秒）で待って返す（出なければ None＝欄が無い扱い。複数なら止める）。
+    /// 設定に policyUrl があるときだけ呼ぶ。SPA なので、他の欄が出てもこの欄は遅れて出ることがある
+    fn wait_for_policy_url_input(
+        &self,
+        p: &PrivacyText,
+        cancel: &CancelToken,
+    ) -> Result<Option<ElementInfo>> {
+        let mut found: Option<ElementInfo> = None;
+        try_poll(
+            || {
+                let inputs = self.collect(kinds::TEXT_INPUT, cancel)?;
+                found = sel::find_policy_url_input(p, &inputs)?.cloned();
+                Ok(found.is_some().then_some(()))
+            },
+            Duration::from_secs(15),
+            cancel,
+        )?;
+        Ok(found)
     }
 
     /// チェックボックスを `want` の状態にする（すでにその状態なら何もしない）。
@@ -916,6 +1045,11 @@ impl PrivacyPage for DashboardItemPage<'_> {
             reading.collected = sel::collected_kinds(p, &checks)?;
             reading.certified = sel::certified(p, &checks)?;
         }
+        if targets.policy_url.is_some()
+            && let Some(element) = self.wait_for_policy_url_input(p, cancel)?
+        {
+            reading.policy_url = Some(self.value(kinds::TEXT_INPUT, element.index, cancel)?);
+        }
         Ok(reading)
     }
 
@@ -966,6 +1100,20 @@ impl PrivacyPage for DashboardItemPage<'_> {
             )?;
         }
         Ok(())
+    }
+
+    fn write_policy_url(&mut self, value: &str, cancel: &CancelToken) -> Result<()> {
+        let p = self.privacy_text()?;
+        self.page.prepare_for_input(cancel)?;
+        let name = PrivacyField::PolicyUrl.display_name();
+        let Some(element) = self.wait_for_policy_url_input(p, cancel)? else {
+            return Err(Error::Dashboard(tr!(
+                "privacy.the_field_is_not_on_the_dashboard",
+                label = name
+            )));
+        };
+        sel::ensure_privacy_url_writable(&element, &name)?;
+        self.rewrite_text(kinds::TEXT_INPUT, &element, &name, value, cancel)
     }
 
     fn check_certifications(&mut self, cancel: &CancelToken) -> Result<()> {

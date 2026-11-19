@@ -43,6 +43,9 @@ pub mod kinds {
     pub const SLOT_IMAGE: &str = "slotImage";
     /// 画像まわりの `[role=button][aria-label]`（スロットの中のもの。`collect_slot` で集める）
     pub const IMAGE_BUTTON: &str = "imageButton";
+    /// 一覧（`[role=listbox]`）の選択肢（`[role=option]`）を、閉じていて見えないものも含めてすべて集める。
+    /// 各要素の `label` は所属する一覧のラベル、`data_value` / `selected` / `group` / 枠の大きさは一覧のもの
+    pub const LISTBOX_OPTION: &str = "listboxOption";
 }
 
 /// 文言を差し込んだ導入部（画面の言語ごとに 1 回だけ作る）

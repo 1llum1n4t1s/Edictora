@@ -100,6 +100,19 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 - URL 欄は、キーを書かなければ対象外です。`""` を書くと「空欄が正本」として扱います。
 - 未知のキー（綴り間違いなど）はエラーにします。コメントと末尾カンマは使えます。
 
+#### カテゴリ（任意）
+
+アイテムに `category` を書くと、ストアのカテゴリ（ダッシュボードの「カテゴリ」欄。全言語共通）を読み取り・比較・下書き保存できます。値は小文字のキーで書きます。ほかの欄と同じく、**書かなければカテゴリには触りません**。
+
+```jsonc
+"category": "productivity"    // one of the keys below; leave it out to skip the category
+```
+
+- キー: `productivity`, `communication`, `tools`, `developer_tools`, `workflow_and_planning`, `education`, `lifestyle`, `art_and_design`, `entertainment`, `games`, `shopping`, `social_networking`, `news_and_weather`, `well_being`, `household`, `travel`, `just_for_fun`, `make_chrome_yours`, `privacy_and_security`, `accessibility`, `functionality_and_ui`。未知のキーは設定の誤りです（終了コード 2）。「カテゴリ未選択」は正本にできません。
+- カテゴリは全言語共通なので、言語ごとではなくアイテムごとに 1 回だけ読み書きします。`--only text` に含まれ、`--locale` では絞りません。`push --yes` は差分があるときだけ書き換え、下書き保存して読み込み直し、もう一度照合します。
+- `locales` を書かず `category` だけを持つアイテムも使えます。
+- ダッシュボードが日本語で表示されているときだけ動作します（英語の画面の文言は未確認です）。
+
 #### 掲載画像（任意）
 
 アイテムに `images` を書くと、掲載画像も管理できます。ほかの欄と同じく、**書いていないキーは触りません**。パスは `baseDir` が基準です。
@@ -146,13 +159,15 @@ edictora push --only images --image-scope global --item <id> --yes      # Replac
   "dataUsage": {
     "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
     "certify": true                                            // checks the three declarations; only true is allowed
-  }
+  },
+  "policyUrl": "https://example.com/privacy"            // absolute http(s) URL; "" means the field should be empty
 }
 ```
 
 - 本文は `description` と同じく、ファイルから区間を切り出します（上を参照）。先頭の空行を除き、全行に共通する字下げを取り除くので、`  activeTab:` の下に字下げして書いた正当性もそのまま使えます。どの本文も空にはできず、1,000 文字以内にします。Chrome を開く前に確かめます（終了コード 2）。
 - `collected` に書けるのは `personallyIdentifiable`・`health`・`financial`・`authentication`・`personalCommunications`・`location`・`webHistory`・`userActivity`・`websiteContent` です（書いたものだけチェックし、残りは外します）。`certify` は `true` だけを指定できます（「販売しない」など 3 つの宣誓を入れる意味です）。`false` や省略は設定エラーです。
 - **権限の一覧も照合します。** `permissions` を書いたとき、設定にあるのに画面に無い権限、または画面にあるのに設定に無い権限は、比較結果に表示され、`push` は何も書かずに止まります（設定へ足すか、manifest を直してください）。
+- `policyUrl` はプライバシー ポリシーの URL 欄です。http(s) の絶対 URL（2,048 文字以内）、または空欄を正本にする `""`。書かなければ触りません。このタブのほかの欄と一緒に下書き保存します。
 - `remoteCode`（`{ "uses": false }`、または `{ "uses": true, "justification": {...} }`）は設定に書けますが、ダッシュボード上の該当欄を実画面で確認できていないため、書くと `diff` はエラーを報告し、`push` は止まります。今は書かないでください。
 - ダッシュボードが日本語表示のときだけ使えます（英語の文言は未確認です）。下書き保存までで、審査には送信しません。
 - `locales` や `images` を書かず `privacy` だけのアイテムも作れます。
@@ -189,13 +204,13 @@ edictora submit --item <id> --yes               # 1 件を審査に送信
 | 2 | 引数・設定の誤り（Chrome は開きません） |
 | 3 | 差分あり（`diff`、または `--yes` なしの `push`） |
 | 4 | 書き込みを中止（審査待ち・状態を判定できない） |
-| 5 | ログインが必要 |
+| 5 | ログインが必要（自動のログイン待ちが完了しなかったか、作業の途中でログインが切れた。もう一度実行すると、必要ならログイン用の窓が開きます） |
 | 130 | 中断（Ctrl+C） |
 
 進捗は標準エラー、結果は標準出力に出ます。
 
 `pull` / `diff` / `push` / `submit` は、Chrome をウィンドウなし（ヘッドレス）で動かすので、作業中に Chrome が前面へ出てきません。
-動きを目で確かめたいときは `--show-browser` を付けるとウィンドウを表示します。`login` は手で操作するため、常にウィンドウを表示します。
+動きを目で確かめたいときは `--show-browser` を付けるとウィンドウを表示します。`login` は手で操作するため、常にウィンドウを表示します。 Google のログインが切れていたときは、`pull`・`diff`・`push`・`submit` が自分でウィンドウつきの Chrome を開き、ログインが終わるまで（最大 10 分）待ち、閉じてから続けます。ログインが完了しなかったとき（時間切れ、ウィンドウを閉じた、同じプロファイルで画面なしの Chrome が残っていて窓を出せない）や、作業の途中でログインが切れたとき（この場合は窓が開かないので、もう一度実行してください）は、終了コード 5 で止まります。
 
 > [!WARNING]
 > `--show-browser` は人が画面を見るためのものです。AI エージェントやスクリプトから実行するときは付けないでください。利用者の画面に Chrome のウィンドウが出て、作業の邪魔になります（AI には画面が見えないので、原因調査の役にも立ちません）。
@@ -254,8 +269,8 @@ MCP のゲートウェイ（Toolport など）を使っている場合は、ゲ�
 | `edictora_submit` | 1 件を審査に送信。`item` と `confirm: true` が必須 |
 
 - 中身は CLI と同じ処理で、安全策・終了コードも同じです（結果の先頭に終了コードとその意味が出ます。差分あり（3）は失敗扱いにしません）。
-- 画面の表示（`--show-browser`）・`login`・プロファイルや chrome.exe の指定は、ツールから選べません。Chrome は常にウィンドウなしで動きます。
-- ログインが切れていたら、ツールは「端末で `edictora login` を実行してください」と返します。ログインは利用者が行います。
+- 画面の表示（`--show-browser`）・`login`・プロファイルや chrome.exe の指定は、ツールから選べません。Chrome は、次に書くログイン用のウィンドウを除き、常にウィンドウなしで動きます。
+- ログインが切れていたら、Edictora が利用者の画面にログイン用の Chrome を開き、ログインが終わるまで（最大 10 分）待ってからツールの処理を続けます。完了しなかったときは、ツールが「端末で `edictora login` を実行してください」と返します。
 - 呼び出しは 1 件ずつ順に実行します。`notifications/cancelled` で実行中の呼び出しを中断できます。
 - 全アイテムの `diff` は数分かかることがあります。クライアントの待ち時間は長めにしてください。
 

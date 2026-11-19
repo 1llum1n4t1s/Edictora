@@ -23,6 +23,12 @@ use crate::logging::{LogLevel, log};
 use crate::tr;
 use crate::util::starts_with_ic;
 
+/// `Browser.getVersion` の UA が、画面なし（ヘッドレス）の Chrome のものか（純粋関数）。
+/// UA が読めないときは false（止めずに従来どおり待つ）
+pub fn is_headless_user_agent(user_agent: Option<&str>) -> bool {
+    user_agent.is_some_and(|ua| ua.contains("HeadlessChrome"))
+}
+
 /// ダッシュボード用ブラウザの開き方
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardBrowserOptions {
@@ -158,6 +164,16 @@ impl DashboardBrowser {
         progress: &dyn Fn(&str),
         cancel: &CancelToken,
     ) -> Result<()> {
+        // 表示つきで開くつもりが、同じプロファイルで画面なしのまま残っている Chrome（孤児や同時実行の別 edictora）に
+        // 接続したときは、窓が出ずに待ち続けてしまう。待たずに理由つきで止める
+        if !self.chrome.owned_by_tool() {
+            let version = self.browser_send("Browser.getVersion", None, cancel)?;
+            if is_headless_user_agent(version.get("userAgent").and_then(Value::as_str)) {
+                return Err(Error::Dashboard(tr!(
+                    "dashboard.cannot_show_the_sign_in_window_headless_chrome"
+                )));
+            }
+        }
         // 既に開いていた Chrome に接続した場合は、入口のタブを新しく開く（起動した場合は起動時に開いている）
         if !self.chrome.owned_by_tool() && self.find_dashboard_url(cancel)?.is_none() {
             self.browser_send(

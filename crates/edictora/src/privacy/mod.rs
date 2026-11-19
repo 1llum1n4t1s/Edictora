@@ -8,7 +8,7 @@
 //!   手作業の入力をなくすため、掲載文と同じく各リポジトリの正本ファイルから読み取り・比較・下書き保存する。
 //! - 正本の本文は説明文と同じ「ファイル + sectionStart / sectionEnd」で指す（`config::section`）。
 //!   書式が固定でないので解析はしない。字下げされた本文は、前後の空行を除いて共通の字下げを取り除く（`dedent`）。
-//! - 対象は設定に書いた欄だけ（単一用途の説明・権限ごとの正当性・データ使用の 2 欄）。書いていない欄は読み出し・比較・
+//! - 対象は設定に書いた欄だけ（単一用途の説明・権限ごとの正当性・データ使用の 2 欄・プライバシー ポリシー URL）。書いていない欄は読み出し・比較・
 //!   書き換えのどれにも使わない。ただし `permissions` を書いたときは「権限の一覧そのもの」も照合する:
 //!   設定にある権限の欄が画面に無い、または画面にある権限の欄が設定に無いなら、比較結果で分かるようにして push を止める
 //!   （欄の無い権限を黙って飛ばすと、正当性の入力漏れに気づけないため）。
@@ -138,6 +138,8 @@ pub struct ExpectedPrivacy {
     pub remote_code: Option<ExpectedRemoteCode>,
     /// データ使用の開示
     pub data_usage: Option<ExpectedDataUsage>,
+    /// プライバシー ポリシー URL（空文字は「空欄が正本」。None なら対象外）
+    pub policy_url: Option<String>,
 }
 
 impl ExpectedPrivacy {
@@ -147,6 +149,7 @@ impl ExpectedPrivacy {
             && self.permissions.is_none()
             && self.remote_code.is_none()
             && self.data_usage.is_none()
+            && self.policy_url.is_none()
     }
 
     /// 対象の欄（表示順）
@@ -167,6 +170,9 @@ impl ExpectedPrivacy {
         if self.data_usage.is_some() {
             fields.push(PrivacyField::DataCollected);
             fields.push(PrivacyField::Certify);
+        }
+        if self.policy_url.is_some() {
+            fields.push(PrivacyField::PolicyUrl);
         }
         fields
     }
@@ -190,6 +196,7 @@ impl ExpectedPrivacy {
                 self.data_usage.as_ref().map(|d| format_kinds(&d.collected))
             }
             PrivacyField::Certify => self.data_usage.as_ref().map(|d| d.certify.to_string()),
+            PrivacyField::PolicyUrl => self.policy_url.clone(),
         }
     }
 }
@@ -209,6 +216,8 @@ pub enum PrivacyField {
     DataCollected,
     /// 3 つの宣誓チェック
     Certify,
+    /// プライバシー ポリシー URL（`input[type=text]`。短い 1 行の欄）
+    PolicyUrl,
 }
 
 impl PrivacyField {
@@ -223,6 +232,7 @@ impl PrivacyField {
             }
             PrivacyField::DataCollected => trs!("privacy.data_collected").to_string(),
             PrivacyField::Certify => trs!("privacy.certify").to_string(),
+            PrivacyField::PolicyUrl => trs!("privacy.policy_url").to_string(),
         }
     }
 
@@ -331,6 +341,7 @@ pub fn build_expected(item: &ItemConfig) -> Result<Option<ExpectedPrivacy>> {
         permissions,
         remote_code,
         data_usage,
+        policy_url: config.policy_url.clone(),
     }))
 }
 
@@ -352,6 +363,8 @@ pub struct PrivacyReading {
     pub collected: Option<BTreeSet<DataKind>>,
     /// 3 つの宣誓チェックがすべて入っているか（3 つが揃っていなければ None）
     pub certified: Option<bool>,
+    /// プライバシー ポリシー URL（欄が無ければ None）
+    pub policy_url: Option<String>,
 }
 
 /// アイテム 1 件のプライバシー タブの現在値
@@ -530,6 +543,7 @@ fn compare_field(
         }
         PrivacyField::DataCollected => reading.collected.as_ref().map(format_kinds),
         PrivacyField::Certify => reading.certified.map(|c| c.to_string()),
+        PrivacyField::PolicyUrl => reading.policy_url.clone(),
     };
     let _ = expected;
     match current {

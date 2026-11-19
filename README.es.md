@@ -97,6 +97,19 @@ Para cada elemento, asocie cada configuración regional (locale) a sus archivos 
 - Un campo de URL sin clave se ignora. `""` significa que el campo debe estar vacío.
 - Las claves desconocidas (por ejemplo, erratas) son errores. Se permiten comentarios y comas finales.
 
+#### Categoría (opcional)
+
+Añada `category` a un elemento para leer, comparar y guardar la categoría de la ficha (el campo «Categoría» del panel, común a todos los idiomas). Escriba una clave en minúsculas. Como en cualquier otro campo, **si no la escribe, la categoría nunca se toca**.
+
+```jsonc
+"category": "productivity"    // one of the keys below; leave it out to skip the category
+```
+
+- Claves: `productivity`, `communication`, `tools`, `developer_tools`, `workflow_and_planning`, `education`, `lifestyle`, `art_and_design`, `entertainment`, `games`, `shopping`, `social_networking`, `news_and_weather`, `well_being`, `household`, `travel`, `just_for_fun`, `make_chrome_yours`, `privacy_and_security`, `accessibility`, `functionality_and_ui`. Una clave desconocida es un error de configuración (código de salida 2). «Sin categoría seleccionada» no puede ser un valor de origen.
+- La categoría es común a todos los idiomas, así que se lee y se escribe una sola vez por elemento (no una vez por idioma). Se incluye en `--only text` y `--locale` no la restringe. `push --yes` la escribe solo cuando difiere, guarda un borrador, recarga y vuelve a comprobar.
+- Un elemento puede tener `category` sin `locales` (solo la categoría).
+- Solo funciona mientras el panel se muestra en japonés (los textos en inglés no están verificados).
+
 #### Imágenes de la ficha (opcional)
 
 Añada `images` a un elemento para gestionar sus imágenes. Como en el resto de campos, **las claves que no escriba no se tocan nunca**. Las rutas son relativas a `baseDir`.
@@ -143,13 +156,15 @@ Cuando añade un permiso a una extensión, la pestaña **Privacidad** del panel 
   "dataUsage": {
     "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
     "certify": true                                            // checks the three declarations; only true is allowed
-  }
+  },
+  "policyUrl": "https://example.com/privacy"            // absolute http(s) URL; "" means the field should be empty
 }
 ```
 
 - El texto se extrae del archivo igual que `description` (véase arriba). Se quitan las líneas en blanco iniciales y la sangría común, de modo que sirven las justificaciones sangradas bajo `  activeTab:`. Ningún texto puede estar vacío y todos deben caber en 1000 caracteres; Edictora lo comprueba antes de abrir Chrome (código de salida 2).
 - `collected` admite `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` y `websiteContent` (solo se marcan los indicados; el resto se desmarca). `certify` solo puede ser `true` (marca las tres declaraciones, como «no vendo…»); `false` u omitirlo es un error de configuración.
 - **También se comprueba el conjunto de permisos.** Si escribe `permissions`, un permiso que está en la configuración pero no en el panel (o al revés) aparece en el resultado y `push` se detiene sin escribir nada: añádalo a la configuración o corrija el manifest.
+- `policyUrl` es el campo de la URL de la política de privacidad: una URL http(s) absoluta (hasta 2.048 caracteres) o `""` para indicar que el campo debe quedar vacío. Una clave que omita nunca se toca. Se guarda junto con los demás campos de esta pestaña.
 - `remoteCode` (`{ "uses": false }` o `{ "uses": true, "justification": {...} }`) se acepta en la configuración, pero la sección correspondiente del panel aún no se ha podido comprobar en una pantalla real, así que, si lo escribe, `diff` informa de un error y `push` se detiene. Por ahora, no lo escriba.
 - Solo funciona con el panel en japonés (los textos en inglés no están verificados). Se guarda únicamente como borrador; Edictora nunca envía a revisión.
 - Un elemento puede tener `privacy` sin `locales` ni `images` (solo la pestaña Privacidad).
@@ -187,13 +202,13 @@ edictora submit --item <id> --yes               # Submit one item for review
 | 2 | Argumentos o configuración no válidos (no se abre Chrome) |
 | 3 | Se encontraron diferencias (`diff`, o `push` sin `--yes`) |
 | 4 | Escritura interrumpida (revisión pendiente, o no se pudo determinar el estado) |
-| 5 | Se requiere iniciar sesión |
+| 5 | Se requiere iniciar sesión (la espera automática de inicio de sesión no se completó, o la sesión caducó a mitad del trabajo; al ejecutarlo de nuevo se abre una ventana de inicio de sesión si hace falta) |
 | 130 | Interrumpido (Ctrl+C) |
 
 El progreso se envía a la salida de error estándar y los resultados a la salida estándar.
 
 `pull`, `diff`, `push` y `submit` ejecutan Chrome sin ventana (headless), de modo que Chrome nunca se pone delante de su trabajo.
-Para ver lo que ocurre, añada `--show-browser`. `login` siempre muestra una ventana, porque la maneja usted a mano.
+Para ver lo que ocurre, añada `--show-browser`. `login` siempre muestra una ventana, porque la maneja usted a mano. Si el inicio de sesión de Google ha caducado, `pull`, `diff`, `push` y `submit` abren por sí mismos una ventana de Chrome, esperan a que inicie sesión (hasta 10 minutos), la cierran y continúan. Se detienen con el código de salida 5 si ese inicio de sesión no se completa (tiempo agotado, ventana cerrada o un Chrome sin ventana del mismo perfil que impide mostrarla), o si la sesión caduca a mitad del trabajo (entonces no se abre ninguna ventana; vuelva a ejecutarlo).
 
 > [!WARNING]
 > `--show-browser` es para quien observa la pantalla. No lo use al ejecutar Edictora desde un agente de IA o un script: aparecería una ventana de Chrome en la pantalla del usuario, y la IA tampoco puede verla.
@@ -260,8 +275,8 @@ Si usa una pasarela MCP (como Toolport), registre en ella el mismo comando (stdi
 | `edictora_submit` | Envía un elemento a revisión. Se requieren `item` y `confirm: true`. |
 
 - Las herramientas ejecutan el mismo código que la CLI, con las mismas salvaguardas y los mismos códigos de salida. Cada resultado empieza con el código de salida y su significado. Que se encuentren diferencias (3) no se trata como un error.
-- Los clientes no pueden elegir mostrar el navegador (`--show-browser`), ejecutar `login` ni definir el perfil o chrome.exe. Chrome siempre se ejecuta sin ventana.
-- Si su inicio de sesión ha caducado, la herramienta le pide que ejecute `edictora login` en un terminal. Usted inicia sesión por sí mismo.
+- Los clientes no pueden elegir mostrar el navegador (`--show-browser`), ejecutar `login` ni definir el perfil o chrome.exe. Chrome siempre se ejecuta sin ventana, salvo la ventana de inicio de sesión descrita a continuación.
+- Si su inicio de sesión ha caducado, Edictora abre en su pantalla una ventana de Chrome para iniciar sesión, espera a que termine (hasta 10 minutos) y luego continúa con la llamada a la herramienta. Si no se completa, la herramienta le pide que ejecute `edictora login` en un terminal.
 - Las llamadas se ejecutan de una en una, en orden. Puede cancelar una llamada en curso con `notifications/cancelled`.
 - Un `diff` sobre todos los elementos puede tardar unos minutos, así que dé a su cliente un tiempo de espera generoso.
 

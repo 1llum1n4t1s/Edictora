@@ -69,6 +69,8 @@ pub struct ItemConfig {
     pub base_directory: PathBuf,
     /// ロケールごとの正本（設定ファイルに書いた順）。`images` だけを使うアイテムでは空になりうる
     pub locales: Vec<LocaleConfig>,
+    /// カテゴリの正本（`listing::category::CATEGORIES` のキー。全言語共通。書いていなければ対象外）
+    pub category: Option<String>,
     /// 掲載画像の正本（`images` を書いたアイテムだけ。書いていなければ画像は対象外）
     pub images: Option<ImagesConfig>,
     /// 「プライバシー」タブの正本（`privacy` を書いたアイテムだけ。書いていなければ対象外）
@@ -137,6 +139,8 @@ struct ItemConfigDto {
     base_dir: Option<String>,
     /// ロケールコード → そのロケールの正本（書いた順を保つ）
     locales: Option<OrderedLocales>,
+    /// カテゴリ（任意。全言語共通の小文字のキー。例 `productivity`）
+    category: Option<String>,
     /// 掲載画像の正本（任意。書いたスロットだけが対象）
     images: Option<images::ImagesDto>,
     /// 「プライバシー」タブの正本（任意。書いた欄だけが対象）
@@ -356,10 +360,27 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
         )));
     }
 
-    // locales・images・privacy のどれか 1 つは要る（画像だけ・プライバシー タブだけを管理するアイテムも許す）
+    // カテゴリは、未知のキーを Chrome を開く前に止める（プレースホルダー＝未選択は正本にできない）
+    let category = match dto.category.as_deref() {
+        None => None,
+        Some(value) => {
+            let key = value.trim();
+            if crate::listing::category::data_value_of(key).is_none() {
+                return Err(Error::Config(tr!(
+                    "config.unknown_category",
+                    place = place,
+                    value = value,
+                    allowed = crate::listing::category::config_keys()
+                )));
+            }
+            Some(key.to_string())
+        }
+    };
+
+    // locales・category・images・privacy のどれか 1 つは要る（カテゴリだけ・画像だけ・プライバシー タブだけを管理するアイテムも許す）
     let entries = match dto.locales {
         Some(OrderedLocales(entries)) if !entries.is_empty() => entries,
-        _ if dto.images.is_some() || dto.privacy.is_some() => Vec::new(),
+        _ if category.is_some() || dto.images.is_some() || dto.privacy.is_some() => Vec::new(),
         _ => {
             return Err(Error::Config(tr!(
                 "config.specify_at_least_one_entry_in_locales",
@@ -419,6 +440,7 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
         display_name,
         base_directory: base_dir,
         locales,
+        category,
         images,
         privacy,
     })

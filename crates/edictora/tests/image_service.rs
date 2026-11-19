@@ -185,6 +185,14 @@ impl ListingPage for FakeDashboard {
         Ok(())
     }
 
+    fn read_category(&mut self, _: &CancelToken) -> Result<String> {
+        panic!("画像の手順からカテゴリが読まれました");
+    }
+
+    fn write_category(&mut self, _: &str, _: &CancelToken) -> Result<()> {
+        panic!("画像の手順からカテゴリが書かれました");
+    }
+
     fn submit_for_review(
         &mut self,
         _: &mut SubmitConfirm<'_>,
@@ -276,6 +284,7 @@ fn item(slots: Vec<ExpectedSlot>) -> ExpectedItem {
         item_id: ITEM.to_string(),
         display_name: "テスト".to_string(),
         locales: Vec::new(),
+        category: None,
         images: Some(ExpectedImages { slots }),
         privacy: None,
     }

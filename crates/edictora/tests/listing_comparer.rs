@@ -27,6 +27,7 @@ fn expected() -> ExpectedItem {
             ExpectedLocale::new("en", values(&[(ListingField::Description, "Desc")])),
         ],
         images: None,
+        category: None,
         privacy: None,
     }
 }
@@ -42,6 +43,7 @@ fn snapshot(
         status_text: status.map(str::to_string),
         available_locales: available.iter().map(|s| s.to_string()).collect(),
         locales,
+        category: None,
         error: error.map(str::to_string),
     }
 }

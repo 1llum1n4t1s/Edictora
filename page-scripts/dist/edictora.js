@@ -76,7 +76,8 @@
       checkbox: () => [...document.querySelectorAll("input[type=checkbox], [role=checkbox]")].filter((c) => visible(c) && !inDialog(c)),
       fileInput: () => [...document.querySelectorAll("input[type=file]")],
       slotImage: () => [],
-      imageButton: () => []
+      imageButton: () => [],
+      listboxOption: () => [...document.querySelectorAll("[role=option]")]
     };
     const slotRoot = (input) => {
       let cur = input;
@@ -145,6 +146,42 @@
         height: Math.round(r.height)
       };
     };
+    const optionInfo = (el, i) => {
+      const lists = [...document.querySelectorAll("[role=listbox]")];
+      const list = el.closest("[role=listbox]");
+      const r = (list || el).getBoundingClientRect();
+      const parts = [];
+      if (list) {
+        const al = list.getAttribute("aria-label");
+        if (al)
+          parts.push(al);
+        const lb = list.getAttribute("aria-labelledby");
+        if (lb) {
+          for (const id of lb.split(/\s+/)) {
+            const t = document.getElementById(id);
+            if (t)
+              parts.push(text(t));
+          }
+        }
+      }
+      return {
+        index: i,
+        tag: el.tagName.toLowerCase(),
+        text: text(el),
+        label: parts.join(`
+`),
+        disabled: el.getAttribute("aria-disabled") === "true",
+        readOnly: false,
+        type: "",
+        expanded: null,
+        checked: null,
+        dataValue: el.getAttribute("data-value") || "",
+        selected: el.getAttribute("aria-selected"),
+        group: list ? lists.indexOf(list) : -1,
+        width: Math.round(r.width),
+        height: Math.round(r.height)
+      };
+    };
     const get = (kind, i) => {
       const el = (store[kind] || [])[i];
       if (!el || !el.isConnected)
@@ -155,7 +192,7 @@
       collect: (kind) => {
         const els = sources[kind]();
         store[kind] = els;
-        return kind === "fileInput" ? els.map(fileInfo) : els.map(info);
+        return kind === "fileInput" ? els.map(fileInfo) : kind === "listboxOption" ? els.map(optionInfo) : els.map(info);
       },
       collectSlot: (kind, slotIndex) => {
         const input = (store.fileInput || [])[slotIndex];

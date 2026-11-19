@@ -23,6 +23,7 @@ use crate::images::fetch::ImageFetcher;
 use crate::images::{
     CurrentImage, ExpectedImages, ExpectedSlot, ImageComparison, ImageSlot, compare_slot,
 };
+use crate::listing::category;
 use crate::listing::{
     ComparisonStatus, ExpectedItem, ExpectedLocale, FieldValues, ItemSnapshot, ListingField,
     LocaleComparison, LocaleSnapshot, compare, compare_value,
@@ -59,6 +60,8 @@ pub struct LocalePushResult {
 pub struct PushResult {
     pub item_id: String,
     pub item_name: String,
+    /// カテゴリを書き換えて下書き保存し、読み直して一致を確認したか（正本にカテゴリが無い・差分が無ければ false）
+    pub category_updated: bool,
     /// 完了したロケール
     pub locales: Vec<LocalePushResult>,
     /// 最後に読み直して照合した結果
@@ -95,6 +98,7 @@ pub fn pull(
                 status_text: None,
                 available_locales: Vec::new(),
                 locales: Vec::new(),
+                category: None,
                 // 結果は標準出力へ出るので、エラー文中のダッシュボード URL の publisherId を伏せる
                 // （ログと同じ redact。欄の値や差分本文には掛けない）
                 error: Some(redact(&format!("{}{}", e.message(), shot_suffix(&shot)))),
@@ -113,6 +117,42 @@ fn pull_core(
     page.open_item(&expected.item_id, cancel)?;
     let state = page.get_state(cancel)?;
     let available = page.get_locales(cancel)?;
+
+    // カテゴリは全言語共通なので、ロケールのループの外で 1 回だけ読む。失敗はこの欄だけのエラーにして、
+    // ロケールの読み出しは続ける
+    let category = if expected.category.is_some() {
+        progress(&tr!(
+            "services.reading_the_category",
+            display_name = expected.display_name
+        ));
+        match page.read_category(cancel) {
+            Ok(value) => Some(Ok(value)),
+            Err(e) if e.is_dashboard() => {
+                let shot = if e == Error::LoginRequired {
+                    None
+                } else {
+                    capture_read_failure(page, &expected.item_id, Some("category"), progress)
+                };
+                log(
+                    &format!(
+                        "カテゴリの読み出し失敗 {}: {}{}",
+                        expected.item_id,
+                        e,
+                        log_shot_suffix(&shot)
+                    ),
+                    LogLevel::Warning,
+                );
+                Some(Err(redact(&format!(
+                    "{}{}",
+                    e.message(),
+                    shot_suffix(&shot)
+                ))))
+            }
+            Err(e) => return Err(e),
+        }
+    } else {
+        None
+    };
 
     let mut locales = Vec::new();
     for locale in &expected.locales {
@@ -171,6 +211,7 @@ fn pull_core(
         status_text: state.status_text,
         available_locales: available,
         locales,
+        category,
         error: None,
     })
 }
@@ -300,6 +341,13 @@ fn push_core(
         )));
     }
 
+    // カテゴリ（全言語共通）は、ロケールの切替の影響を受けないよう、ロケールのループの前に独立した 1 サイクルで行う
+    // （不足ロケールの確認より後なので、不足で止まる push がカテゴリだけ書くことはない）
+    let category_updated = match &expected.category {
+        Some(key) => push_category(page, name, key, progress, cancel)?,
+        None => false,
+    };
+
     let mut results = Vec::new();
     for locale in &expected.locales {
         cancel.check()?;
@@ -381,6 +429,10 @@ fn push_core(
             name = name
         ));
         page.reload(cancel)?;
+        // ロケールの保存がカテゴリ（全言語共通）を動かしていないかも確かめる
+        if let Some(key) = &expected.category {
+            ensure_category_matches(page, key, trs!("services.post_save_check"), cancel)?;
+        }
         let mut snapshots = Vec::new();
         for locale in &expected.locales {
             page.switch_locale(&locale.code, cancel)?;
@@ -430,6 +482,7 @@ fn push_core(
     Ok(PushResult {
         item_id: expected.item_id.clone(),
         item_name: expected.display_name.clone(),
+        category_updated,
         locales: results,
         final_comparison: final_rows,
     })
@@ -445,8 +498,72 @@ fn snapshot_of(
         status_text: None,
         available_locales: available.to_vec(),
         locales,
+        category: None,
         error: None,
     }
+}
+
+/// カテゴリを書き換えて下書き保存し、読み直して照合する（1 サイクル）。差分が無ければ何もしない。
+/// 書き換えたら true。順序は ロケールの push と同じ: 読む → 書く → 保存前の照合 → 書き込み可否 → 下書き保存 → 読み込み直し → 照合
+fn push_category(
+    page: &mut dyn ListingPage,
+    name: &str,
+    key: &str,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<bool> {
+    cancel.check()?;
+    let data_value = category::data_value_of(key).ok_or_else(|| {
+        // 設定の検証で弾かれているので来ない（来たら書かずに止める）
+        Error::Dashboard(tr!("services.unknown_category_key", key = key))
+    })?;
+    progress(&tr!("services.checking_the_category", name = name));
+    let current = page.read_category(cancel)?;
+    if current == data_value {
+        progress(&tr!("services.category_matches_the_source", name = name));
+        return Ok(false);
+    }
+    progress(&tr!(
+        "services.updating_the_category",
+        name = name,
+        key = key
+    ));
+    page.write_category(data_value, cancel)?;
+    ensure_category_matches(page, key, trs!("services.pre_save_check"), cancel)?;
+
+    // 保存の直前にも状態を確かめる
+    ensure_allowed(&page.get_state(cancel)?)?;
+    progress(&tr!("services.saving_the_category_as_draft", name = name));
+    page.save_draft(cancel)?;
+
+    // 読み込み直して、保存された値を確かめる
+    page.reload(cancel)?;
+    ensure_category_matches(page, key, trs!("services.post_save_check"), cancel)?;
+    progress(&tr!(
+        "services.category_saved_reloaded_and_confirmed",
+        name = name
+    ));
+    Ok(true)
+}
+
+/// いまのカテゴリが正本のキーの選択肢か確かめる。違えば現在値と正本を示す `Dashboard` エラー。
+/// `phase` は表示言語に合わせた照合の名前（呼び出し側で `trs!` で渡す）
+fn ensure_category_matches(
+    page: &mut dyn ListingPage,
+    key: &str,
+    phase: &str,
+    cancel: &CancelToken,
+) -> Result<()> {
+    let current = page.read_category(cancel)?;
+    if category::data_value_of(key) == Some(current.as_str()) {
+        return Ok(());
+    }
+    Err(Error::Dashboard(tr!(
+        "services.the_category_does_not_match_the_source",
+        current = category::describe_value(&current),
+        expected = key,
+        phase = phase
+    )))
 }
 
 /// 審査に送信する（1 アイテムずつ）。送信前に書き込み可否を確かめ、確認ダイアログの内容を `confirm` に渡す
@@ -1109,6 +1226,7 @@ fn empty_privacy() -> ExpectedPrivacy {
         permissions: None,
         remote_code: None,
         data_usage: None,
+        policy_url: None,
     }
 }
 
@@ -1261,6 +1379,10 @@ fn write_privacy_field(
             None => Ok(()),
         },
         PrivacyField::Certify => page.check_certifications(cancel),
+        PrivacyField::PolicyUrl => {
+            let value = privacy.value_of(field).unwrap_or_default();
+            page.write_policy_url(&value, cancel)
+        }
         // 画面側が未対応の欄。比較の段階で止まるので、ここには来ない（来たら書かずに止める）
         PrivacyField::RemoteCodeUses | PrivacyField::RemoteCodeJustification => Err(
             Error::WriteBlocked(trs!("privacy.remote_code_is_not_supported").to_string()),

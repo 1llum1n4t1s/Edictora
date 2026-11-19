@@ -97,6 +97,19 @@ Ordnen Sie für jedes Element jeder Locale ihre Quelldateien zu. **Felder, die S
 - Ein URL-Feld ohne Schlüssel wird ignoriert. `""` bedeutet, dass das Feld leer sein soll.
 - Unbekannte Schlüssel (zum Beispiel Tippfehler) sind Fehler. Kommentare und abschließende Kommas sind erlaubt.
 
+#### Kategorie (optional)
+
+Fügen Sie einem Eintrag `category` hinzu, um die Store-Kategorie (das Feld „Kategorie“ im Dashboard, für alle Sprachen gemeinsam) zu lesen, zu vergleichen und zu speichern. Schreiben Sie einen Schlüssel in Kleinbuchstaben. Wie bei jedem anderen Feld wird **die Kategorie nie angerührt, wenn Sie sie weglassen**.
+
+```jsonc
+"category": "productivity"    // one of the keys below; leave it out to skip the category
+```
+
+- Schlüssel: `productivity`, `communication`, `tools`, `developer_tools`, `workflow_and_planning`, `education`, `lifestyle`, `art_and_design`, `entertainment`, `games`, `shopping`, `social_networking`, `news_and_weather`, `well_being`, `household`, `travel`, `just_for_fun`, `make_chrome_yours`, `privacy_and_security`, `accessibility`, `functionality_and_ui`. Ein unbekannter Schlüssel ist ein Konfigurationsfehler (Exitcode 2). „Keine Kategorie ausgewählt“ kann kein Quellwert sein.
+- Die Kategorie gilt für alle Sprachen und wird daher nur einmal pro Eintrag gelesen und geschrieben (nicht einmal pro Sprache). Sie ist in `--only text` enthalten, und `--locale` schränkt sie nicht ein. `push --yes` schreibt sie nur bei einem Unterschied, speichert einen Entwurf, lädt neu und prüft erneut.
+- Ein Eintrag kann `category` ohne `locales` haben (nur Kategorie).
+- Funktioniert nur, solange das Dashboard auf Japanisch angezeigt wird (die englischen Bezeichnungen sind nicht verifiziert).
+
 #### Store-Bilder (optional)
 
 Fügen Sie einem Eintrag `images` hinzu, um seine Store-Bilder zu verwalten. Wie bei allen anderen Feldern **werden Schlüssel, die Sie weglassen, nie angetastet**. Pfade sind relativ zu `baseDir`.
@@ -143,13 +156,15 @@ Wenn Sie einer Erweiterung eine Berechtigung hinzufügen, verlangt die Registerk
   "dataUsage": {
     "collected": ["personallyIdentifiable", "authentication"],   // the kinds to check; the rest are unchecked
     "certify": true                                            // checks the three declarations; only true is allowed
-  }
+  },
+  "policyUrl": "https://example.com/privacy"            // absolute http(s) URL; "" means the field should be empty
 }
 ```
 
 - Die Texte werden wie `description` aus der Datei geschnitten (siehe oben). Führende Leerzeilen und der gemeinsame Einzug werden entfernt, sodass auch unter `  activeTab:` eingerückte Begründungen direkt funktionieren. Kein Text darf leer sein, und jeder muss in 1.000 Zeichen passen; Edictora prüft das, bevor Chrome geöffnet wird (Exitcode 2).
 - `collected` akzeptiert `personallyIdentifiable`, `health`, `financial`, `authentication`, `personalCommunications`, `location`, `webHistory`, `userActivity` und `websiteContent` (nur die genannten werden angehakt, alle anderen abgewählt). `certify` darf nur `true` sein (hakt die drei Erklärungen wie „Ich verkaufe nicht …“ an); `false` oder Weglassen ist ein Konfigurationsfehler.
 - **Auch die Menge der Berechtigungen wird geprüft.** Schreiben Sie `permissions`, erscheint eine Berechtigung, die in der Konfiguration steht, im Dashboard aber fehlt (oder umgekehrt), im Ergebnis, und `push` hält an, bevor etwas geschrieben wird: Ergänzen Sie sie in der Konfiguration oder korrigieren Sie das Manifest.
+- `policyUrl` ist das Feld für die URL der Datenschutzerklärung: eine absolute http(s)-URL (bis zu 2.048 Zeichen) oder `""`, wenn das Feld leer sein soll. Ein weggelassener Schlüssel wird nie angerührt. Er wird zusammen mit den anderen Feldern dieser Registerkarte gespeichert.
 - `remoteCode` (`{ "uses": false }` oder `{ "uses": true, "justification": {...} }`) wird in der Konfiguration akzeptiert, aber der zugehörige Bereich im Dashboard konnte noch nicht an einer echten Oberfläche geprüft werden; schreiben Sie ihn, meldet `diff` einen Fehler und `push` hält an. Lassen Sie ihn vorerst weg.
 - Funktioniert nur, solange das Dashboard auf Japanisch angezeigt wird (die englischen Bezeichnungen sind nicht verifiziert). Es wird nur als Entwurf gespeichert; Edictora reicht nie zur Prüfung ein.
 - Ein Eintrag darf `privacy` ohne `locales` und `images` haben (nur die Registerkarte „Datenschutz“).
@@ -187,13 +202,13 @@ edictora submit --item <id> --yes               # Submit one item for review
 | 2 | Ungültige Argumente oder Konfiguration (Chrome wird nicht geöffnet) |
 | 3 | Unterschiede gefunden (`diff` oder `push` ohne `--yes`) |
 | 4 | Schreibvorgang abgebrochen (Prüfung ausstehend oder der Status konnte nicht ermittelt werden) |
-| 5 | Anmeldung erforderlich |
+| 5 | Anmeldung erforderlich (das automatische Warten auf die Anmeldung wurde nicht abgeschlossen, oder die Anmeldung ist mitten in der Arbeit abgelaufen; bei erneutem Ausführen wird bei Bedarf ein Anmeldefenster geöffnet) |
 | 130 | Unterbrochen (Strg+C) |
 
 Fortschrittsmeldungen gehen an die Standardfehlerausgabe, Ergebnisse an die Standardausgabe.
 
 `pull`, `diff`, `push` und `submit` führen Chrome ohne Fenster aus (headless), sodass sich Chrome nie vor Ihre Arbeit schiebt.
-Um zu beobachten, was passiert, fügen Sie `--show-browser` hinzu. `login` zeigt immer ein Fenster, weil Sie es von Hand bedienen.
+Um zu beobachten, was passiert, fügen Sie `--show-browser` hinzu. `login` zeigt immer ein Fenster, weil Sie es von Hand bedienen. Ist die Google-Anmeldung abgelaufen, öffnen `pull`, `diff`, `push` und `submit` selbst ein Chrome-Fenster, warten, bis Sie sich angemeldet haben (höchstens 10 Minuten), schließen es und machen weiter. Sie enden mit dem Exitcode 5, wenn diese Anmeldung nicht abgeschlossen wird (Zeitüberschreitung, Fenster geschlossen oder ein Chrome ohne Fenster mit demselben Profil verhindert die Anzeige) oder wenn die Anmeldung mitten in der Arbeit abläuft (dann öffnet sich kein Fenster; führen Sie den Befehl erneut aus).
 
 > [!WARNING]
 > `--show-browser` ist für Personen gedacht, die den Bildschirm beobachten. Verwenden Sie es nicht, wenn Sie Edictora über einen KI-Agenten oder ein Skript ausführen: Auf dem Bildschirm des Benutzers würde ein Chrome-Fenster aufspringen, und die KI kann es ohnehin nicht sehen.
@@ -260,8 +275,8 @@ Wenn Sie ein MCP-Gateway verwenden (etwa Toolport), registrieren Sie denselben B
 | `edictora_submit` | Reicht ein Element zur Prüfung ein. `item` und `confirm: true` sind erforderlich. |
 
 - Die Tools führen denselben Code wie die CLI aus, mit denselben Schutzmechanismen und Exitcodes. Jedes Ergebnis beginnt mit dem Exitcode und seiner Bedeutung. „Unterschiede gefunden“ (3) gilt nicht als Fehler.
-- Clients können nicht festlegen, den Browser anzuzeigen (`--show-browser`), `login` auszuführen oder das Profil bzw. chrome.exe zu setzen. Chrome läuft immer ohne Fenster.
-- Ist Ihre Anmeldung abgelaufen, fordert das Tool Sie auf, `edictora login` in einem Terminal auszuführen. Sie melden sich selbst an.
+- Clients können nicht festlegen, den Browser anzuzeigen (`--show-browser`), `login` auszuführen oder das Profil bzw. chrome.exe zu setzen. Chrome läuft immer ohne Fenster, außer dem unten beschriebenen Anmeldefenster.
+- Ist Ihre Anmeldung abgelaufen, öffnet Edictora auf Ihrem Bildschirm ein Chrome-Fenster zur Anmeldung, wartet, bis Sie fertig sind (höchstens 10 Minuten), und setzt dann den Tool-Aufruf fort. Wird sie nicht abgeschlossen, fordert das Tool Sie auf, `edictora login` in einem Terminal auszuführen.
 - Aufrufe laufen nacheinander in der Reihenfolge ihres Eingangs. Einen laufenden Aufruf können Sie mit `notifications/cancelled` abbrechen.
 - Ein `diff` über alle Elemente kann einige Minuten dauern, daher sollten Sie Ihrem Client ein großzügiges Timeout geben.
 

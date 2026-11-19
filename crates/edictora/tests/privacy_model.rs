@@ -16,6 +16,7 @@ fn expected() -> ExpectedPrivacy {
             ("host".to_string(), "ホストの理由".to_string()),
         ]),
         remote_code: None,
+        policy_url: None,
         data_usage: Some(ExpectedDataUsage {
             collected: [DataKind::PersonallyIdentifiable, DataKind::Authentication]
                 .into_iter()
@@ -40,6 +41,7 @@ fn matching_reading() -> PrivacyReading {
                 .collect(),
         ),
         certified: Some(true),
+        policy_url: None,
     }
 }
 
@@ -126,6 +128,7 @@ fn 対象の欄は設定に書いた欄だけを表示順に返す() {
         single_purpose: Some("目的".to_string()),
         permissions: None,
         remote_code: None,
+        policy_url: None,
         data_usage: None,
     };
     assert_eq!(only_purpose.fields(), vec![PrivacyField::SinglePurpose]);
@@ -135,6 +138,7 @@ fn 対象の欄は設定に書いた欄だけを表示順に返す() {
             single_purpose: None,
             permissions: None,
             remote_code: None,
+            policy_url: None,
             data_usage: None
         }
         .is_empty()

@@ -6,7 +6,7 @@
 //! - [`write_gate`] — 書き込み可否の判定。確認済みの状態以外はすべて止める（許可リスト方式）
 //! - [`item_page`] — 1 操作ずつの実装（開く・言語切替・読む・書く・画像の読み書き・保存・送信）
 //!
-//! 画面操作の境目の trait は 4 つ: [`EditorPage`]（共通）・[`ListingPage`]（テキストと審査送信）・[`ImagePage`]（画像。審査送信を持たない）・
+//! 画面操作の境目の trait は 4 つ: [`EditorPage`]（共通）・[`ListingPage`]（テキスト・カテゴリと審査送信）・[`ImagePage`]（画像。審査送信を持たない）・
 //! [`PrivacyPage`]（「プライバシー」タブ。審査送信を持たない）
 //! - [`browser`] — 専用プロファイルの Chrome と 1 タブへの接続
 
@@ -94,6 +94,14 @@ pub trait ListingPage: EditorPage {
     fn write_field(&mut self, field: ListingField, value: &str, cancel: &CancelToken)
     -> Result<()>;
 
+    /// カテゴリ（全言語共通の欄）の現在の選択を、選ばれている選択肢の `data-value` で返す。
+    /// 一覧は閉じたまま読む（開閉しない）。選ばれた選択肢がちょうど 1 つでなければエラー。日本語の画面だけ扱う
+    fn read_category(&mut self, cancel: &CancelToken) -> Result<String>;
+
+    /// カテゴリを `data_value` の選択肢に書き換える（コンボボックスを開く → 選択肢を押す → 閉じて選択を確かめる）。
+    /// 未保存の変更になる。日本語の画面だけ扱う
+    fn write_category(&mut self, data_value: &str, cancel: &CancelToken) -> Result<()>;
+
     /// 「審査のため送信」を押し、確認ダイアログを `confirm` に渡す。
     /// true ならダイアログ内の「審査のため送信」、false なら「キャンセル」を押す
     fn submit_for_review(
@@ -163,4 +171,7 @@ pub trait PrivacyPage: EditorPage {
 
     /// 3 つの宣誓チェックをすべて入れる（すでに入っているものは触らない）
     fn check_certifications(&mut self, cancel: &CancelToken) -> Result<()>;
+
+    /// プライバシー ポリシー URL（`input[type=text]`）を書き換え、値が `value` と完全一致することを確かめる
+    fn write_policy_url(&mut self, value: &str, cancel: &CancelToken) -> Result<()>;
 }

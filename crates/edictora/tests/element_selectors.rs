@@ -1049,3 +1049,419 @@ fn 収集結果から画像の情報を読む() {
     assert_eq!(parsed[0].images[0].alt, "スクリーンショット 1");
     assert_eq!((parsed[0].width, parsed[0].height), (0, 48));
 }
+
+// ───────── カテゴリ（2026-11-19 の実画面の形）─────────
+
+fn category_text() -> &'static edictora::dashboard::text::CategoryText {
+    JA.category.as_ref().expect("日本語はカテゴリの文言を持つ")
+}
+
+/// 一覧の選択肢 1 つ（`label` は所属する一覧のラベル、`width`/`height` は一覧の枠）
+fn list_option(
+    index: i32,
+    group: i32,
+    list_label: &str,
+    data_value: &str,
+    selected: Option<bool>,
+    open: bool,
+) -> ElementInfo {
+    ElementInfo {
+        index,
+        tag: "li".to_string(),
+        label: list_label.to_string(),
+        data_value: data_value.to_string(),
+        selected,
+        group,
+        width: if open { 240 } else { 0 },
+        height: if open { 400 } else { 0 },
+        ..ElementInfo::default()
+    }
+}
+
+/// 実画面の構成: 言語の一覧（group 0）と、カテゴリの一覧（group 1。`selected` が選択中）
+fn category_page(selected: &str, open: bool) -> Vec<ElementInfo> {
+    let mut options = vec![
+        list_option(0, 0, "言語", "ja", Some(true), false),
+        list_option(1, 0, "言語", "en", Some(false), false),
+    ];
+    let values = std::iter::once("Select a category").chain(
+        edictora::listing::category::CATEGORIES
+            .iter()
+            .map(|(_, v)| *v),
+    );
+    for (index, value) in (2..).zip(values) {
+        options.push(list_option(
+            index,
+            1,
+            "カテゴリ",
+            value,
+            Some(value == selected),
+            open,
+        ));
+    }
+    options
+}
+
+#[test]
+fn カテゴリの現在値は閉じたまま選択中のdata_valueで読む() {
+    let c = category_text();
+    let options = category_page("CATEGORY_FUNCTIONALITY_AND_UI", false);
+    assert_eq!(
+        selected_category(c, &options).unwrap(),
+        "CATEGORY_FUNCTIONALITY_AND_UI"
+    );
+    // 言語の一覧の選択（ja）は混ざらない
+    assert_eq!(category_options(c, &options).unwrap().len(), 22);
+}
+
+#[test]
+fn カテゴリが未選択ならプレースホルダーとして読む() {
+    let c = category_text();
+    let options = category_page("Select a category", false);
+    assert_eq!(selected_category(c, &options).unwrap(), "Select a category");
+}
+
+#[test]
+fn カテゴリの選択中がちょうど1つでなければ止める() {
+    let c = category_text();
+    // 0 個
+    let mut none = category_page("CATEGORY_TOOLS", false);
+    for o in none.iter_mut().filter(|o| o.group == 1) {
+        o.selected = Some(false);
+    }
+    assert!(matches!(
+        selected_category(c, &none),
+        Err(Error::Dashboard(_))
+    ));
+    // 2 個
+    let mut two = category_page("CATEGORY_TOOLS", false);
+    for o in two.iter_mut().filter(|o| o.data_value == "CATEGORY_GAMES") {
+        o.selected = Some(true);
+    }
+    assert!(matches!(
+        selected_category(c, &two),
+        Err(Error::Dashboard(_))
+    ));
+    // aria-selected が無い選択肢だけ
+    let mut unknown = category_page("CATEGORY_TOOLS", false);
+    for o in unknown.iter_mut() {
+        o.selected = None;
+    }
+    assert!(selected_category(c, &unknown).is_err());
+}
+
+#[test]
+fn カテゴリの一覧が見つからない_または複数なら止める() {
+    let c = category_text();
+    // 一覧が無い（言語の一覧だけ）
+    let only_language: Vec<ElementInfo> = category_page("CATEGORY_TOOLS", false)
+        .into_iter()
+        .filter(|o| o.group == 0)
+        .collect();
+    assert!(matches!(
+        category_options(c, &only_language),
+        Err(Error::Dashboard(_))
+    ));
+    // 同名の一覧が 2 つ（group が違う）。選択肢を混ぜずに止める
+    let mut doubled = category_page("CATEGORY_TOOLS", false);
+    doubled.push(list_option(
+        99,
+        2,
+        "カテゴリ",
+        "CATEGORY_TOOLS",
+        Some(true),
+        false,
+    ));
+    let e = category_options(c, &doubled).unwrap_err();
+    assert!(matches!(e, Error::Dashboard(_)), "{e:?}");
+    assert!(selected_category(c, &doubled).is_err());
+    // ラベルが部分一致するだけの一覧は選ばない
+    let mut other = vec![list_option(
+        0,
+        5,
+        "カテゴリの選択",
+        "CATEGORY_TOOLS",
+        Some(true),
+        false,
+    )];
+    assert!(category_options(c, &other).is_err());
+    other[0].label = "すべての言語用\nカテゴリ".to_string();
+    assert!(
+        category_options(c, &other).is_ok(),
+        "ラベルの 1 行が完全一致すれば選ぶ"
+    );
+}
+
+#[test]
+fn カテゴリの一覧が開いたかは枠の大きさで判定する() {
+    let c = category_text();
+    assert!(!category_list_visible(
+        c,
+        &category_page("CATEGORY_TOOLS", false)
+    ));
+    assert!(category_list_visible(
+        c,
+        &category_page("CATEGORY_TOOLS", true)
+    ));
+    // 一覧が見つからなければ開いていない扱い
+    assert!(!category_list_visible(c, &[]));
+}
+
+#[test]
+fn カテゴリの選択肢はdata_valueが一致する1つを選ぶ() {
+    let c = category_text();
+    let options = category_page("CATEGORY_FUNCTIONALITY_AND_UI", true);
+    let found = pick_category_option(c, &options, "CATEGORY_PRODUCTIVITY").unwrap();
+    assert_eq!(found.data_value, "CATEGORY_PRODUCTIVITY");
+    assert_eq!(found.group, 1);
+    // 言語の一覧の値と衝突しない（別の一覧は対象外）
+    assert!(pick_category_option(c, &options, "ja").is_err());
+    // 表に無い値
+    assert!(pick_category_option(c, &options, "CATEGORY_NOPE").is_err());
+}
+
+#[test]
+fn カテゴリのプレースホルダーは選ばない() {
+    let c = category_text();
+    let options = category_page("CATEGORY_TOOLS", true);
+    assert!(pick_category_option(c, &options, "Select a category").is_err());
+    assert!(pick_category_option(c, &options, "").is_err());
+}
+
+#[test]
+fn カテゴリの選択肢が重複していれば止める() {
+    let c = category_text();
+    let mut options = category_page("CATEGORY_TOOLS", true);
+    let dup = ElementInfo {
+        index: 100,
+        ..options
+            .iter()
+            .find(|o| o.data_value == "CATEGORY_GAMES")
+            .unwrap()
+            .clone()
+    };
+    options.push(dup);
+    assert!(pick_category_option(c, &options, "CATEGORY_GAMES").is_err());
+}
+
+#[test]
+fn カテゴリのコンボボックスはラベルの1行の完全一致で選ぶ() {
+    let c = category_text();
+    // 実画面: カテゴリ欄の innerText は「カテゴリ\nカテゴリ\nカテゴリ\n機能と UI」、祖先に「すべての言語用」
+    let category = ElementInfo {
+        index: 3,
+        tag: "div".to_string(),
+        label: "カテゴリ\nカテゴリ\nすべての言語用".to_string(),
+        text: "カテゴリ\nカテゴリ\nカテゴリ\n機能と UI".to_string(),
+        expanded: Some("false".to_string()),
+        ..ElementInfo::default()
+    };
+    let language = ElementInfo {
+        index: 1,
+        tag: "div".to_string(),
+        label: "言語".to_string(),
+        text: "言語\n日本語 – ja".to_string(),
+        ..ElementInfo::default()
+    };
+    let publisher = ElementInfo {
+        index: 0,
+        tag: "div".to_string(),
+        text: "パブリッシャー".to_string(),
+        ..ElementInfo::default()
+    };
+    let all = vec![publisher.clone(), language.clone(), category.clone()];
+    assert_eq!(pick_category_combobox(c, &all).unwrap().index, 3);
+    // 言語欄の選択は従来どおり（カテゴリ欄の「すべての言語用」は「言語」の 1 行に当たらない）
+    assert!(pick_language_combobox(&JA, &all).is_ok_and(|l| l.index == 1));
+    // 見つからない・複数
+    assert!(pick_category_combobox(c, &[publisher, language]).is_err());
+    let twin = ElementInfo {
+        index: 9,
+        ..category.clone()
+    };
+    assert!(pick_category_combobox(c, &[category, twin]).is_err());
+}
+
+#[test]
+fn 英語の画面はカテゴリとプライバシーの文言を持たず書き込みを許さない() {
+    assert!(JA.category.is_some());
+    assert!(EN.category.is_none());
+    assert!(EN.privacy.is_none());
+}
+
+#[test]
+fn ページ内の収集結果からカテゴリの選択肢の情報を読む() {
+    let json = serde_json::json!([{
+        "index": 4, "tag": "li", "text": "機能と UI", "label": "カテゴリ",
+        "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null,
+        "dataValue": "CATEGORY_FUNCTIONALITY_AND_UI", "selected": "true", "group": 1,
+        "width": 0, "height": 0
+    }, {
+        "index": 5, "tag": "li", "text": "x", "label": "カテゴリ",
+        "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null,
+        "dataValue": "CATEGORY_TOOLS", "selected": "false", "group": 1,
+        "width": 10, "height": 20
+    }, {
+        "index": 6, "tag": "li", "text": "y", "label": "",
+        "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null
+    }]);
+    let parsed = parse_elements(&json);
+    assert_eq!(parsed[0].data_value, "CATEGORY_FUNCTIONALITY_AND_UI");
+    assert_eq!(parsed[0].selected, Some(true));
+    assert_eq!(parsed[0].group, 1);
+    assert_eq!(parsed[1].selected, Some(false));
+    assert_eq!((parsed[1].width, parsed[1].height), (10, 20));
+    // 属性が無い要素（他の種類）は group が -1、selected が None
+    assert_eq!(parsed[2].selected, None);
+    assert_eq!(parsed[2].group, -1);
+    assert_eq!(parsed[2].data_value, "");
+}
+
+// ───────── プライバシー ポリシー URL 欄 ─────────
+
+fn url_input(index: i32, label: &str) -> ElementInfo {
+    ElementInfo {
+        index,
+        tag: "input".to_string(),
+        r#type: "text".to_string(),
+        label: label.to_string(),
+        ..ElementInfo::default()
+    }
+}
+
+#[test]
+fn プライバシーポリシーurl欄はラベルの1行の完全一致で選ぶ() {
+    let p = JA.privacy.as_ref().unwrap();
+    // 実画面: aria-labelledby の参照先が「プライバシー ポリシーの URL」、祖先に「39/2,048」のカウンタ
+    let target = url_input(
+        2,
+        "プライバシー ポリシーの URL\nプライバシー ポリシーの URL\n39/2,048",
+    );
+    let other = url_input(1, "公式 URL");
+    let inputs = vec![other.clone(), target.clone()];
+    assert_eq!(find_policy_url_input(p, &inputs).unwrap().unwrap().index, 2);
+    // 空白の有無は区別しない
+    let tight = url_input(3, "プライバシーポリシーのURL");
+    assert_eq!(
+        find_policy_url_input(p, &[tight]).unwrap().unwrap().index,
+        3
+    );
+    // 無ければ None（欄が無い扱い）
+    assert!(find_policy_url_input(p, &[other]).unwrap().is_none());
+    // 説明文に含まれるだけの input は選ばない
+    let mention = url_input(4, "プライバシー ポリシーの URL を入力してください");
+    assert!(find_policy_url_input(p, &[mention]).unwrap().is_none());
+    // 複数なら止める
+    let twin = url_input(5, "プライバシー ポリシーの URL");
+    assert!(find_policy_url_input(p, &[target, twin]).is_err());
+}
+
+#[test]
+fn プライバシーポリシーurl欄の書き込み先の検査はinputだけを通す() {
+    let ok = url_input(1, "x");
+    assert!(ensure_privacy_url_writable(&ok, "プライバシー ポリシー URL").is_ok());
+    // textarea は通さない（textarea 用の検査を広げない）
+    let textarea = ElementInfo {
+        tag: "textarea".to_string(),
+        ..ElementInfo::default()
+    };
+    assert!(matches!(
+        ensure_privacy_url_writable(&textarea, "x"),
+        Err(Error::Dashboard(_))
+    ));
+    assert!(ensure_privacy_text_writable(&ok, "x").is_err());
+    // 編集できない欄は WriteBlocked
+    let locked = ElementInfo {
+        read_only: true,
+        ..url_input(1, "x")
+    };
+    assert!(matches!(
+        ensure_privacy_url_writable(&locked, "x"),
+        Err(Error::WriteBlocked(_))
+    ));
+    let disabled = ElementInfo {
+        disabled: true,
+        ..url_input(1, "x")
+    };
+    assert!(matches!(
+        ensure_privacy_url_writable(&disabled, "x"),
+        Err(Error::WriteBlocked(_))
+    ));
+}
+
+// ───────── カテゴリの読み取りが落ち着いているか ─────────
+
+fn category_combobox(shown: &str) -> ElementInfo {
+    ElementInfo {
+        index: 3,
+        tag: "div".to_string(),
+        label: "カテゴリ".to_string(),
+        text: format!("カテゴリ\nカテゴリ\nカテゴリ\n{shown}"),
+        ..ElementInfo::default()
+    }
+}
+
+/// 選択中の option の表示文言を設定したカテゴリの一覧
+fn category_page_with_text(selected: &str, shown: &str) -> Vec<ElementInfo> {
+    let mut options = category_page(selected, false);
+    for o in options
+        .iter_mut()
+        .filter(|o| o.selected == Some(true) && o.group == 1)
+    {
+        o.text = shown.to_string();
+    }
+    options
+}
+
+#[test]
+fn カテゴリの読み取りは表示値と選択中の文言が一致すれば落ち着いている() {
+    let c = category_text();
+    let options = category_page_with_text("CATEGORY_TOOLS", "ツール");
+    assert!(category_reading_is_stable(
+        c,
+        Some(&category_combobox("ツール")),
+        &options
+    ));
+    // 前後の空白は無視する
+    assert!(category_reading_is_stable(
+        c,
+        Some(&category_combobox(" ツール ")),
+        &options
+    ));
+    // コンボボックスが見つからないときは表示値の照合を省く
+    assert!(category_reading_is_stable(c, None, &options));
+}
+
+#[test]
+fn カテゴリの読み取りはプレースホルダーが選択中なら落ち着いていない() {
+    let c = category_text();
+    let options = category_page_with_text("Select a category", "カテゴリを選択してください");
+    assert!(!category_reading_is_stable(
+        c,
+        Some(&category_combobox("カテゴリを選択してください")),
+        &options
+    ));
+    assert!(!category_reading_is_stable(c, None, &options));
+}
+
+#[test]
+fn カテゴリの読み取りは表示値と選択中の文言が食い違えば落ち着いていない() {
+    let c = category_text();
+    let options = category_page_with_text("CATEGORY_TOOLS", "ツール");
+    assert!(!category_reading_is_stable(
+        c,
+        Some(&category_combobox("機能と UI")),
+        &options
+    ));
+}
+
+#[test]
+fn カテゴリの読み取りは選択中がちょうど1つでなければ落ち着いていない() {
+    let c = category_text();
+    let mut none = category_page_with_text("CATEGORY_TOOLS", "ツール");
+    for o in none.iter_mut() {
+        o.selected = Some(false);
+    }
+    assert!(!category_reading_is_stable(c, None, &none));
+    assert!(!category_reading_is_stable(c, None, &[]));
+}

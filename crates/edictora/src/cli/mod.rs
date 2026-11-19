@@ -6,6 +6,7 @@
 
 pub mod args;
 pub mod diff_formatter;
+pub mod relogin;
 
 use std::cell::RefCell;
 use std::io::Write;
@@ -19,6 +20,7 @@ use crate::dashboard::browser::{DashboardBrowser, DashboardBrowserOptions};
 use crate::error::{Error, Result};
 use crate::images::fetch::WinHttpImageFetcher;
 use crate::images::{self, ImageSlot, slot_label};
+use crate::listing::category;
 use crate::listing::{
     ComparisonStatus, ExpectedItem, ItemSnapshot, ListingField, build_expected,
     build_expected_images,
@@ -366,12 +368,39 @@ impl<'a> CliApp<'a> {
         config: &EdictoraConfig,
         cancel: &CancelToken,
     ) -> Result<DashboardBrowser> {
-        let mut browser =
-            (self.open_browser)(&self.browser_options(config, self.show_browser), cancel)?;
-        self.warn_profile_redirect(config);
-        // 失敗したら drop で閉じる（自分で起動した Chrome は Browser.close で正常終了させる）
-        browser.ensure_logged_in(cancel)?;
-        Ok(browser)
+        let warned = std::cell::Cell::new(false);
+        // 失敗したら drop で閉じる（自分で起動した Chrome は Browser.close で正常終了させる）。
+        // 再ログインが要るときは、表示つきの Chrome でログインを待ってから開き直す（1 回だけ）
+        relogin::open_with_relogin(
+            || {
+                let browser =
+                    (self.open_browser)(&self.browser_options(config, self.show_browser), cancel)?;
+                if !warned.replace(true) {
+                    self.warn_profile_redirect(config);
+                }
+                Ok(browser)
+            },
+            |browser| browser.ensure_logged_in(cancel),
+            || {
+                self.errln(trs!("cli.sign_in_required_opening_chrome_to_sign_in"));
+                log(
+                    "再ログインが必要なため、ログイン用の Chrome を表示して待ちます",
+                    LogLevel::Info,
+                );
+                let mut browser =
+                    (self.open_browser)(&self.browser_options(config, false).visible(), cancel)?;
+                let progress = self.progress();
+                let result = browser.wait_for_login(DEFAULT_LOGIN_WAIT, &progress, cancel);
+                browser.close();
+                result
+            },
+            |e| {
+                self.errln(&tr!(
+                    "cli.could_not_finish_signing_in",
+                    detail = redact(&e.message())
+                ));
+            },
+        )
     }
 
     fn pull(
@@ -388,7 +417,7 @@ impl<'a> CliApp<'a> {
 
         for expected in targets {
             let mut header_done = false;
-            if !expected.locales.is_empty() {
+            if expected.has_text() {
                 let snapshot = services::pull(&mut page, expected, &progress, cancel)?;
                 self.outln(&item_header(
                     expected,
@@ -460,6 +489,20 @@ impl<'a> CliApp<'a> {
                     self.outln(&format!("-- [{}] {}", locale.code, field.display_name()));
                 }
                 self.outln(&value);
+            }
+        }
+        // カテゴリ（全言語共通。ロケールの後に 1 回）
+        if let Some(read) = &snapshot.category {
+            let name = trs!("listing.category");
+            match read {
+                Ok(value) => {
+                    self.outln(&format!("-- {name}"));
+                    self.outln(&category::describe_value(value));
+                }
+                Err(message) => {
+                    failed = true;
+                    self.outln(&format!("-- {name} {}", error_line(message)));
+                }
             }
         }
         failed
@@ -562,7 +605,7 @@ impl<'a> CliApp<'a> {
 
         for expected in targets {
             let mut header_done = false;
-            if !expected.locales.is_empty() {
+            if expected.has_text() {
                 let (snapshot, rows) = services::diff(&mut page, expected, &progress, cancel)?;
                 self.outln(&item_header(
                     expected,
@@ -576,6 +619,15 @@ impl<'a> CliApp<'a> {
                     any_diff |= status == ComparisonStatus::Different;
                     any_error |= matches!(
                         status,
+                        ComparisonStatus::Error | ComparisonStatus::NotFetched
+                    );
+                }
+                // カテゴリ（全言語共通）の行
+                if let Some(row) = category::compare(expected, Some(&snapshot)) {
+                    self.out_raw(&category::describe(&row));
+                    any_diff |= row.status == ComparisonStatus::Different;
+                    any_error |= matches!(
+                        row.status,
                         ComparisonStatus::Error | ComparisonStatus::NotFetched
                     );
                 }
@@ -655,9 +707,17 @@ impl<'a> CliApp<'a> {
 
         // 1 件でも失敗したら残りは行わない（エラーがそのまま run へ上がる）
         for expected in targets {
-            if !expected.locales.is_empty() {
+            if expected.has_text() {
                 let result = services::push(&mut page, expected, &progress, cancel)?;
                 self.outln(&item_title(&result.item_name, &result.item_id));
+                if let Some(key) = &expected.category {
+                    let line = if result.category_updated {
+                        tr!("cli.category_saved_as_draft_and_verified", value = key)
+                    } else {
+                        trs!("cli.category_no_changes").to_string()
+                    };
+                    self.outln(&line);
+                }
                 for locale in &result.locales {
                     let line = if locale.outcome == LocalePushOutcome::Saved {
                         let names: Vec<&str> = locale
@@ -683,7 +743,7 @@ impl<'a> CliApp<'a> {
             if expected.has_images() {
                 let result =
                     services::push_images(&mut page, &fetcher, expected, &progress, cancel)?;
-                if expected.locales.is_empty() {
+                if !expected.has_text() {
                     self.outln(&item_title(&result.item_name, &result.item_id));
                 }
                 for label in &result.saved {
@@ -699,7 +759,7 @@ impl<'a> CliApp<'a> {
             // 「プライバシー」タブは、テキスト・画像の保存・照合が終わってから（別の保存として行う）
             if expected.has_privacy() {
                 let result = services::push_privacy(&mut page, expected, &progress, cancel)?;
-                if expected.locales.is_empty() && !expected.has_images() {
+                if !expected.has_text() && !expected.has_images() {
                     self.outln(&item_title(&result.item_name, &result.item_id));
                 }
                 if result.updated.is_empty() {
@@ -788,7 +848,9 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
     let codes = &command.locale_codes;
     let mut result = Vec::new();
     for item in items {
-        let want_text = command.only.text() && !item.locales.is_empty();
+        // カテゴリだけを書いたアイテムも、テキスト（--only text）の対象にする
+        let want_text =
+            command.only.text() && (!item.locales.is_empty() || item.category.is_some());
         let want_images = command.only.images() && item.images.is_some();
         // 「プライバシー」タブは全言語共通なので、--locale では絞らない（全言語向けの画像と同じ）
         let want_privacy = command.only.privacy() && item.privacy.is_some();
@@ -845,6 +907,7 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
                 item_id: item.item_id.clone(),
                 display_name: item.display_name.clone(),
                 locales: Vec::new(),
+                category: None,
                 images: None,
                 privacy: None,
             }
@@ -857,8 +920,7 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
             expected.privacy = privacy::build_expected(item)?;
         }
 
-        let has_work =
-            !expected.locales.is_empty() || expected.has_images() || expected.has_privacy();
+        let has_work = expected.has_text() || expected.has_images() || expected.has_privacy();
         if !has_work {
             if explicit {
                 return Err(Error::Config(tr!(

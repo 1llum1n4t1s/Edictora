@@ -120,3 +120,19 @@ fn チェックボックスの収集はダイアログの外だけで_クリッ�
     // 押すのは CDP の実際のマウス入力（ページ内スクリプトから .click() しない）
     assert!(!BUNDLE.contains(".click()"));
 }
+
+#[test]
+fn 一覧の選択肢の収集は閉じた一覧の要素も含み情報を返すだけ() {
+    use edictora::dashboard::page_scripts::kinds;
+    assert_eq!(kinds::LISTBOX_OPTION, "listboxOption");
+    let e = collect(&JA, kinds::LISTBOX_OPTION);
+    assert!(e.contains("collect(\"listboxOption\")"));
+    // ページ側: 種類の定義・選択肢の情報（data-value・aria-selected・一覧の通し番号）を持ち、可視性で絞らない
+    assert!(BUNDLE.contains("listboxOption"));
+    assert!(BUNDLE.contains("data-value"));
+    assert!(BUNDLE.contains("aria-selected"));
+    assert!(BUNDLE.contains("dataValue"));
+    // どの選択肢を選ぶかの判断をページ側に持たない（カテゴリの文言・キーを埋め込まない）
+    assert!(!BUNDLE.contains("カテゴリ"));
+    assert!(!BUNDLE.contains("CATEGORY_"));
+}

@@ -32,6 +32,13 @@ struct FakeListingPage {
     switch_error: Option<(String, String)>,
     /// capture_diagnostics が返す保存先（None なら保存できなかった扱い）
     shot: Option<String>,
+    /// カテゴリ（全言語共通）の保存済みの `data-value` と、編集中（未保存）の値
+    saved_category: String,
+    editing_category: String,
+    /// カテゴリの読み出しが返す Dashboard エラー
+    category_read_error: Option<String>,
+    /// カテゴリの書き込み時に別の選択肢にしてしまう（照合失敗の再現用）
+    corrupt_category: bool,
 }
 
 impl FakeListingPage {
@@ -55,6 +62,7 @@ impl EditorPage for FakeListingPage {
             return Err(Error::Dashboard(m.clone()));
         }
         self.editing = self.saved.clone();
+        self.editing_category = self.saved_category.clone();
         self.current_locale = self.saved.first().map(|(c, _)| c.clone());
         Ok(())
     }
@@ -62,6 +70,7 @@ impl EditorPage for FakeListingPage {
     fn reload(&mut self, _: &CancelToken) -> edictora::Result<()> {
         self.log.push("reload".to_string());
         self.editing = self.saved.clone();
+        self.editing_category = self.saved_category.clone();
         self.current_locale = self.saved.first().map(|(c, _)| c.clone());
         Ok(())
     }
@@ -96,6 +105,7 @@ impl EditorPage for FakeListingPage {
         let code = self.current_locale.clone().unwrap();
         let values = Self::find(&mut self.editing, &code).clone();
         *Self::find(&mut self.saved, &code) = values;
+        self.saved_category = self.editing_category.clone();
         Ok(())
     }
 
@@ -136,6 +146,24 @@ impl ListingPage for FakeListingPage {
         Ok(())
     }
 
+    fn read_category(&mut self, _: &CancelToken) -> edictora::Result<String> {
+        self.log.push("read-category".to_string());
+        if let Some(m) = &self.category_read_error {
+            return Err(Error::Dashboard(m.clone()));
+        }
+        Ok(self.editing_category.clone())
+    }
+
+    fn write_category(&mut self, data_value: &str, _: &CancelToken) -> edictora::Result<()> {
+        self.log.push(format!("write-category {data_value}"));
+        self.editing_category = if self.corrupt_category {
+            "CATEGORY_GAMES".to_string()
+        } else {
+            data_value.to_string()
+        };
+        Ok(())
+    }
+
     fn submit_for_review(
         &mut self,
         confirm: &mut SubmitConfirm<'_>,
@@ -169,6 +197,7 @@ fn expected() -> ExpectedItem {
     ExpectedItem {
         item_id: ITEM.to_string(),
         display_name: "テスト".to_string(),
+        category: None,
         locales: vec![
             ExpectedLocale::new("en", values(&[(ListingField::Description, "New EN")])),
             ExpectedLocale::new(
@@ -211,7 +240,30 @@ fn page() -> FakeListingPage {
         open_error: None,
         switch_error: None,
         shot: None,
+        saved_category: "CATEGORY_TOOLS".to_string(),
+        editing_category: String::new(),
+        category_read_error: None,
+        corrupt_category: false,
     }
+}
+
+/// カテゴリ `productivity` を正本に持つアイテム（ロケールは 2 つ）
+fn expected_with_category() -> ExpectedItem {
+    ExpectedItem {
+        category: Some("productivity".to_string()),
+        ..expected()
+    }
+}
+
+fn count(page: &FakeListingPage, prefix: &str) -> usize {
+    page.log.iter().filter(|l| l.starts_with(prefix)).count()
+}
+
+fn position(page: &FakeListingPage, entry: &str) -> usize {
+    page.log
+        .iter()
+        .position(|l| l.starts_with(entry))
+        .unwrap_or_else(|| panic!("{entry} が記録に無い: {:?}", page.log))
 }
 
 fn no_progress(_: &str) {}
@@ -481,5 +533,217 @@ fn pull_成功したときは画面を保存しない() {
         !page.log.iter().any(|l| l.starts_with("capture")),
         "{:?}",
         page.log
+    );
+}
+
+// ───────── カテゴリ（全言語共通の欄）─────────
+
+#[test]
+fn push_カテゴリの差分はロケールのループの外で1回だけ書き保存し読み直して照合する() {
+    let mut page = page();
+
+    let result = services::push(
+        &mut page,
+        &expected_with_category(),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+
+    assert!(result.category_updated);
+    assert_eq!(page.saved_category, "CATEGORY_PRODUCTIVITY");
+    // 書き込みは正本の data-value で 1 回だけ（ロケールごとに繰り返さない）
+    assert_eq!(count(&page, "write-category"), 1);
+    assert_eq!(
+        page.log
+            .iter()
+            .filter(|l| *l == "write-category CATEGORY_PRODUCTIVITY")
+            .count(),
+        1
+    );
+    // カテゴリの保存・読み直し・照合が、最初のロケールの切替より前に済む
+    let first_switch = position(&page, "switch");
+    let write = position(&page, "write-category");
+    let first_save = position(&page, "save");
+    let first_reload = position(&page, "reload");
+    assert!(write < first_save && first_save < first_reload && first_reload < first_switch);
+    // 読み直した後にカテゴリを照合している
+    assert!(
+        page.log[first_reload..first_switch]
+            .iter()
+            .any(|l| l == "read-category")
+    );
+}
+
+#[test]
+fn push_カテゴリが一致していれば書かず保存もしない() {
+    let mut page = page();
+    page.saved_category = "CATEGORY_PRODUCTIVITY".to_string();
+    // ロケールも一致させ、カテゴリだけが対象のときの無駄な保存が無いことを見る
+    let item = ExpectedItem {
+        locales: Vec::new(),
+        ..expected_with_category()
+    };
+
+    let result = services::push(&mut page, &item, &no_progress, &CancelToken::new()).unwrap();
+
+    assert!(!result.category_updated);
+    assert!(!wrote_or_saved(&page));
+    assert_eq!(count(&page, "write-category"), 0);
+}
+
+#[test]
+fn push_カテゴリだけのアイテムでも書いて保存する() {
+    let mut page = page();
+    let item = ExpectedItem {
+        locales: Vec::new(),
+        ..expected_with_category()
+    };
+
+    let result = services::push(&mut page, &item, &no_progress, &CancelToken::new()).unwrap();
+
+    assert!(result.category_updated);
+    assert!(result.locales.is_empty());
+    assert_eq!(page.saved_category, "CATEGORY_PRODUCTIVITY");
+    assert_eq!(count(&page, "switch"), 0);
+}
+
+#[test]
+fn push_カテゴリの書き込み後の値が違えば保存しない() {
+    let mut page = page();
+    page.corrupt_category = true;
+
+    let err = services::push(
+        &mut page,
+        &expected_with_category(),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, Error::Dashboard(_)));
+    assert_eq!(count(&page, "save"), 0);
+    // ロケールには進まない
+    assert_eq!(count(&page, "write en"), 0);
+}
+
+#[test]
+fn push_ダッシュボードに無いロケールがあればカテゴリも書かない() {
+    let mut page = page();
+    let mut item = expected_with_category();
+    item.locales.push(ExpectedLocale::new(
+        "fr",
+        values(&[(ListingField::Description, "x")]),
+    ));
+
+    let err = services::push(&mut page, &item, &no_progress, &CancelToken::new()).unwrap_err();
+
+    assert!(matches!(err, Error::Dashboard(_)));
+    assert_eq!(count(&page, "write-category"), 0);
+    assert!(!wrote_or_saved(&page));
+}
+
+#[test]
+fn push_審査待ちならカテゴリも書かない() {
+    let mut page = page();
+    page.status = "審査待ち".to_string();
+
+    let err = services::push(
+        &mut page,
+        &expected_with_category(),
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, Error::WriteBlocked(_)));
+    assert_eq!(count(&page, "write-category"), 0);
+}
+
+#[test]
+fn diff_カテゴリの差分行を返し読み取りだけで済む() {
+    let mut page = page();
+    let item = expected_with_category();
+
+    let (snapshot, _) =
+        services::diff(&mut page, &item, &no_progress, &CancelToken::new()).unwrap();
+    let row = category::compare(&item, Some(&snapshot)).expect("カテゴリの行");
+
+    assert_eq!(row.status, ComparisonStatus::Different);
+    assert_eq!(row.current.as_deref(), Some("tools"));
+    assert_eq!(row.expected, "productivity");
+    assert!(!wrote_or_saved(&page));
+    assert_eq!(count(&page, "read-category"), 1);
+}
+
+#[test]
+fn diff_カテゴリが一致なら一致の行() {
+    let mut page = page();
+    page.saved_category = "CATEGORY_PRODUCTIVITY".to_string();
+    let item = expected_with_category();
+
+    let (snapshot, _) =
+        services::diff(&mut page, &item, &no_progress, &CancelToken::new()).unwrap();
+
+    let row = category::compare(&item, Some(&snapshot)).unwrap();
+    assert_eq!(row.status, ComparisonStatus::Match);
+}
+
+#[test]
+fn diff_カテゴリの読み出し失敗はこの欄だけのエラーでロケールは読み続ける() {
+    let mut page = page();
+    page.category_read_error = Some("選択肢が見つかりません".to_string());
+    let item = expected_with_category();
+
+    let (snapshot, rows) =
+        services::diff(&mut page, &item, &no_progress, &CancelToken::new()).unwrap();
+
+    let row = category::compare(&item, Some(&snapshot)).unwrap();
+    assert_eq!(row.status, ComparisonStatus::Error);
+    assert!(row.error.unwrap().contains("選択肢が見つかりません"));
+    // ロケールは読めている
+    assert_eq!(
+        rows.iter().find(|r| r.locale == "ja").unwrap().status(),
+        ComparisonStatus::Match
+    );
+}
+
+#[test]
+fn カテゴリを書いていなければ読まず比較行も無い() {
+    let mut page = page();
+    let item = expected();
+
+    let (snapshot, _) =
+        services::diff(&mut page, &item, &no_progress, &CancelToken::new()).unwrap();
+
+    assert_eq!(count(&page, "read-category"), 0);
+    assert!(snapshot.category.is_none());
+    assert!(category::compare(&item, Some(&snapshot)).is_none());
+}
+
+#[test]
+fn カテゴリの対応表は21件で往復でき_プレースホルダーは正本にできない() {
+    assert_eq!(category::CATEGORIES.len(), 21);
+    for (key, value) in category::CATEGORIES {
+        assert_eq!(category::data_value_of(key), Some(value));
+        assert_eq!(category::key_of(value), Some(key));
+        assert!(!key.contains(char::is_uppercase));
+        assert!(value.starts_with("CATEGORY_"));
+    }
+    assert_eq!(
+        category::data_value_of("art_and_design"),
+        Some("CATEGORY_EXTENSIONS_ART_AND_DESIGN")
+    );
+    assert_eq!(
+        category::data_value_of("entertainment"),
+        Some("CATEGORY_EXTENSIONS_ENTERTAINMENT")
+    );
+    assert_eq!(category::data_value_of(category::PLACEHOLDER_VALUE), None);
+    assert_eq!(category::data_value_of("Productivity"), None);
+    assert_eq!(category::key_of(category::PLACEHOLDER_VALUE), None);
+    // 未知の data-value はそのまま表示する
+    assert_eq!(
+        category::describe_value("CATEGORY_NEW_ONE"),
+        "CATEGORY_NEW_ONE"
     );
 }

@@ -31,7 +31,8 @@ type Kind =
   | "checkbox"
   | "fileInput"
   | "slotImage"
-  | "imageButton";
+  | "imageButton"
+  | "listboxOption";
 
 /** 画像 1 枚の情報（alt と src。Rust 側の PageImage に対応） */
 interface ImageInfo {
@@ -58,6 +59,12 @@ interface ElementInfo {
   /** slotImage / imageButton のみ: 枠の大きさ（ホバーで現れるボタンが出たかの判定に使う） */
   width?: number;
   height?: number;
+  /** listboxOption のみ: data-value 属性（無ければ空） */
+  dataValue?: string;
+  /** listboxOption のみ: aria-selected の値（"true"/"false"、属性が無ければ null） */
+  selected?: string | null;
+  /** listboxOption のみ: 所属する [role=listbox] のページ内の通し番号（属さなければ -1） */
+  group?: number;
 }
 
 /**
@@ -193,6 +200,9 @@ function createApi(): EdictoraApi {
     // slotImage / imageButton は collectSlot で集める（単独では空）
     slotImage: () => [],
     imageButton: () => [],
+    // 一覧の選択肢は、閉じていて見えないものも含めてすべて集める（カテゴリの現在値を、一覧を開かずに読むため。
+    // 2026-11-19 の実画面: 閉じた一覧は枠が 0×0 だが li[role=option] は全部 DOM にある）。どの一覧のものかは Rust 側で選ぶ
+    listboxOption: () => [...document.querySelectorAll("[role=option]")],
   };
 
   // 画像アセットの入力（input[type=file]）。非表示でも集める（実画面では 0 幅のものがある）。
@@ -283,6 +293,42 @@ function createApi(): EdictoraApi {
     };
   };
 
+  // listboxOption 用。ラベルは所属する一覧の aria-label / aria-labelledby（祖先の文字列は混ぜない）、
+  // 枠の大きさは一覧のもの（開いたかの判定に使う）。選ぶ判断は Rust 側（selectors.rs のカテゴリの関数）
+  const optionInfo = (el: Element, i: number): ElementInfo => {
+    const lists = [...document.querySelectorAll("[role=listbox]")];
+    const list = el.closest("[role=listbox]");
+    const r = (list || el).getBoundingClientRect();
+    const parts: string[] = [];
+    if (list) {
+      const al = list.getAttribute("aria-label");
+      if (al) parts.push(al);
+      const lb = list.getAttribute("aria-labelledby");
+      if (lb) {
+        for (const id of lb.split(/\s+/)) {
+          const t = document.getElementById(id);
+          if (t) parts.push(text(t));
+        }
+      }
+    }
+    return {
+      index: i,
+      tag: el.tagName.toLowerCase(),
+      text: text(el),
+      label: parts.join("\n"),
+      disabled: el.getAttribute("aria-disabled") === "true",
+      readOnly: false,
+      type: "",
+      expanded: null,
+      checked: null,
+      dataValue: el.getAttribute("data-value") || "",
+      selected: el.getAttribute("aria-selected"),
+      group: list ? lists.indexOf(list) : -1,
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    };
+  };
+
   const get = (kind: Kind, i: number): FormLike => {
     const el = (store[kind] || [])[i];
     // 文は Rust 側で作る（selectors.rs の ELEMENT_GONE_MARKER と同じ印）
@@ -294,7 +340,7 @@ function createApi(): EdictoraApi {
     collect: (kind) => {
       const els = sources[kind]();
       store[kind] = els;
-      return kind === "fileInput" ? els.map(fileInfo) : els.map(info);
+      return kind === "fileInput" ? els.map(fileInfo) : kind === "listboxOption" ? els.map(optionInfo) : els.map(info);
     },
     collectSlot: (kind, slotIndex) => {
       const input = (store.fileInput || [])[slotIndex];
