@@ -63,7 +63,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **AI エージェントは edictora を `--show-browser` 付きで実行しない**（利用者の画面にウィンドウが出る。2026-11-15 に実際に起きた）。原因調査はエラー文と diagnostics の画面で行う。「覆われていて押せません」のエラー文には、中心にあった要素・要素の枠・画面の大きさを含める（`selectors::covered_error_message`）。
 - **自動更新（Velopack）**: インストール・差し替え・アンインストールは Velopack の Setup.exe / Update.exe に任せ、Edictora は更新の確認とダウンロードだけを自前で行う（velopack crate は使わない）。約束（フック引数・`sq.version`・`releases.{channel}.json`・`.partial` → 検証 → 改名・`apply --package … --waitPid <自分> --silent --norestart --root … --packageDir …`）は vendored の Velopack 1.2.161 Rust SDK に合わせ、推測で変えない。SDK との意図的な違いは DESIGN.md「配布・インストール・自動更新」。
 - **フックは引数の解釈より前に処理して必ず 0 で終える**（`edictora.exe`・`edictora-updater.exe` の両方）。install / updated で HKCU の Run に更新用 exe、ユーザー PATH に `<根>\current` を登録し、uninstall で取り除く。名前と要素は根から決める。PATH は型と他の要素を壊さない。インストール先から起動されていなければレジストリに触れない。テストは RegLoadAppKeyW の専用ハイブを使い、実際の Run・PATH に触れない。
-- **Chrome を開くコマンドの実行中は更新を適用しない**（契約）。Update.exe の apply はインストール先配下のプロセスを止める可能性があり、push の途中で落とされると書き込みの安全策が崩れるため。login / pull / diff / push / submit は、設定の検証の後・ブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`）を共有で持つ（開けないだけなら続行）。更新側（`edictora update`・`edictora-updater.exe`）はダウンロードと検証の後、Update.exe を起動する直前にこれを排他で取り、取れなければ適用せず `AppInUse`（`update` は終了コード 1、更新用 exe は間を空けて試し直す）。取れたらプロセスの終了まで持つ。適用中に Chrome を開くコマンド（MCP サーバーを含む）を実行したら、Chrome を開かずに終了コード 1。`update` 自身はこのロックを持たない。更新プロセスの終了から差し替えまでの数秒の隙間は塞げない。Run の同名の値が「別の場所に実在する」更新用 exe を指すときだけ上書きしない（指す先が消えた古い登録は上書きする）
+- **Chrome を開くコマンドの実行中は更新を適用しない**（契約）。apply がインストール先配下のプロセスを止め、push の途中で落ちると書き込みの安全策が崩れるため。login / pull / diff / push / submit は、設定の検証の後・ブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`）を共有で持つ（開けないだけなら続行）。更新側（`edictora update`・`edictora-updater.exe`）はダウンロードと検証の後、Update.exe を起動する直前にこれを排他で取り、取れなければ適用せず `AppInUse`（`update` は終了コード 1、更新用 exe は間を空けて試し直す）。取れたらプロセスの終了まで持つ。適用中に Chrome を開くコマンド（MCP サーバーを含む）を実行したら、Chrome を開かずに終了コード 1。`update` 自身はこのロックを持たず、更新プロセスの終了から差し替えまでの数秒の隙間は塞げない。Run の同名の値が「別の場所に実在する」更新用 exe を指すときだけ上書きしない（指す先が消えた古い登録は上書きする）
 - **Portable 版（根に `.portable`）では install / updated フックで Run・PATH を登録しない**（手動の `edictora update` は使える）。Run の値は名前だけで扱わない: 削除は現在の値が自分の値と一致するときだけ、同じ名前の値が別の場所の更新用 exe を指していれば上書きせず警告をログへ残す
 - **更新は `edictora update` とログオン時の `edictora-updater.exe` だけ**。pull / diff / push / submit の中では確かめない。`update` は設定を読まず Chrome を開かない。検証（サイズと SHA256、無ければ SHA1）に通らないパッケージは適用しない。配信元は定数 `https://edictora.kagayoi.com`、検証用に `EDICTORA_UPDATE_URL`（平文は 127.0.0.1 だけ）。テストで本物の配信元・Update.exe を使わない（127.0.0.1 の偽配信元と偽の `ApplyLauncher`、CLI は偽の更新処理）。
 
@@ -80,7 +80,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 ## コーディング規約
 
 - コメント・コミットメッセージは **日本語**。コメントは目的・設計意図・制約を多めに書く
-- 人が読む文言（CLI の進捗・結果・エラー、差分、ヘルプ）は 9 言語（ja・en・zh-CN・zh-TW・ko・es・fr・de・pt-BR）で、`crates/edictora/src/locales/<タグ>.json` の辞書に持ち、`tr!("キー", 名前 = 値)` / `trs!("キー")`（`i18n.rs`）で参照する。プレースホルダーは `{name}` で全言語同じ集合、辞書に無いキーは英語。表示言語は `EDICTORA_LANGUAGE`（旧名 `EDICTORA_LANG`）→ `LC_ALL` → `LC_MESSAGES` → `LANG` → OS の表示言語 → 英語。**人が読む文言を足したら、9 言語の辞書を同時に更新し、整合テスト（`tests/localization.rs`）を通す**。`cargo test` は `.cargo/config.toml` で `EDICTORA_LANGUAGE=ja` に固定される。AI が読む文言（MCP のツール名・説明・スキーマ・応答とエラー）は英語に統一し辞書を通さない。利用者のデータ（掲載文）と識別子・コマンド・設定キー・OS や外部 API のエラー原文は訳さない。ログの定型文は日本語のまま。ダッシュボードの画面文言（`dashboard/text.rs`）と設定の `locales`（ストアの掲載言語）は UI 言語とは別。**README は英語の `README.md` を正本とし、`README.<タグ>.md`（ja・zh-CN・zh-TW・ko・es・fr・de・pt-BR）を置く。README を変えたら全言語版を同時に直す**。リリースのパッケージに同梱するのは英語の `README.md` だけ
+- 人が読む文言（CLI の進捗・結果・エラー、差分、ヘルプ）は 9 言語（ja・en・zh-CN・zh-TW・ko・es・fr・de・pt-BR）で、`crates/edictora/src/locales/<タグ>.json` の辞書に持ち、`tr!("キー", 名前 = 値)` / `trs!("キー")`（`i18n.rs`）で参照する。プレースホルダーは `{name}` で全言語同じ集合、辞書に無いキーは英語。表示言語は `EDICTORA_LANGUAGE`（旧名 `EDICTORA_LANG`）→ `LC_ALL` → `LC_MESSAGES` → `LANG` → OS の表示言語 → 英語。**人が読む文言を足したら、9 言語の辞書を同時に更新し、整合テスト（`tests/localization.rs`）を通す**。`cargo test` は `.cargo/config.toml` で `EDICTORA_LANGUAGE=ja` に固定される。AI が読む文言（MCP のツール名・説明・スキーマ・応答とエラー）は英語に統一し辞書を通さない。利用者のデータ（掲載文）と識別子・コマンド・設定キー・OS や外部 API のエラー原文は訳さない。ログの定型文は日本語のまま。ダッシュボードの画面文言（`dashboard/text.rs`）と設定の `locales` は UI 言語とは別。**README は英語の `README.md` を正本とし、`README.<タグ>.md`（ja・zh-CN・zh-TW・ko・es・fr・de・pt-BR）を置く。README を変えたら全言語版を同時に直す**。リリースのパッケージに同梱するのは英語の `README.md` だけ
 - 依存は最小限（`serde` / `serde_json` / `regex` / `tungstenite`（同期・TLS なし・`handshake` のみ）、テスト専用に `sha2`）。HTTP/TLS crate は使わない（DevTools の確認は localhost への素の HTTP/1.1）。**外部への HTTPS（自動更新の `edictora.kagayoi.com`、画像の原本）は、crate を足さず WinHTTP を FFI で直接使い、`net/winhttp.rs` に集める**（リダイレクト無効・操作ごとのタイムアウトと全体の期限・ワーカースレッドで実行し Ctrl+C で抜ける・応答の上限・平文は 127.0.0.1 のテストだけ）。Ctrl+C・レジストリ・ローカル時刻・環境変数展開・ハッシュ（CNG）・WM_SETTINGCHANGE は Windows API を直接宣言して使う
 - CDP は入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答待ちの間もイベントを配る
 - `AppPaths` は値として注入する。テストは `target/tmp` 配下を根にし、実プロファイル・実設定を解決しない。CLI のテストはブラウザを開く関数に「呼ばれたら panic」を渡す
@@ -105,14 +105,13 @@ cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
 
 ## 既知の制約 / 今後の課題
 
-- 実画面で確認済み: `pull` / `diff`（ヘッドレス）、2026-11-15 の 9 言語アイテムでの `push`（説明欄）と `submit`、ステータス「拒否」での書き込み、掲載画像の読み出しと全言語向け画像の `push`（画素比較へ変えた後の置換を伴う実行は未実施。DESIGN.md「実画面での確認状況」）。画像の規格外アップロード時のエラー表示とローカライズ版の書き込み、Ctrl+C での中断、beforeunload の扱いは未確認
-- 2026-11-18 に「プライバシー」タブを実画面（公開済み・下書きあり）で `diff`・`push`・不整合の設定での停止を確認。宣誓チェックの付け直し・リモートコードの欄・審査待ちでの書き込み拒否は未確認（DESIGN.md「実画面での確認状況」）
+- 実画面で確認済み: `pull` / `diff`（ヘッドレス）、9 言語アイテムでの `push`（説明欄）と `submit`、ステータス「拒否」での書き込み、掲載画像の読み出しと全言語向け画像の `push`（画素比較へ変えた後の置換を伴う実行は未実施）。未確認: 画像の規格外アップロード時のエラー表示、ローカライズ版の書き込み、Ctrl+C での中断、beforeunload の扱い。詳細は DESIGN.md「実画面での確認状況」
+- 「プライバシー」タブは実画面で `diff`・`push`・不整合の設定での停止を確認済み。宣誓チェックの付け直し・リモートコードの欄・審査待ちでの書き込み拒否は未確認（DESIGN.md「実画面での確認状況」）
 - 未確認の画面状態: 審査待ちアイテムの編集画面、URL 欄の書き換えと保存、言語が 1 つだけのアイテム。`write_gate.rs` の許可リストは実画面の表記で確かめて更新する
 - **「拒否」を許可したことの未確認のリスク**: 拒否のアイテムを再提出した直後も表記は「拒否」のままだった。審査中でも「拒否」と出続けるなら、審査中のアイテムに書き込めてしまう。再提出後の表記を実画面で確かめるまで、拒否のアイテムへの push は利用者の確認のうえで行う
-- MCP の未確認: 実画面での操作、`notifications/cancelled` での中断、本物の Update.exe で「待機中の MCP があると適用を見送る」こと、本物の `claude` / `codex` CLI での自動登録・解除（`mcp get` の出力に exe のパスがそのまま出るか、`mcp get` が健康診断でサーバーを起動するか）、`codex mcp add` の書式
+- MCP の未確認: 実画面での操作、`notifications/cancelled` での中断、本物の Update.exe での「待機中の MCP があると適用を見送る」動作、本物の `claude` / `codex` CLI での自動登録・解除（`mcp get` の出力形式と健康診断の挙動、`codex mcp add` の書式）
 - exe にアイコンとバージョン情報のリソースがまだ無い
-- 自動更新の結合は、検証用 packId `EdictoraTest` で実機確認済み（DESIGN.md「実画面での確認状況」）。未確認: 実署名での一連、R2 への実配信、本番の HTTPS、本番 packId `Edictora` での Setup、Portable 版の一連、Setup 直後の初回起動の見え方、実行中ロックで適用を後に回す動作の実機確認。nupkg 内の `Squirrel.exe` で Update.exe を差し替える処理（SDK にある）は持たない
-- 配信先の R2 bucket `edictora-updates` と `https://edictora.kagayoi.com` は作成済み。初回配信の前に HTTPS で接続できることを確かめる
+- 自動更新の結合は、検証用 packId `EdictoraTest` で実機確認済み（DESIGN.md「実画面での確認状況」）。未確認: 実署名での一連、R2 への実配信、本番の HTTPS、本番 packId `Edictora` での Setup、Portable 版の一連、Setup 直後の初回起動の見え方、実行中ロックで適用を後に回す動作。nupkg 内の `Squirrel.exe` で Update.exe を差し替える処理（SDK にある）は持たない
 
 ## リリース
 
