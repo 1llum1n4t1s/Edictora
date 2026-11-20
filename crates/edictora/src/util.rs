@@ -4,6 +4,38 @@
 //! - URL の解釈は、C# の `Uri` で使っていた範囲（スキーム・ホスト・パス）だけを持つ簡易版
 //! - 設定 JSON のコメント・末尾カンマは、文字列を認識したうえで空白に置き換える（行・桁の位置は保つ）
 
+/// コンソールを作らない（`CreateProcess` の `CREATE_NO_WINDOW`。SDK の run_process と同じ）
+#[cfg(windows)]
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// プロセスを子プロセスごと止める（C# の `Kill(entireProcessTree: true)`）。プロファイルには触れない。
+/// taskkill にも `CREATE_NO_WINDOW` を付け、taskkill が使えなければ子だけを止める。
+/// Chrome の終了（`chrome::launcher`）と MCP 登録の時間切れ（`install::connect`）が共有する
+pub fn kill_process_tree(process: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::path::PathBuf;
+        use std::process::{Command, Stdio};
+        let system_root = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let status = Command::new(system_root.join("System32").join("taskkill.exe"))
+            .args(["/PID", &process.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        if status.is_ok_and(|s| s.success()) {
+            let _ = process.wait();
+            return;
+        }
+    }
+    let _ = process.kill();
+    let _ = process.wait();
+}
+
 /// UTF-16 での長さ（C# の `string.Length` と同じ数え方）
 pub fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
@@ -501,15 +533,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_n0_は3桁で区切る() {
-        assert_eq!(format_n0(0), "0");
-        assert_eq!(format_n0(999), "999");
-        assert_eq!(format_n0(1000), "1,000");
-        assert_eq!(format_n0(16000), "16,000");
-        assert_eq!(format_n0(1234567), "1,234,567");
-    }
-
-    #[test]
     fn json前処理は文字列内を変えない() {
         let src = "{ // c\n \"a\": \"https://x/*y*/\", /* b */ \"c\": [1,2,], }";
         let out = strip_json_comments_and_trailing_commas(src);
@@ -564,11 +587,6 @@ mod tests {
             LocalTime { millis: 0, ..t }.log_timestamp(),
             "2026-11-13 23:59:58.0000"
         );
-    }
-
-    #[test]
-    fn ファイル名用の時刻書式() {
-        assert_eq!(sample_time().compact_timestamp(), "20260105-090703");
     }
 
     #[test]

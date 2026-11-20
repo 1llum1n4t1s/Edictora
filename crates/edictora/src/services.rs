@@ -13,6 +13,8 @@
 //! 「プライバシー」タブ（`pull_privacy` / `diff_privacy` / `push_privacy`）も同じ作りで、画面操作は [`PrivacyPage`] だけを受け取る
 //! （審査送信は持たない）。
 
+use std::collections::HashMap;
+
 use crate::cancel::CancelToken;
 use crate::dashboard::write_gate::ensure_allowed;
 use crate::dashboard::{
@@ -83,15 +85,15 @@ pub fn pull(
         Ok(s) => Ok(s),
         Err(Error::LoginRequired) => Err(Error::LoginRequired),
         Err(e) if e.is_dashboard() => {
-            let shot = capture_read_failure(page, &expected.item_id, None, progress);
-            log(
-                &format!(
-                    "読み出し失敗 {}: {}{}",
-                    expected.item_id,
-                    e,
-                    log_shot_suffix(&shot)
-                ),
-                LogLevel::Warning,
+            // 結果は標準出力へ出るので、エラー文中のダッシュボード URL の publisherId を伏せる
+            // （ログと同じ redact。欄の値や差分本文には掛けない）
+            let error = read_failure_text(
+                page,
+                &expected.item_id,
+                None,
+                &format!("読み出し失敗 {}", expected.item_id),
+                &e,
+                progress,
             );
             Ok(ItemSnapshot {
                 item_id: expected.item_id.clone(),
@@ -99,9 +101,7 @@ pub fn pull(
                 available_locales: Vec::new(),
                 locales: Vec::new(),
                 category: None,
-                // 結果は標準出力へ出るので、エラー文中のダッシュボード URL の publisherId を伏せる
-                // （ログと同じ redact。欄の値や差分本文には掛けない）
-                error: Some(redact(&format!("{}{}", e.message(), shot_suffix(&shot)))),
+                error: Some(error),
             })
         }
         Err(e) => Err(e),
@@ -127,27 +127,14 @@ fn pull_core(
         ));
         match page.read_category(cancel) {
             Ok(value) => Some(Ok(value)),
-            Err(e) if e.is_dashboard() => {
-                let shot = if e == Error::LoginRequired {
-                    None
-                } else {
-                    capture_read_failure(page, &expected.item_id, Some("category"), progress)
-                };
-                log(
-                    &format!(
-                        "カテゴリの読み出し失敗 {}: {}{}",
-                        expected.item_id,
-                        e,
-                        log_shot_suffix(&shot)
-                    ),
-                    LogLevel::Warning,
-                );
-                Some(Err(redact(&format!(
-                    "{}{}",
-                    e.message(),
-                    shot_suffix(&shot)
-                ))))
-            }
+            Err(e) if e.is_dashboard() => Some(Err(read_failure_text(
+                page,
+                &expected.item_id,
+                Some("category"),
+                &format!("カテゴリの読み出し失敗 {}", expected.item_id),
+                &e,
+                progress,
+            ))),
             Err(e) => return Err(e),
         }
     } else {
@@ -181,27 +168,15 @@ fn pull_core(
             Ok(values) => locales.push(LocaleSnapshot::ok(&locale.code, values)),
             // C# 版と同じく、ロケール単位では DashboardException 系（ログイン切れも含む）をそのロケールのエラーにする
             Err(e) if e.is_dashboard() => {
-                // ログイン切れは画面を見ても原因が分からないので保存しない（push / submit と同じ）
-                let shot = if e == Error::LoginRequired {
-                    None
-                } else {
-                    capture_read_failure(page, &expected.item_id, Some(&locale.code), progress)
-                };
-                log(
-                    &format!(
-                        "読み出し失敗 {} [{}]: {}{}",
-                        expected.item_id,
-                        locale.code,
-                        e,
-                        log_shot_suffix(&shot)
-                    ),
-                    LogLevel::Warning,
+                let message = read_failure_text(
+                    page,
+                    &expected.item_id,
+                    Some(&locale.code),
+                    &format!("読み出し失敗 {} [{}]", expected.item_id, locale.code),
+                    &e,
+                    progress,
                 );
-                // 結果（標準出力）へ入るエラー文は publisherId を伏せる
-                locales.push(LocaleSnapshot::failed(
-                    &locale.code,
-                    redact(&format!("{}{}", e.message(), shot_suffix(&shot))),
-                ));
+                locales.push(LocaleSnapshot::failed(&locale.code, message));
             }
             Err(e) => return Err(e),
         }
@@ -214,6 +189,29 @@ fn pull_core(
         category,
         error: None,
     })
+}
+
+/// 読み出し失敗の後処理を 1 か所に集める: スナップショットの保存（進捗を出す）→ 日本語のログ → 結果に入れるエラー文を返す。
+/// ログイン切れは画面を見ても原因が分からないので保存しない（push / submit と同じ）。
+/// 結果（標準出力）へ入るエラー文は publisherId を伏せる。`log_head` は「読み出し失敗 <id> [<locale>]」のようなログの頭
+fn read_failure_text(
+    page: &mut dyn EditorPage,
+    item_id: &str,
+    shot_scope: Option<&str>,
+    log_head: &str,
+    e: &Error,
+    progress: &Progress<'_>,
+) -> String {
+    let shot = if *e == Error::LoginRequired {
+        None
+    } else {
+        capture_read_failure(page, item_id, shot_scope, progress)
+    };
+    log(
+        &format!("{log_head}: {e}{}", log_shot_suffix(&shot)),
+        LogLevel::Warning,
+    );
+    redact(&format!("{}{}", e.message(), shot_suffix(&shot)))
 }
 
 /// 読み出しに失敗したときのページのスナップショット（テキスト）を診断用に保存し、保存先を返す（保存できなければ None）。
@@ -357,72 +355,7 @@ fn push_core(
     let mut results = Vec::new();
     for locale in &expected.locales {
         cancel.check()?;
-        let code = &locale.code;
-        progress(&tr!(
-            "services.checking_the_current_values_of",
-            name = name,
-            code = code
-        ));
-        page.switch_locale(code, cancel)?;
-        let fields = locale.fields();
-        let current = page.read_fields(&fields, cancel)?;
-        let targets = mismatched_fields(locale, &fields, &current);
-        if targets.is_empty() {
-            progress(&tr!(
-                "services.matches_the_source_files",
-                name = name,
-                code = code
-            ));
-            results.push(LocalePushResult {
-                locale: code.clone(),
-                outcome: LocalePushOutcome::Unchanged,
-                updated_fields: Vec::new(),
-            });
-            continue;
-        }
-
-        for field in &targets {
-            progress(&tr!(
-                "services.updating",
-                display_name = field.display_name(),
-                name = name,
-                code = code
-            ));
-            page.write_field(*field, &locale.values[field], cancel)?;
-        }
-
-        // 保存前に、このロケールの全対象欄が正本どおりか確かめる（書き換えていない欄が動いていないかも含む）
-        ensure_matches(
-            locale,
-            &fields,
-            &page.read_fields(&fields, cancel)?,
-            trs!("services.pre_save_check"),
-        )?;
-
-        // 保存の直前にも状態を確かめる
-        ensure_allowed(&page.get_state(cancel)?)?;
-        progress(&tr!("services.saving_as_draft", name = name, code = code));
-        page.save_draft(cancel)?;
-
-        // 読み込み直して、保存された値を確かめる
-        page.reload(cancel)?;
-        page.switch_locale(code, cancel)?;
-        ensure_matches(
-            locale,
-            &fields,
-            &page.read_fields(&fields, cancel)?,
-            trs!("services.post_save_check"),
-        )?;
-        progress(&tr!(
-            "services.saved_reloaded_and_confirmed_it_matches",
-            name = name,
-            code = code
-        ));
-        results.push(LocalePushResult {
-            locale: code.clone(),
-            outcome: LocalePushOutcome::Saved,
-            updated_fields: targets,
-        });
+        results.push(push_locale(page, name, locale, progress, cancel)?);
     }
 
     // 最後にもう一度読み込み直し、全対象ロケールを照合する（あるロケールの保存が他に影響していないか）
@@ -430,49 +363,7 @@ fn push_core(
         .iter()
         .any(|r| r.outcome == LocalePushOutcome::Saved)
     {
-        progress(&tr!(
-            "services.reloading_and_checking_all_languages",
-            name = name
-        ));
-        page.reload(cancel)?;
-        // ロケールの保存がカテゴリ（全言語共通）を動かしていないかも確かめる
-        if let Some(key) = &expected.category {
-            ensure_category_matches(page, key, trs!("services.post_save_check"), cancel)?;
-        }
-        let mut snapshots = Vec::new();
-        for locale in &expected.locales {
-            page.switch_locale(&locale.code, cancel)?;
-            snapshots.push(LocaleSnapshot::ok(
-                &locale.code,
-                page.read_fields(&locale.fields(), cancel)?,
-            ));
-        }
-        let rows = compare(
-            expected,
-            Some(&snapshot_of(expected, &available, snapshots)),
-        );
-        let bad: Vec<&LocaleComparison> = rows
-            .iter()
-            .filter(|c| c.status() != ComparisonStatus::Match)
-            .collect();
-        if !bad.is_empty() {
-            let detail: Vec<String> = bad
-                .iter()
-                .map(|b| {
-                    let names: Vec<&str> = b
-                        .different_fields()
-                        .iter()
-                        .map(|f| f.display_name())
-                        .collect();
-                    format!("[{}] {}", b.locale, names.join(trs!("cli.name_separator")))
-                })
-                .collect();
-            return Err(Error::Dashboard(tr!(
-                "services.some_fields_do_not_match_the_source",
-                text = detail.join(trs!("services.list_separator"))
-            )));
-        }
-        rows
+        reload_and_verify_all(page, expected, &available, progress, cancel)?
     } else {
         let snapshots = expected
             .locales
@@ -492,6 +383,133 @@ fn push_core(
         locales: results,
         final_comparison: final_rows,
     })
+}
+
+/// ロケール 1 件の「切替 → 読む → 差分なしなら何もしない → 書く → 保存前照合 → 保存 → 再読込 → 切替 → 照合」
+/// （[`push_category`] と対になる 1 サイクル。`cancel.check()` は呼び出し側のループが行う）
+fn push_locale(
+    page: &mut dyn ListingPage,
+    name: &str,
+    locale: &ExpectedLocale,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<LocalePushResult> {
+    let code = &locale.code;
+    progress(&tr!(
+        "services.checking_the_current_values_of",
+        name = name,
+        code = code
+    ));
+    page.switch_locale(code, cancel)?;
+    let fields = locale.fields();
+    let current = page.read_fields(&fields, cancel)?;
+    let targets = mismatched_fields(locale, &fields, &current);
+    if targets.is_empty() {
+        progress(&tr!(
+            "services.matches_the_source_files",
+            name = name,
+            code = code
+        ));
+        return Ok(LocalePushResult {
+            locale: code.clone(),
+            outcome: LocalePushOutcome::Unchanged,
+            updated_fields: Vec::new(),
+        });
+    }
+
+    for field in &targets {
+        progress(&tr!(
+            "services.updating",
+            display_name = field.display_name(),
+            name = name,
+            code = code
+        ));
+        page.write_field(*field, &locale.values[field], cancel)?;
+    }
+
+    // 保存前に、このロケールの全対象欄が正本どおりか確かめる（書き換えていない欄が動いていないかも含む）
+    ensure_matches(
+        locale,
+        &fields,
+        &page.read_fields(&fields, cancel)?,
+        trs!("services.pre_save_check"),
+    )?;
+
+    // 保存の直前にも状態を確かめる
+    ensure_allowed(&page.get_state(cancel)?)?;
+    progress(&tr!("services.saving_as_draft", name = name, code = code));
+    page.save_draft(cancel)?;
+
+    // 読み込み直して、保存された値を確かめる
+    page.reload(cancel)?;
+    page.switch_locale(code, cancel)?;
+    ensure_matches(
+        locale,
+        &fields,
+        &page.read_fields(&fields, cancel)?,
+        trs!("services.post_save_check"),
+    )?;
+    progress(&tr!(
+        "services.saved_reloaded_and_confirmed_it_matches",
+        name = name,
+        code = code
+    ));
+    Ok(LocalePushResult {
+        locale: code.clone(),
+        outcome: LocalePushOutcome::Saved,
+        updated_fields: targets,
+    })
+}
+
+/// 再読込 → カテゴリの照合 → 全ロケールの読み直し → 正本と照合（1 つでも一致しなければ止める）。
+/// ロケールが 1 つでも保存されたときだけ呼ぶ
+fn reload_and_verify_all(
+    page: &mut dyn ListingPage,
+    expected: &ExpectedItem,
+    available: &[String],
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<Vec<LocaleComparison>> {
+    progress(&tr!(
+        "services.reloading_and_checking_all_languages",
+        name = expected.display_name
+    ));
+    page.reload(cancel)?;
+    // ロケールの保存がカテゴリ（全言語共通）を動かしていないかも確かめる
+    if let Some(key) = &expected.category {
+        ensure_category_matches(page, key, trs!("services.post_save_check"), cancel)?;
+    }
+    let mut snapshots = Vec::new();
+    for locale in &expected.locales {
+        page.switch_locale(&locale.code, cancel)?;
+        snapshots.push(LocaleSnapshot::ok(
+            &locale.code,
+            page.read_fields(&locale.fields(), cancel)?,
+        ));
+    }
+    let rows = compare(expected, Some(&snapshot_of(expected, available, snapshots)));
+    let bad: Vec<&LocaleComparison> = rows
+        .iter()
+        .filter(|c| c.status() != ComparisonStatus::Match)
+        .collect();
+    if !bad.is_empty() {
+        let detail: Vec<String> = bad
+            .iter()
+            .map(|b| {
+                let names: Vec<&str> = b
+                    .different_fields()
+                    .iter()
+                    .map(|f| f.display_name())
+                    .collect();
+                format!("[{}] {}", b.locale, names.join(trs!("cli.name_separator")))
+            })
+            .collect();
+        return Err(Error::Dashboard(tr!(
+            "services.some_fields_do_not_match_the_source",
+            text = detail.join(trs!("services.list_separator"))
+        )));
+    }
+    Ok(rows)
 }
 
 fn snapshot_of(
@@ -702,22 +720,20 @@ pub fn pull_images(
         Ok(s) => Ok(s),
         Err(Error::LoginRequired) => Err(Error::LoginRequired),
         Err(e) if e.is_dashboard() => {
-            let shot = capture_read_failure(page, &expected.item_id, None, progress);
-            log(
-                &format!(
-                    "画像の読み出し失敗 {}: {}{}",
-                    expected.item_id,
-                    e,
-                    log_shot_suffix(&shot)
-                ),
-                LogLevel::Warning,
+            let error = read_failure_text(
+                page,
+                &expected.item_id,
+                None,
+                &format!("画像の読み出し失敗 {}", expected.item_id),
+                &e,
+                progress,
             );
             Ok(ImageSnapshot {
                 item_id: expected.item_id.clone(),
                 status_text: None,
                 available_locales: Vec::new(),
                 slots: Vec::new(),
-                error: Some(redact(&format!("{}{}", e.message(), shot_suffix(&shot)))),
+                error: Some(error),
             })
         }
         Err(e) => Err(e),
@@ -912,18 +928,19 @@ fn read_current(
     Ok(current)
 }
 
-/// 現在の画像が正本と一致するか（比較不能なら `Dashboard` エラー。一致扱いにも常に置換にもしない）
+/// 現在の画像が正本と一致するか（比較不能なら `Dashboard` エラー。一致扱いにも常に置換にもしない）。
+/// 読んだ画像（原本のハッシュつき）も返す（無保存の最終照合で読み直さないため）
 fn slot_matches(
     page: &mut dyn ImagePage,
     fetcher: &dyn ImageFetcher,
     slot: &ExpectedSlot,
     cancel: &CancelToken,
-) -> Result<bool> {
+) -> Result<(bool, Vec<CurrentImage>)> {
     let current = read_current(page, fetcher, slot.slot, cancel)?;
     let row = compare_slot("", "", slot, &current);
     match row.status {
-        ComparisonStatus::Match => Ok(true),
-        ComparisonStatus::Different => Ok(false),
+        ComparisonStatus::Match => Ok((true, current)),
+        ComparisonStatus::Different => Ok((false, current)),
         _ => Err(Error::Dashboard(tr!(
             "services.cannot_compare_images",
             label = slot.label(),
@@ -936,7 +953,8 @@ fn slot_matches(
 ///
 /// 順序: テキストの push は呼び出し側が済ませる → 編集画面を開く → 書き込み可否 → 全言語向け（アイコン → 小タイル → マーキー →
 /// スクリーンショット。差分のあるスロットだけ全入れ替え）→ 保存 → 読み直して照合 → ロケールごとに
-/// （切替 → 置換 → 保存 → 読み直し → 切替 → 照合）→ 最後に読み直して全対象スロットを再照合。
+/// （切替 → 置換 → 保存 → 読み直し → 切替 → 照合）→ 保存したスロットがある場合は、最後に読み直して全対象スロットを再照合
+/// （何も保存していなければ、最初の照合で読んだ画像から結果を作り、読み直さない）。
 /// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時はページのスナップショットを診断用に保存する
 pub fn push_images(
     page: &mut dyn ImagePage,
@@ -973,30 +991,23 @@ fn push_images_core(
 
     let mut saved: Vec<String> = Vec::new();
     let mut unchanged: Vec<String> = Vec::new();
+    // 最初の照合で一致したスロットが読んだ画像（`images.slots` の位置が鍵）。何も保存しなかったときの最終照合が使う
+    let mut matched: HashMap<usize, Vec<CurrentImage>> = HashMap::new();
 
     // ── 全言語向け ──
     let global = images.global_slots();
-    let mut changed = false;
+    let mut replaced: Vec<&ExpectedSlot> = Vec::new();
     for slot in &global {
         cancel.check()?;
-        progress(&tr!(
-            "services.checking_images",
-            name = name,
-            label = slot.label()
-        ));
-        if slot_matches(page, fetcher, slot, cancel)? {
-            progress(&tr!(
-                "services.images_match_the_source_files",
-                name = name,
-                label = slot.label()
-            ));
-            unchanged.push(slot.label());
-            continue;
+        match replace_if_different(page, fetcher, slot, name, progress, cancel)? {
+            None => replaced.push(slot),
+            Some(current) => {
+                unchanged.push(slot.label());
+                matched.insert(slot_index(&images, slot), current);
+            }
         }
-        replace_slot(page, slot, name, progress, cancel)?;
-        changed = true;
     }
-    if changed {
+    if !replaced.is_empty() {
         ensure_allowed(&page.get_state(cancel)?)?;
         progress(&tr!("services.saving_images_as_draft", name = name));
         page.save_draft(cancel)?;
@@ -1010,11 +1021,7 @@ fn push_images_core(
                 cancel,
             )?;
         }
-        for slot in &global {
-            if !unchanged.contains(&slot.label()) {
-                saved.push(slot.label());
-            }
-        }
+        saved.extend(replaced.iter().map(|slot| slot.label()));
         progress(&tr!(
             "services.images_saved_reloaded_and_confirmed",
             name = name
@@ -1026,21 +1033,13 @@ fn push_images_core(
         cancel.check()?;
         page.switch_locale(code, cancel)?;
         for slot in images.localized_slots(code) {
-            progress(&tr!(
-                "services.checking_images",
-                name = name,
-                label = slot.label()
-            ));
-            if slot_matches(page, fetcher, slot, cancel)? {
-                progress(&tr!(
-                    "services.images_match_the_source_files",
-                    name = name,
-                    label = slot.label()
-                ));
+            if let Some(current) =
+                replace_if_different(page, fetcher, slot, name, progress, cancel)?
+            {
                 unchanged.push(slot.label());
+                matched.insert(slot_index(&images, slot), current);
                 continue;
             }
-            replace_slot(page, slot, name, progress, cancel)?;
             ensure_allowed(&page.get_state(cancel)?)?;
             progress(&tr!("services.saving_images_as_draft", name = name));
             page.save_draft(cancel)?;
@@ -1062,33 +1061,15 @@ fn push_images_core(
     }
 
     // ── 最後に読み込み直して、全対象スロットを照合する（保存が他のスロットに影響していないか）──
-    let mut final_rows = Vec::new();
-    if !saved.is_empty() {
-        progress(&tr!(
-            "services.reloading_and_checking_all_languages",
-            name = name
-        ));
-        page.reload(cancel)?;
-    }
-    let mut current_locale: Option<&str> = None;
-    for slot in &images.slots {
-        cancel.check()?;
-        if let Some(code) = slot.locale.as_deref()
-            && current_locale != Some(code)
-        {
-            page.switch_locale(code, cancel)?;
-            current_locale = Some(code);
-        }
-        let current = read_current(page, fetcher, slot.slot, cancel)?;
-        let row = compare_slot(&expected.item_id, name, slot, &current);
-        if !saved.is_empty() && row.status != ComparisonStatus::Match {
-            return Err(Error::Dashboard(tr!(
-                "services.images_do_not_match_the_source",
-                text = crate::images::describe(&row)
-            )));
-        }
-        final_rows.push(row);
-    }
+    let final_rows = final_image_rows(
+        page,
+        fetcher,
+        expected,
+        &images,
+        saved.is_empty().then_some(&matched),
+        progress,
+        cancel,
+    )?;
 
     Ok(ImagePushResult {
         item_id: expected.item_id.clone(),
@@ -1097,6 +1078,95 @@ fn push_images_core(
         unchanged,
         final_comparison: final_rows,
     })
+}
+
+/// `images.slots` の中での位置（`slot` は `images.slots` の要素そのもの）。
+/// ラベルや src URL ではなく位置を鍵にする（同じラベル・URL の別スロットを取り違えないため）
+fn slot_index(images: &ExpectedImages, slot: &ExpectedSlot) -> usize {
+    images
+        .slots
+        .iter()
+        .position(|s| std::ptr::eq(s, slot))
+        .expect("slot は images.slots の要素")
+}
+
+/// スロット 1 つについて、現在値を照合し、違えば置き換える（未保存）。
+/// 一致していて何もしなかったら、そのとき読んだ画像を `Some` で返す。置き換えたら `None`。
+/// 保存の頻度と `cancel.check()` は呼び出し側ごとに違うため、ここには入れない
+fn replace_if_different(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    slot: &ExpectedSlot,
+    name: &str,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<Option<Vec<CurrentImage>>> {
+    progress(&tr!(
+        "services.checking_images",
+        name = name,
+        label = slot.label()
+    ));
+    let (is_match, current) = slot_matches(page, fetcher, slot, cancel)?;
+    if is_match {
+        progress(&tr!(
+            "services.images_match_the_source_files",
+            name = name,
+            label = slot.label()
+        ));
+        return Ok(Some(current));
+    }
+    replace_slot(page, slot, name, progress, cancel)?;
+    Ok(None)
+}
+
+/// 最後の照合の行を作る。
+/// - 保存したスロットがある（`unsaved_reads` が `None`）: 読み込み直し、全スロットを読み直して、1 つでも一致しなければ止める
+/// - 何も保存していない（`Some`）: 最初の照合で一致を確かめた直後で書き込みは無いので、そのとき読んだ画像から行を作り直す
+///   （画像の取得とロケールの切替をやり直さない）。`matched` に無いスロットは読み直す（黙って一致扱いにしない）
+fn final_image_rows(
+    page: &mut dyn ImagePage,
+    fetcher: &dyn ImageFetcher,
+    expected: &ExpectedItem,
+    images: &ExpectedImages,
+    unsaved_reads: Option<&HashMap<usize, Vec<CurrentImage>>>,
+    progress: &Progress<'_>,
+    cancel: &CancelToken,
+) -> Result<Vec<ImageComparison>> {
+    let name = &expected.display_name;
+    let any_saved = unsaved_reads.is_none();
+    let mut final_rows = Vec::new();
+    if any_saved {
+        progress(&tr!(
+            "services.reloading_and_checking_all_languages",
+            name = name
+        ));
+        page.reload(cancel)?;
+    }
+    let mut current_locale: Option<&str> = None;
+    for (index, slot) in images.slots.iter().enumerate() {
+        cancel.check()?;
+        let cached = unsaved_reads.and_then(|reads| reads.get(&index));
+        if let Some(current) = cached {
+            final_rows.push(compare_slot(&expected.item_id, name, slot, current));
+            continue;
+        }
+        if let Some(code) = slot.locale.as_deref()
+            && current_locale != Some(code)
+        {
+            page.switch_locale(code, cancel)?;
+            current_locale = Some(code);
+        }
+        let current = read_current(page, fetcher, slot.slot, cancel)?;
+        let row = compare_slot(&expected.item_id, name, slot, &current);
+        if any_saved && row.status != ComparisonStatus::Match {
+            return Err(Error::Dashboard(tr!(
+                "services.images_do_not_match_the_source",
+                text = crate::images::describe(&row)
+            )));
+        }
+        final_rows.push(row);
+    }
+    Ok(final_rows)
 }
 
 /// スロットを正本どおりに置き換える（未保存）。
@@ -1188,21 +1258,19 @@ pub fn pull_privacy(
         Ok(s) => Ok(s),
         Err(Error::LoginRequired) => Err(Error::LoginRequired),
         Err(e) if e.is_dashboard() => {
-            let shot = capture_read_failure(page, &expected.item_id, None, progress);
-            log(
-                &format!(
-                    "プライバシー タブの読み出し失敗 {}: {}{}",
-                    expected.item_id,
-                    e,
-                    log_shot_suffix(&shot)
-                ),
-                LogLevel::Warning,
+            let error = read_failure_text(
+                page,
+                &expected.item_id,
+                None,
+                &format!("プライバシー タブの読み出し失敗 {}", expected.item_id),
+                &e,
+                progress,
             );
             Ok(PrivacySnapshot {
                 item_id: expected.item_id.clone(),
                 status_text: None,
                 reading: None,
-                error: Some(redact(&format!("{}{}", e.message(), shot_suffix(&shot)))),
+                error: Some(error),
             })
         }
         Err(e) => Err(e),
@@ -1214,7 +1282,7 @@ fn pull_privacy_core(
     expected: &ExpectedItem,
     cancel: &CancelToken,
 ) -> Result<PrivacySnapshot> {
-    let privacy = expected.privacy.clone().unwrap_or_else(empty_privacy);
+    let privacy = expected.privacy.clone().unwrap_or_default();
     page.open_privacy(&expected.item_id, cancel)?;
     let state = page.get_state(cancel)?;
     let reading = page.read_privacy(&privacy, cancel)?;
@@ -1224,16 +1292,6 @@ fn pull_privacy_core(
         reading: Some(reading),
         error: None,
     })
-}
-
-fn empty_privacy() -> ExpectedPrivacy {
-    ExpectedPrivacy {
-        single_purpose: None,
-        permissions: None,
-        remote_code: None,
-        data_usage: None,
-        policy_url: None,
-    }
 }
 
 /// 読み出して正本と比べる（読み取りのみ）
@@ -1250,7 +1308,7 @@ pub fn diff_privacy(
 
 /// 「プライバシー」タブの現在値と正本を比べる。アイテム全体の読み出し失敗は、全欄「未取得」＋エラー
 pub fn compare_privacy(expected: &ExpectedItem, snapshot: &PrivacySnapshot) -> PrivacyComparison {
-    let privacy = expected.privacy.clone().unwrap_or_else(empty_privacy);
+    let privacy = expected.privacy.clone().unwrap_or_default();
     let mut comparison = privacy::compare(
         &expected.item_id,
         &expected.display_name,
@@ -1289,7 +1347,7 @@ fn push_privacy_core(
     cancel: &CancelToken,
 ) -> Result<PrivacyPushResult> {
     let name = &expected.display_name;
-    let privacy = expected.privacy.clone().unwrap_or_else(empty_privacy);
+    let privacy = expected.privacy.clone().unwrap_or_default();
     progress(&tr!("services.opening_the_privacy_tab_2", name = name));
     page.open_privacy(&expected.item_id, cancel)?;
     // 最初の書き換えの前に書き込み可否を確かめる（審査待ちなどでは何も触らない）

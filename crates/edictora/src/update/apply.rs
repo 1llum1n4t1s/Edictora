@@ -58,9 +58,7 @@ impl ApplyLauncher for ProcessApplyLauncher {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            /// コンソールを作らない（SDK の run_process と同じ）
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
+            command.creation_flags(crate::util::CREATE_NO_WINDOW);
         }
         command.spawn().map(|_| ()).map_err(|e| {
             update_err(crate::tr!(

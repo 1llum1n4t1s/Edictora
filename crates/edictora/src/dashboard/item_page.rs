@@ -271,10 +271,15 @@ impl<'a> DashboardItemPage<'a> {
     /// ページ側の例外はダッシュボード操作の失敗として扱う。
     /// ページ内スクリプトが固定の印で投げた例外（要素が消えた）は、ここで利用者向けの文に直す
     fn evaluate(&self, expression: &str, cancel: &CancelToken) -> Result<Value> {
-        self.page.evaluate(expression, cancel).map_err(|e| match e {
-            Error::JavaScript(m) => Error::Dashboard(sel::page_script_error_message(&m)),
-            other => other,
-        })
+        self.page.evaluate(expression, cancel).map_err(page_error)
+    }
+}
+
+/// ページ内スクリプトの例外（`JavaScript`）をダッシュボード操作の失敗（利用者向けの文）へ直す。他のエラーはそのまま
+fn page_error(e: Error) -> Error {
+    match e {
+        Error::JavaScript(m) => Error::Dashboard(sel::page_script_error_message(&m)),
+        other => other,
     }
 }
 
@@ -1307,10 +1312,7 @@ impl ImagePage for DashboardItemPage<'_> {
         let expression = scripts::element(t, kinds::FILE_INPUT, info.index);
         self.page
             .set_file_input_files(&expression, &[path.to_path_buf()], cancel)
-            .map_err(|e| match e {
-                Error::JavaScript(m) => Error::Dashboard(sel::page_script_error_message(&m)),
-                other => other,
-            })?;
+            .map_err(page_error)?;
 
         // 枚数が 1 枚増え、alt の番号が揃い、エラー表示が無くなるまで待つ（1 枚 60 秒まで）
         let mut last_error: Option<String> = None;

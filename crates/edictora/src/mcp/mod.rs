@@ -48,7 +48,7 @@ pub fn is_mcp_command<S: AsRef<str>>(args: &[S]) -> bool {
 
 /// initialize で返す、サーバーの使い方の案内（クライアントが AI に渡す文言なので英語に統一する）
 const INSTRUCTIONS: &str = "Edictora compares Chrome Web Store (CWS) store listings (the store description, official URL, homepage URL, support URL, and category) \
-with the source files in each extension repository and fixes them in bulk. Store images (store icon, screenshots, small promo tile, marquee) are handled too: narrow with only (text|images) and imageScope (all|global|localized); image updates never submit for review. The Privacy practices tab (single purpose description, permission justifications, data usage disclosure, privacy policy URL) is handled too: only=privacy narrows to it; it is written as a draft and never submitted for review. The CWS API cannot read or write store listings, \
+with the source files in each extension repository and fixes them in bulk. Store images (store icon, screenshots, small promo tile, marquee) are handled too: narrow with only (text|images|privacy) and imageScope (all|global|localized); image updates never submit for review. The Privacy practices tab (single purpose description, permission justifications, data usage disclosure, privacy policy URL) is handled too: only=privacy narrows to it; it is written as a draft and never submitted for review. The CWS API cannot read or write store listings, \
 so Edictora drives the Developer Dashboard with a dedicated Chrome profile running without a window (headless) in normal operation (only the sign-in window described below is visible). \
 To view or fix store listings, first call edictora_list_items to check the items and languages, review the differences with edictora_diff, \
 then use edictora_push (confirm: true saves as draft) and edictora_submit (confirm: true submits for review, one item at a time). \
@@ -446,70 +446,85 @@ fn list_items(paths: &AppPaths) -> Value {
             text.push_str(&format!("  - category: {category}\n"));
         }
         if let Some(images) = &item.images {
-            let mut slots = Vec::new();
-            if images.icon.is_some() {
-                slots.push("icon".to_string());
-            }
-            if images.small_tile.is_some() {
-                slots.push("smallTile".to_string());
-            }
-            if images.marquee.is_some() {
-                slots.push("marquee".to_string());
-            }
-            if let Some(g) = &images.global_screenshots {
-                slots.push(format!("globalScreenshots ({} files)", g.len()));
-            }
-            for (code, files) in &images.localized_screenshots {
-                slots.push(format!(
-                    "localizedScreenshots[{code}] ({} files)",
-                    files.len()
-                ));
-            }
-            text.push_str(&format!("  - images: {}\n", slots.join(", ")));
+            text.push_str(&format!("  - images: {}\n", summarize_images(images)));
         }
         if let Some(privacy) = &item.privacy {
-            let mut parts = Vec::new();
-            if let Some(s) = &privacy.single_purpose {
-                parts.push(format!("singlePurpose <- {}", s.file_path.display()));
-            }
-            if let Some(list) = &privacy.permissions {
-                let keys: Vec<&str> = list.iter().map(|(k, _)| k.as_str()).collect();
-                parts.push(format!("permissions ({})", keys.join(", ")));
-            }
-            if let Some(remote) = &privacy.remote_code {
-                parts.push(format!("remoteCode (uses: {})", remote.uses));
-            }
-            if let Some(usage) = &privacy.data_usage {
-                parts.push(format!("dataUsage ({} kinds)", usage.collected.len()));
-            }
-            if let Some(url) = &privacy.policy_url {
-                parts.push(format!(
-                    "policyUrl ({})",
-                    if url.is_empty() { "empty" } else { url }
-                ));
-            }
-            text.push_str(&format!("  - privacy: {}\n", parts.join("; ")));
+            text.push_str(&format!("  - privacy: {}\n", summarize_privacy(privacy)));
         }
         for locale in &item.locales {
-            let mut fields = Vec::new();
-            if let Some(d) = &locale.description {
-                fields.push(format!("Description <- {}", d.file_path.display()));
-            }
-            for field in locale.urls.keys() {
-                fields.push(field.name().to_string());
-            }
             text.push_str(&format!(
                 "  - {}: {}\n",
                 locale.code,
-                if fields.is_empty() {
-                    "(no target fields)".to_string()
-                } else {
-                    fields.join(", ")
-                }
+                summarize_locale(locale)
             ));
         }
     }
     json!({ "content": [{ "type": "text", "text": text }], "isError": false })
+}
+
+/// `images` 節の要約（設定に書かれたスロットを書いた順に「, 」で並べる）
+fn summarize_images(images: &config::ImagesConfig) -> String {
+    let mut slots = Vec::new();
+    if images.icon.is_some() {
+        slots.push("icon".to_string());
+    }
+    if images.small_tile.is_some() {
+        slots.push("smallTile".to_string());
+    }
+    if images.marquee.is_some() {
+        slots.push("marquee".to_string());
+    }
+    if let Some(g) = &images.global_screenshots {
+        slots.push(format!("globalScreenshots ({} files)", g.len()));
+    }
+    for (code, files) in &images.localized_screenshots {
+        slots.push(format!(
+            "localizedScreenshots[{code}] ({} files)",
+            files.len()
+        ));
+    }
+    slots.join(", ")
+}
+
+/// `privacy` 節の要約（設定に書かれた欄を「; 」で並べる）
+fn summarize_privacy(privacy: &config::PrivacyConfig) -> String {
+    let mut parts = Vec::new();
+    if let Some(s) = &privacy.single_purpose {
+        parts.push(format!("singlePurpose <- {}", s.file_path.display()));
+    }
+    if let Some(list) = &privacy.permissions {
+        let keys: Vec<&str> = list.iter().map(|(k, _)| k.as_str()).collect();
+        parts.push(format!("permissions ({})", keys.join(", ")));
+    }
+    if let Some(remote) = &privacy.remote_code {
+        parts.push(format!("remoteCode (uses: {})", remote.uses));
+    }
+    if let Some(usage) = &privacy.data_usage {
+        parts.push(format!("dataUsage ({} kinds)", usage.collected.len()));
+    }
+    if let Some(url) = &privacy.policy_url {
+        parts.push(format!(
+            "policyUrl ({})",
+            if url.is_empty() { "empty" } else { url }
+        ));
+    }
+    parts.join("; ")
+}
+
+/// ロケール 1 つの要約（対象の欄。1 つも無ければ「(no target fields)」）
+fn summarize_locale(locale: &config::LocaleConfig) -> String {
+    let mut fields = Vec::new();
+    if let Some(d) = &locale.description {
+        fields.push(format!("Description <- {}", d.file_path.display()));
+    }
+    for field in locale.urls.keys() {
+        fields.push(field.name().to_string());
+    }
+    if fields.is_empty() {
+        "(no target fields)".to_string()
+    } else {
+        fields.join(", ")
+    }
 }
 
 /// ツールを 1 件実行する（作業スレッドから呼ぶ）
@@ -543,6 +558,52 @@ struct Job {
     name: String,
     cli_args: Option<Vec<String>>,
     cancel: CancelToken,
+}
+
+/// 呼び出しを 1 件実行して結果の JSON を返す（作業スレッドから呼ぶ）。
+/// 開始前に取り消されていれば実行しない（この判定は panic の捕捉の外）
+fn execute_job(
+    paths: &AppPaths,
+    opener: &BrowserOpener<'_>,
+    name: &str,
+    cli_args: Option<Vec<String>>,
+    cancel: &CancelToken,
+) -> Value {
+    if cancel.is_cancelled() {
+        return tool_result_from_cli(exit_codes::CANCELLED, "", "Cancelled before it started.");
+    }
+    // 想定外の panic で作業スレッドが止まると、以後の呼び出しに応答が返らず、
+    // クライアントが上限まで待ち続ける。panic はその呼び出しの失敗として返し、次の呼び出しを受ける
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_tool(paths, opener, name, cli_args, cancel)
+    }))
+    .unwrap_or_else(|_| {
+        log(&format!("MCP: {name} の実行中に内部エラー"), LogLevel::Error);
+        tool_error("Could not run because of an internal error (see the logs: %LOCALAPPDATA%\\Edictora.Data\\logs)")
+    })
+}
+
+/// `initialize` の応答。クライアントが求めた版に対応していればその版、なければ最新の版を返す
+fn initialize_result(params: &Value) -> Value {
+    let requested = params
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let version = SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .find(|v| **v == requested)
+        .copied()
+        .unwrap_or(SUPPORTED_PROTOCOL_VERSIONS[0]);
+    json!({
+        "protocolVersion": version,
+        "capabilities": { "tools": { "listChanged": false } },
+        "serverInfo": {
+            "name": "edictora",
+            "title": "Edictora (Chrome Web Store listings)",
+            "version": env!("CARGO_PKG_VERSION")
+        },
+        "instructions": instructions()
+    })
 }
 
 /// 書き出し（1 メッセージ = 1 行。受信と作業の両スレッドから使う）
@@ -595,29 +656,20 @@ pub fn serve<R: BufRead, W: Write + Send>(
         let writer_ref = &writer;
         let paths_ref = &paths;
         scope.spawn(move || {
-            for job in rx {
-                let result = if job.cancel.is_cancelled() {
-                    tool_result_from_cli(
-                        exit_codes::CANCELLED,
-                        "",
-                        "Cancelled before it started.",
-                    )
-                } else {
-                    // 想定外の panic で作業スレッドが止まると、以後の呼び出しに応答が返らず、
-                    // クライアントが上限まで待ち続ける。panic はその呼び出しの失敗として返し、次の呼び出しを受ける
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        run_tool(paths_ref, opener, &job.name, job.cli_args, &job.cancel)
-                    }))
-                    .unwrap_or_else(|_| {
-                        log(&format!("MCP: {} の実行中に内部エラー", job.name), LogLevel::Error);
-                        tool_error("Could not run because of an internal error (see the logs: %LOCALAPPDATA%\\Edictora.Data\\logs)")
-                    })
-                };
+            for Job {
+                id,
+                name,
+                cli_args,
+                cancel,
+            } in rx
+            {
+                // 順序は契約: 結果の計算 → 実行中の表から削除 → 応答の送信
+                let result = execute_job(paths_ref, opener, &name, cli_args, &cancel);
                 worker_running
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .remove(&id_key(&job.id));
-                send(writer_ref, &response(&job.id, result));
+                    .remove(&id_key(&id));
+                send(writer_ref, &response(&id, result));
             }
         });
 
@@ -669,33 +721,7 @@ pub fn serve<R: BufRead, W: Write + Send>(
             };
 
             match method {
-                "initialize" => {
-                    let requested = params
-                        .get("protocolVersion")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    let version = SUPPORTED_PROTOCOL_VERSIONS
-                        .iter()
-                        .find(|v| **v == requested)
-                        .copied()
-                        .unwrap_or(SUPPORTED_PROTOCOL_VERSIONS[0]);
-                    send(
-                        &writer,
-                        &response(
-                            &id,
-                            json!({
-                                "protocolVersion": version,
-                                "capabilities": { "tools": { "listChanged": false } },
-                                "serverInfo": {
-                                    "name": "edictora",
-                                    "title": "Edictora (Chrome Web Store listings)",
-                                    "version": env!("CARGO_PKG_VERSION")
-                                },
-                                "instructions": instructions()
-                            }),
-                        ),
-                    );
-                }
+                "initialize" => send(&writer, &response(&id, initialize_result(&params))),
                 "ping" => send(&writer, &response(&id, json!({}))),
                 "tools/list" => send(
                     &writer,

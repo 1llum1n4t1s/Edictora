@@ -440,16 +440,16 @@ pub fn pick_field_by_label<'a>(
 
 /// 説明欄（textarea）を 1 つ選ぶ
 pub fn pick_description(textareas: &[ElementInfo]) -> Result<&ElementInfo> {
-    match textareas.len() {
-        1 => Ok(&textareas[0]),
-        0 => Err(Error::Dashboard(tr!(
-            "dashboard.the_description_field_textarea_was_not_found"
-        ))),
-        n => Err(Error::Dashboard(tr!(
-            "dashboard.found_textareas_cannot_identify_the_description_field",
-            count = n
-        ))),
-    }
+    exactly_one(
+        textareas,
+        || tr!("dashboard.the_description_field_textarea_was_not_found"),
+        |n| {
+            tr!(
+                "dashboard.found_textareas_cannot_identify_the_description_field",
+                count = n
+            )
+        },
+    )
 }
 
 /// 書き込み先として使える入力欄か確かめる（不可ならエラー）

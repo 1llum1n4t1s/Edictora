@@ -33,7 +33,7 @@ fn main() {
     logging::init(&paths.log_directory());
 
     let code = match hooks::parse_hook(&args) {
-        Some(hook) => hooks::run_hook(&hook),
+        Some(hook) => hooks::run_hook(&hook, &paths),
         None => run_logon_update(&paths),
     };
     logging::shutdown();

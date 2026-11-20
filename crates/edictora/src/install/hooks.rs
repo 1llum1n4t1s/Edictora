@@ -239,7 +239,7 @@ mod apply {
 pub use apply::{register, unregister};
 
 /// フックを処理する（本物の HKCU を使う）。終了コードは常に 0（SDK と同じ）。結果はログへ残す
-pub fn run_hook(hook: &Hook) -> i32 {
+pub fn run_hook(hook: &Hook, paths: &crate::app_paths::AppPaths) -> i32 {
     let Some(version) = &hook.version else {
         log(
             &format!(
@@ -274,7 +274,7 @@ pub fn run_hook(hook: &Hook) -> i32 {
     // 設定フォルダー・データフォルダーを本物の場所へ先に用意する（インストール・更新はパッケージの外で
     // 動くのが普通。後からパッケージ内のアプリが書いても、本物に既にあれば本物へ入る）。uninstall では作らない
     if matches!(hook.kind, HookKind::Install | HookKind::Updated) {
-        crate::redirect::ensure_data_folders(&crate::app_paths::AppPaths::from_environment());
+        crate::redirect::ensure_data_folders(paths);
     }
     let portable = is_portable(&installation.root);
     let action = hook_action(hook.kind, portable);
@@ -288,19 +288,18 @@ pub fn run_hook(hook: &Hook) -> i32 {
     let reg = registration_for(&installation.root);
     // 初期版からの移行の流れ（Run 登録）を壊さないよう、Run・PATH を必ず先に済ませる
     apply_to_current_user(action, &reg);
-    apply_mcp_registration(hook.kind, &installation.root);
+    apply_mcp_registration(hook.kind, &installation.root, paths);
     0
 }
 
 /// MCP サーバーの Claude Code・Codex への登録・解除（本物の PATH と保存先を使う本番経路）。
 /// 締め切りは Run・PATH の処理の後から数える（Velopack の打ち切りまでの残りに収める）
-fn apply_mcp_registration(kind: HookKind, root: &Path) {
+fn apply_mcp_registration(kind: HookKind, root: &Path, paths: &crate::app_paths::AppPaths) {
     use super::connect::{
         Budget, HOOK_CALL_TIMEOUT, INSTALL_HOOK_TOTAL, UNINSTALL_HOOK_TOTAL, UPDATED_HOOK_TOTAL,
         ensure_registered, forget_state, registered_executable, resolve_from_environment,
         unregister_all,
     };
-    let paths = crate::app_paths::AppPaths::from_environment();
     let state_dir = paths.local_root.as_path();
     let executable = registered_executable(root);
     let label = format!("Velopack のフック {kind:?}");

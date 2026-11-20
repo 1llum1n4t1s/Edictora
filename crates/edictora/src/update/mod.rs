@@ -60,6 +60,8 @@ pub(crate) fn service() -> &'static str {
 
 /// フィードの操作ごとのタイムアウト
 const FEED_TIMEOUT: Duration = Duration::from_secs(30);
+/// フィード取得の全体の期限（1 操作の待ち + 2 秒）。要求とエラー文の秒数を食い違わせないため 1 か所に置く
+const FEED_TOTAL_TIMEOUT: Duration = Duration::from_secs(32);
 /// フィードの本文の上限（リリースノートを含めても十分な大きさ）
 const MAX_FEED_BYTES: usize = 8 * 1024 * 1024;
 
@@ -157,7 +159,7 @@ pub fn fetch_feed(
             ),
             headers: vec!["Accept: application/json".to_string()],
             timeout: FEED_TIMEOUT,
-            total_timeout: FEED_TIMEOUT + Duration::from_secs(2),
+            total_timeout: FEED_TOTAL_TIMEOUT,
             service: service(),
         },
         ResponseSink::Memory {
@@ -165,7 +167,7 @@ pub fn fetch_feed(
         },
         cancel,
     )
-    .map_err(|e| http_error(e, FEED_TIMEOUT + Duration::from_secs(2)))?;
+    .map_err(|e| http_error(e, FEED_TOTAL_TIMEOUT))?;
     if response.status != 200 {
         return Err(update_err(crate::tr!(
             "update.could_not_fetch_the_feed_http",

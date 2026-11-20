@@ -350,7 +350,7 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
     let base_dir = if is_blank(dto.base_dir.as_deref()) {
         config_dir.to_path_buf()
     } else {
-        full_path(&config_dir.join(expand(dto.base_dir.as_deref()).unwrap_or_default()))
+        resolve_under(config_dir, dto.base_dir.as_deref())
     };
     if !base_dir.is_dir() {
         return Err(Error::Config(tr!(
@@ -401,28 +401,8 @@ fn parse_item(dto: ItemConfigDto, index: usize, config_dir: &Path) -> Result<Ite
     let mut locales = Vec::new();
     let mut seen_codes: HashSet<String> = HashSet::new();
     for (raw_code, locale_dto) in entries {
-        let code = normalize_locale_code(&raw_code);
-        if !is_valid_locale_code(&code) {
-            return Err(Error::Config(tr!(
-                "config.invalid_locale_code",
-                place = place,
-                raw_code = raw_code
-            )));
-        }
-        if !seen_codes.insert(code.to_uppercase()) {
-            return Err(Error::Config(tr!(
-                "config.duplicate_locale_code",
-                place = place,
-                raw_code = raw_code
-            )));
-        }
-        let Some(locale_dto) = locale_dto else {
-            return Err(Error::Config(tr!(
-                "config.the_entry_is_empty",
-                place = place,
-                code = code
-            )));
-        };
+        let (code, locale_dto) =
+            check_locale_entry(&raw_code, locale_dto, &mut seen_codes, &place)?;
         locales.push(parse_locale(
             locale_dto,
             &code,
@@ -472,7 +452,7 @@ fn parse_locale(
         if let Some(p) = &d.section_end {
             section::validate_pattern(p, &format!("{place}.description.sectionEnd"))?;
         }
-        let file = full_path(&base_dir.join(expand(d.file.as_deref()).unwrap_or_default()));
+        let file = resolve_under(base_dir, d.file.as_deref());
         if !file.is_file() {
             return Err(Error::Config(tr!(
                 "config.description_source_file_not_found",
@@ -529,6 +509,15 @@ fn add_url(
 ) -> Result<()> {
     // キーなし（null）は対象外。空文字は「空欄が正本」として扱う。
     let Some(value) = value else { return Ok(()) };
+    let trimmed = check_http_url(value, field.config_key(), place)?;
+    urls.insert(field, trimmed);
+    Ok(())
+}
+
+/// URL 欄の共通検査（公式 URL などと privacy.policyUrl が同じ契約を共有する）。
+/// 空（空白だけを含む）は「空欄が正本」として許し、それ以外は http(s) の絶対 URL だけを通す。
+/// 戻り値は trim 後の値。エラー文の `value` は trim 前のまま。
+pub(crate) fn check_http_url(value: &str, config_key: &str, place: &str) -> Result<String> {
     let trimmed = value.trim();
     if !trimmed.is_empty() {
         let ok = parse_absolute_url(trimmed)
@@ -536,14 +525,52 @@ fn add_url(
         if !ok {
             return Err(Error::Config(tr!(
                 "config.specify_an_absolute_http_s_url",
-                config_key = field.config_key(),
+                config_key = config_key,
                 place = place,
                 value = value
             )));
         }
     }
-    urls.insert(field, trimmed.to_string());
-    Ok(())
+    Ok(trimmed.to_string())
+}
+
+/// ロケールのキー 1 件の共通検査（形式 → 大文字小文字を無視した重複 → 空のエントリ、の順）。
+/// 前の項目のファイルエラーより後ろの項目のコードエラーが先に出ないよう、ループ内で 1 件ずつ呼ぶ。
+/// 戻り値は正規化したコードと中身。
+pub(crate) fn check_locale_entry<T>(
+    raw_code: &str,
+    entry: Option<T>,
+    seen: &mut HashSet<String>,
+    place: &str,
+) -> Result<(String, T)> {
+    let code = normalize_locale_code(raw_code);
+    if !is_valid_locale_code(&code) {
+        return Err(Error::Config(tr!(
+            "config.invalid_locale_code",
+            place = place,
+            raw_code = raw_code
+        )));
+    }
+    if !seen.insert(code.to_uppercase()) {
+        return Err(Error::Config(tr!(
+            "config.duplicate_locale_code",
+            place = place,
+            raw_code = raw_code
+        )));
+    }
+    let Some(entry) = entry else {
+        return Err(Error::Config(tr!(
+            "config.the_entry_is_empty",
+            place = place,
+            code = code
+        )));
+    };
+    Ok((code, entry))
+}
+
+/// 設定のパス値を、環境変数を展開して `base` からの絶対パスにする（空・None は `base` そのもの）
+pub(crate) fn resolve_under(base: &Path, value: Option<&str>) -> PathBuf {
+    full_path(&base.join(expand(value).unwrap_or_default()))
 }
 
 fn resolve_profile(

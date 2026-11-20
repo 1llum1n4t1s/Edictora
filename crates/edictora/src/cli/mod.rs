@@ -600,8 +600,7 @@ impl<'a> CliApp<'a> {
         let mut page = browser.create_item_page()?;
         let progress = self.progress();
         let fetcher = WinHttpImageFetcher;
-        let mut any_diff = false;
-        let mut any_error = false;
+        let mut tally = DiffTally::default();
 
         for expected in targets {
             let mut header_done = false;
@@ -615,21 +614,12 @@ impl<'a> CliApp<'a> {
                 header_done = true;
                 for row in &rows {
                     self.out_raw(&diff_formatter::format(row));
-                    let status = row.status();
-                    any_diff |= status == ComparisonStatus::Different;
-                    any_error |= matches!(
-                        status,
-                        ComparisonStatus::Error | ComparisonStatus::NotFetched
-                    );
+                    tally.record(row.status());
                 }
                 // カテゴリ（全言語共通）の行
                 if let Some(row) = category::compare(expected, Some(&snapshot)) {
                     self.out_raw(&category::describe(&row));
-                    any_diff |= row.status == ComparisonStatus::Different;
-                    any_error |= matches!(
-                        row.status,
-                        ComparisonStatus::Error | ComparisonStatus::NotFetched
-                    );
+                    tally.record(row.status);
                 }
             }
             if expected.has_images() {
@@ -644,17 +634,13 @@ impl<'a> CliApp<'a> {
                 }
                 if let Some(err) = &snapshot.error {
                     self.outln(&format!("  {}", error_line(err)));
-                    any_error = true;
+                    tally.mark_error();
                 }
                 for row in &rows {
                     if snapshot.error.is_none() {
                         self.outln(&images::describe(row));
                     }
-                    any_diff |= row.status == ComparisonStatus::Different;
-                    any_error |= matches!(
-                        row.status,
-                        ComparisonStatus::Error | ComparisonStatus::NotFetched
-                    );
+                    tally.record(row.status);
                 }
                 header_done = true;
             }
@@ -666,32 +652,22 @@ impl<'a> CliApp<'a> {
                 }
                 if let Some(err) = &snapshot.error {
                     self.outln(&format!("  {}", error_line(err)));
-                    any_error = true;
+                    tally.mark_error();
                 }
                 if snapshot.error.is_none() {
                     for row in &comparison.rows {
                         self.out_raw(&privacy::describe(row));
-                        any_diff |= row.status == ComparisonStatus::Different;
-                        any_error |= matches!(
-                            row.status,
-                            ComparisonStatus::Error | ComparisonStatus::NotFetched
-                        );
+                        tally.record(row.status);
                     }
                 }
             }
             self.outln("");
         }
 
-        if push_hint && any_diff {
+        if push_hint && tally.any_diff {
             self.outln(trs!("cli.to_update_the_fields_that_differ_run"));
         }
-        Ok(if any_error {
-            exit_codes::FAILURE
-        } else if any_diff {
-            exit_codes::DIFFERENCES
-        } else {
-            exit_codes::SUCCESS
-        })
+        Ok(tally.exit_code())
     }
 
     fn push(
@@ -948,7 +924,7 @@ pub fn select_targets(config: &EdictoraConfig, command: &CliCommand) -> Result<V
 
 fn item_header(item: &ExpectedItem, status: Option<&str>, locales: &[String]) -> String {
     let status = status
-        .map(|s| tr!("cli.status_2", status = s))
+        .map(|s| tr!("cli.status", status = s))
         .unwrap_or_default();
     let locales = if locales.is_empty() {
         String::new()
@@ -959,6 +935,40 @@ fn item_header(item: &ExpectedItem, status: Option<&str>, locales: &[String]) ->
         "{}{status}{locales}",
         item_title(&item.display_name, &item.item_id)
     )
+}
+
+/// diff の集計。差分と、失敗に数える状態（Error・NotFetched）を覚え、終了コードを決める
+#[derive(Default)]
+struct DiffTally {
+    any_diff: bool,
+    any_error: bool,
+}
+
+impl DiffTally {
+    /// 1 行の状態を集計する
+    fn record(&mut self, status: ComparisonStatus) {
+        self.any_diff |= status == ComparisonStatus::Different;
+        self.any_error |= matches!(
+            status,
+            ComparisonStatus::Error | ComparisonStatus::NotFetched
+        );
+    }
+
+    /// 行にならない失敗（読み出しエラーなど）を数える
+    fn mark_error(&mut self) {
+        self.any_error = true;
+    }
+
+    /// 失敗 > 差分あり > 成功 の順
+    fn exit_code(&self) -> i32 {
+        if self.any_error {
+            exit_codes::FAILURE
+        } else if self.any_diff {
+            exit_codes::DIFFERENCES
+        } else {
+            exit_codes::SUCCESS
+        }
+    }
 }
 
 /// アイテムの見出し行（`== 名前 (ID)`）。出力の書式を 1 か所に固定する

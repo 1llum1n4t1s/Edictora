@@ -19,7 +19,7 @@ use crate::cancel::CancelToken;
 use crate::cdp::CdpClient;
 use crate::error::{Error, Result};
 use crate::logging::{LogLevel, log};
-use crate::util::{decode_text, parse_absolute_url};
+use crate::util::{decode_text, kill_process_tree, parse_absolute_url};
 
 /// Chrome 起動オプション
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,7 +164,7 @@ impl ChromeInstance {
                 "Chrome が時間内に終了しなかったため、プロセスを停止します",
                 LogLevel::Warning,
             );
-            kill_tree(process);
+            kill_process_tree(process);
         }
     }
 }
@@ -237,7 +237,7 @@ pub fn launch_or_attach(
         Err(e) => {
             // 起動に失敗したプロセスだけを止める。プロファイルは削除しない
             if !matches!(process.try_wait(), Ok(Some(_))) {
-                kill_tree(&mut process);
+                kill_process_tree(&mut process);
             }
             Err(e)
         }
@@ -407,26 +407,4 @@ fn wait_for_exit(process: &mut Child, timeout: Duration) -> bool {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-}
-
-/// プロセスを子プロセスごと止める（C# の `Kill(entireProcessTree: true)`）。プロファイルには触れない
-fn kill_tree(process: &mut Child) {
-    #[cfg(windows)]
-    {
-        let system_root = std::env::var_os("SystemRoot")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
-        let status = Command::new(system_root.join("System32").join("taskkill.exe"))
-            .args(["/PID", &process.id().to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if status.is_ok_and(|s| s.success()) {
-            let _ = process.wait();
-            return;
-        }
-    }
-    let _ = process.kill();
-    let _ = process.wait();
 }

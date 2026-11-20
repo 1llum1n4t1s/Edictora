@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde::de::{MapAccess, Visitor};
 
-use crate::config::{expand, full_path, is_valid_locale_code, normalize_locale_code};
+use crate::config::{check_locale_entry, resolve_under};
 use crate::error::{Error, Result};
 use crate::images::MAX_SCREENSHOTS;
 use crate::util::is_blank;
@@ -117,29 +117,8 @@ pub(super) fn parse_images(dto: ImagesDto, place: &str, base_dir: &Path) -> Resu
     if let Some(OrderedScreenshots(entries)) = dto.localized_screenshots {
         let mut seen: HashSet<String> = HashSet::new();
         for (raw_code, s) in entries {
-            let code = normalize_locale_code(&raw_code);
+            let (code, s) = check_locale_entry(&raw_code, s, &mut seen, &place)?;
             let here = format!("{place}.localizedScreenshots.{code}");
-            if !is_valid_locale_code(&code) {
-                return Err(Error::Config(tr!(
-                    "config.invalid_locale_code",
-                    place = place,
-                    raw_code = raw_code
-                )));
-            }
-            if !seen.insert(code.to_uppercase()) {
-                return Err(Error::Config(tr!(
-                    "config.duplicate_locale_code",
-                    place = place,
-                    raw_code = raw_code
-                )));
-            }
-            let Some(s) = s else {
-                return Err(Error::Config(tr!(
-                    "config.the_entry_is_empty",
-                    place = place,
-                    code = code
-                )));
-            };
             let files = screenshot_files(s, base_dir, &here)?;
             config.localized_screenshots.push((code, files));
         }
@@ -167,7 +146,7 @@ fn single_file(value: &str, base_dir: &Path, place: &str) -> Result<PathBuf> {
             place = place
         )));
     }
-    let file = full_path(&base_dir.join(expand(Some(value)).unwrap_or_default()));
+    let file = resolve_under(base_dir, Some(value));
     if !file.is_file() {
         return Err(Error::Config(tr!(
             "config.images_file_not_found",
@@ -188,7 +167,7 @@ fn screenshot_files(dto: ScreenshotsDto, base_dir: &Path, place: &str) -> Result
                     place = place
                 )));
             }
-            let dir = full_path(&base_dir.join(expand(Some(&dir)).unwrap_or_default()));
+            let dir = resolve_under(base_dir, Some(&dir));
             list_screenshots(&dir, place)?
         }
         (None, Some(files)) => files

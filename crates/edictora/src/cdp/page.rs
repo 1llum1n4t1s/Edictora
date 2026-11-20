@@ -15,6 +15,21 @@ use crate::cancel::CancelToken;
 use crate::cdp::client::{CdpClient, DEFAULT_TIMEOUT};
 use crate::error::{Error, Result};
 
+/// `Runtime.evaluate` / `callFunctionOn` の応答に `exceptionDetails` があれば、`JavaScript` エラーへ直す
+fn script_exception(result: &Value) -> Option<Error> {
+    let ex = result.get("exceptionDetails")?;
+    let text = ex
+        .get("exception")
+        .and_then(|e| e.get("description"))
+        .and_then(Value::as_str)
+        .or_else(|| ex.get("text").and_then(Value::as_str))
+        .unwrap_or(crate::trs!("cdp.unknown_error"));
+    Some(Error::JavaScript(crate::tr!(
+        "cdp.the_in_page_script_failed",
+        text = text
+    )))
+}
+
 /// flatten モードで attach したタブ
 pub struct CdpPage {
     client: Arc<CdpClient>,
@@ -107,17 +122,8 @@ impl CdpPage {
             Duration::from_secs(20),
             cancel,
         )?;
-        if let Some(ex) = result.get("exceptionDetails") {
-            let text = ex
-                .get("exception")
-                .and_then(|e| e.get("description"))
-                .and_then(Value::as_str)
-                .or_else(|| ex.get("text").and_then(Value::as_str))
-                .unwrap_or(crate::trs!("cdp.unknown_error"));
-            return Err(Error::JavaScript(crate::tr!(
-                "cdp.the_in_page_script_failed",
-                text = text
-            )));
+        if let Some(err) = script_exception(&result) {
+            return Err(err);
         }
         // 例外が無いときだけ、評価結果の値を所有権ごと取り出す（大きな戻り値を深いコピーしない）
         Ok(result
@@ -156,18 +162,9 @@ impl CdpPage {
             Duration::from_secs(20),
             cancel,
         )?;
-        if let Some(ex) = result.get("exceptionDetails") {
-            let text = ex
-                .get("exception")
-                .and_then(|e| e.get("description"))
-                .and_then(Value::as_str)
-                .or_else(|| ex.get("text").and_then(Value::as_str))
-                .unwrap_or(crate::trs!("cdp.unknown_error"));
+        if let Some(err) = script_exception(&result) {
             let _ = self.release_object_group(GROUP, cancel);
-            return Err(Error::JavaScript(crate::tr!(
-                "cdp.the_in_page_script_failed",
-                text = text
-            )));
+            return Err(err);
         }
         let object_id = result
             .get("result")

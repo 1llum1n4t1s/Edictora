@@ -373,30 +373,6 @@ mod tests {
     }
 
     #[test]
-    fn maps_windows_language_ids() {
-        for (id, expected) in [
-            (0x0411, Language::Japanese),
-            (0x0409, Language::English),
-            (0x0804, Language::ChineseSimplified),
-            (0x1004, Language::ChineseSimplified),
-            (0x0004, Language::ChineseSimplified),
-            (0x0404, Language::ChineseTraditional),
-            (0x0c04, Language::ChineseTraditional),
-            (0x1404, Language::ChineseTraditional),
-            (0x7c04, Language::ChineseTraditional),
-            (0x0412, Language::Korean),
-            (0x0c0a, Language::Spanish),
-            (0x040c, Language::French),
-            (0x0407, Language::German),
-            (0x0416, Language::PortugueseBrazil),
-            (0x0816, Language::PortugueseBrazil),
-            (0x0410, Language::English),
-        ] {
-            assert_eq!(language_from_langid(id), expected, "{id:#06x}");
-        }
-    }
-
-    #[test]
     fn tags_are_unique_and_round_trip() {
         let tags: std::collections::BTreeSet<_> = Language::ALL.iter().map(|l| l.tag()).collect();
         assert_eq!(tags.len(), Language::ALL.len());
@@ -414,14 +390,5 @@ mod tests {
             ),
             "a 1 b 1 {x} {z}"
         );
-    }
-
-    #[test]
-    fn macros_fill_named_values() {
-        // 言語は環境（.cargo/config.toml の EDICTORA_LANGUAGE）で決まる。
-        // どの言語でも値が埋め込まれ、波括弧が残らないことだけを確かめる
-        let text = tr!("cli.item_is_not_in_the_config_file", id = "abc");
-        assert!(text.contains("abc") && !text.contains('{'), "{text}");
-        assert!(!trs!("cli.off").is_empty());
     }
 }

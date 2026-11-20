@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 
 use crate::logging::{LogLevel, log};
 use crate::update::lock::{LockFile, is_held_by_another};
+use crate::util::kill_process_tree;
 
 /// MCP の登録名
 pub const SERVER_NAME: &str = "edictora";
@@ -73,10 +74,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// 子プロセスが終わった後、標準出力の読み終わりを待つ猶予の上限。
 /// 孫プロセスが標準出力を受け継いで生き残ると EOF が来ないため、無期限には待たない
 const OUTPUT_GRACE: Duration = Duration::from_secs(1);
-
-/// コンソールを作らない（更新用 exe は windows サブシステムなので、子のコンソールが画面に出てしまう）
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// 登録先の AI クライアント
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -227,7 +224,7 @@ pub fn run_cli(cli: &Path, args: &[String], timeout: Duration) -> CallResult {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
+        command.creation_flags(crate::util::CREATE_NO_WINDOW);
     }
     let started = Instant::now();
     let mut child = match command.spawn() {
@@ -235,7 +232,7 @@ pub fn run_cli(cli: &Path, args: &[String], timeout: Duration) -> CallResult {
         Err(e) => return CallResult::NotStarted(e.to_string()),
     };
     let Some(stdout) = child.stdout.take() else {
-        kill_tree(&mut child);
+        kill_process_tree(&mut child);
         return CallResult::NotStarted("標準出力を受け取れません".to_string());
     };
     // 読み終わりは channel で受ける（join しない。孫プロセスが標準出力を握ったままだと終わらないため）
@@ -248,13 +245,13 @@ pub fn run_cli(cli: &Path, args: &[String], timeout: Duration) -> CallResult {
             Ok(Some(status)) => break status,
             Ok(None) => {}
             Err(_) => {
-                kill_tree(&mut child);
+                kill_process_tree(&mut child);
                 return CallResult::TimedOut;
             }
         }
         let elapsed = started.elapsed();
         if elapsed >= timeout {
-            kill_tree(&mut child);
+            kill_process_tree(&mut child);
             return CallResult::TimedOut;
         }
         std::thread::sleep(POLL_INTERVAL.min(timeout - elapsed));
@@ -289,31 +286,6 @@ fn read_capped(mut reader: impl Read, cap: usize) -> Vec<u8> {
         }
     }
     kept
-}
-
-/// 子プロセスを木ごと止める（`chrome::launcher` の `kill_tree` と同じ方式。taskkill にも
-/// `CREATE_NO_WINDOW` を付ける）。taskkill が使えなければ子だけを止める
-fn kill_tree(process: &mut Child) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let system_root = std::env::var_os("SystemRoot")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
-        let status = Command::new(system_root.join("System32").join("taskkill.exe"))
-            .args(["/PID", &process.id().to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-        if status.is_ok_and(|s| s.success()) {
-            let _ = process.wait();
-            return;
-        }
-    }
-    let _ = process.kill();
-    let _ = process.wait();
 }
 
 /// パスを比較用に正規化する（区切りを `/` に揃えて小文字にする。Windows のパスは大小を区別しない）

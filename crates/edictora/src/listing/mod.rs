@@ -218,45 +218,37 @@ pub fn build_expected_images(
     };
     let place = format!("{} ({})", item.display_name, item.item_id);
     let mut slots: Vec<ExpectedSlot> = Vec::new();
-    if scope.includes(ImageSlot::Icon)
-        && let Some(path) = &images.icon
-    {
-        slots.push(build_expected_slot(
+    // 全言語向けのスロット。配列の順がそのまま処理順（アイコン → 小タイル → マーキー → スクリーンショット）。
+    // place の末尾は設定のキー名（`ImageSlot::config_key`）
+    let global = [
+        (
             ImageSlot::Icon,
-            None,
-            std::slice::from_ref(path),
-            &format!("{place} images.icon"),
-        )?);
-    }
-    if scope.includes(ImageSlot::SmallTile)
-        && let Some(path) = &images.small_tile
-    {
-        slots.push(build_expected_slot(
+            images.icon.as_ref().map(std::slice::from_ref),
+        ),
+        (
             ImageSlot::SmallTile,
-            None,
-            std::slice::from_ref(path),
-            &format!("{place} images.smallTile"),
-        )?);
-    }
-    if scope.includes(ImageSlot::Marquee)
-        && let Some(path) = &images.marquee
-    {
-        slots.push(build_expected_slot(
+            images.small_tile.as_ref().map(std::slice::from_ref),
+        ),
+        (
             ImageSlot::Marquee,
-            None,
-            std::slice::from_ref(path),
-            &format!("{place} images.marquee"),
-        )?);
-    }
-    if scope.includes(ImageSlot::GlobalScreenshots)
-        && let Some(paths) = &images.global_screenshots
-    {
-        slots.push(build_expected_slot(
+            images.marquee.as_ref().map(std::slice::from_ref),
+        ),
+        (
             ImageSlot::GlobalScreenshots,
-            None,
-            paths,
-            &format!("{place} images.globalScreenshots"),
-        )?);
+            images.global_screenshots.as_deref(),
+        ),
+    ];
+    for (slot, paths) in global {
+        if scope.includes(slot)
+            && let Some(paths) = paths
+        {
+            slots.push(build_expected_slot(
+                slot,
+                None,
+                paths,
+                &format!("{place} images.{}", slot.config_key()),
+            )?);
+        }
     }
     if scope.includes(ImageSlot::LocalizedScreenshots) {
         for (code, paths) in &images.localized_screenshots {
@@ -344,6 +336,35 @@ pub enum ComparisonStatus {
 }
 
 impl ComparisonStatus {
+    /// 複数の状態をまとめた全体の状態。エラー > 未取得（空も含む）> 差分あり > 一致 の順に強い方を採る。
+    /// 列挙子の宣言順は強さの順と一致しないので、`Ord` の最大値には頼らず明示的に判定する。
+    /// `has_error` は行の外にあるエラー（読み出し失敗の理由など）で、あれば行によらずエラー
+    pub fn overall(
+        has_error: bool,
+        statuses: impl IntoIterator<Item = ComparisonStatus>,
+    ) -> ComparisonStatus {
+        let (mut error, mut not_fetched, mut different) = (has_error, false, false);
+        let mut empty = true;
+        for status in statuses {
+            empty = false;
+            match status {
+                ComparisonStatus::Error => error = true,
+                ComparisonStatus::NotFetched => not_fetched = true,
+                ComparisonStatus::Different => different = true,
+                ComparisonStatus::Match => {}
+            }
+        }
+        if error {
+            ComparisonStatus::Error
+        } else if empty || not_fetched {
+            ComparisonStatus::NotFetched
+        } else if different {
+            ComparisonStatus::Different
+        } else {
+            ComparisonStatus::Match
+        }
+    }
+
     /// 画面・CLI に出す状態の名前（表示言語に合わせる）
     pub fn display_name(self) -> &'static str {
         match self {
@@ -377,30 +398,7 @@ pub struct LocaleComparison {
 impl LocaleComparison {
     /// 行全体の状態。エラー > 未取得 > 差分あり > 一致 の順に強い方を採る
     pub fn status(&self) -> ComparisonStatus {
-        if self.error.is_some()
-            || self
-                .fields
-                .iter()
-                .any(|f| f.status == ComparisonStatus::Error)
-        {
-            return ComparisonStatus::Error;
-        }
-        if self.fields.is_empty()
-            || self
-                .fields
-                .iter()
-                .any(|f| f.status == ComparisonStatus::NotFetched)
-        {
-            return ComparisonStatus::NotFetched;
-        }
-        if self
-            .fields
-            .iter()
-            .any(|f| f.status == ComparisonStatus::Different)
-        {
-            return ComparisonStatus::Different;
-        }
-        ComparisonStatus::Match
+        ComparisonStatus::overall(self.error.is_some(), self.fields.iter().map(|f| f.status))
     }
 
     /// 差分のある欄

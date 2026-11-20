@@ -28,10 +28,10 @@ use std::path::Path;
 use serde::Deserialize;
 use serde::de::{MapAccess, Visitor};
 
-use crate::config::{TextSource, TextSourceDto, expand, full_path, section};
+use crate::config::{TextSource, TextSourceDto, check_http_url, resolve_under, section};
 use crate::error::{Error, Result};
 use crate::privacy::DataKind;
-use crate::util::{format_n0, is_blank, parse_absolute_url, utf16_len};
+use crate::util::{format_n0, is_blank, utf16_len};
 use crate::{tr, trs};
 
 /// リモートコードの設定（検証済み）
@@ -121,7 +121,9 @@ impl<'de> Deserialize<'de> for OrderedPermissions {
     }
 }
 
-/// `privacy` を検証して作る。`place` は「items[1] (…)」の形のエラー表示用
+/// `privacy` を検証して作る。`place` は「items[1] (…)」の形のエラー表示用。
+/// 検査は設定キーごとの関数に分け、順序（singlePurpose → permissions → remoteCode → dataUsage → policyUrl →
+/// 1 欄も無ければエラー）と「最初のエラーで止まる」動きは変えない。
 pub(super) fn parse_privacy(
     dto: PrivacyDto,
     place: &str,
@@ -137,143 +139,17 @@ pub(super) fn parse_privacy(
             base_dir,
         )?);
     }
-
     if let Some(OrderedPermissions(entries)) = dto.permissions {
-        if entries.is_empty() {
-            return Err(Error::Config(tr!(
-                "config.privacy_permissions_is_empty",
-                place = place
-            )));
-        }
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut list = Vec::new();
-        for (key, source) in entries {
-            let here = format!("{place}.permissions.{key}");
-            if key.trim().is_empty() || key.trim() != key {
-                return Err(Error::Config(tr!(
-                    "config.privacy_invalid_permission_name",
-                    place = place,
-                    key = key
-                )));
-            }
-            if !seen.insert(key.clone()) {
-                return Err(Error::Config(tr!(
-                    "config.privacy_duplicate_permission_name",
-                    place = place,
-                    key = key
-                )));
-            }
-            let Some(source) = source else {
-                return Err(Error::Config(tr!(
-                    "config.privacy_entry_is_empty",
-                    place = here
-                )));
-            };
-            list.push((key, parse_source(source, &here, base_dir)?));
-        }
-        config.permissions = Some(list);
+        config.permissions = Some(parse_permissions(entries, &place, base_dir)?);
     }
-
     if let Some(remote) = dto.remote_code {
-        let here = format!("{place}.remoteCode");
-        let Some(uses) = remote.uses else {
-            return Err(Error::Config(tr!(
-                "config.privacy_remotecode_specify_uses",
-                place = here
-            )));
-        };
-        let justification = match (uses, remote.justification) {
-            (true, Some(source)) => Some(parse_source(
-                source,
-                &format!("{here}.justification"),
-                base_dir,
-            )?),
-            (true, None) => {
-                return Err(Error::Config(tr!(
-                    "config.privacy_remotecode_justification_required",
-                    place = here
-                )));
-            }
-            (false, Some(_)) => {
-                return Err(Error::Config(tr!(
-                    "config.privacy_remotecode_justification_not_allowed",
-                    place = here
-                )));
-            }
-            (false, None) => None,
-        };
-        config.remote_code = Some(RemoteCodeConfig {
-            uses,
-            justification,
-        });
+        config.remote_code = Some(parse_remote_code(remote, &place, base_dir)?);
     }
-
     if let Some(usage) = dto.data_usage {
-        let here = format!("{place}.dataUsage");
-        let Some(names) = usage.collected else {
-            return Err(Error::Config(tr!(
-                "config.privacy_datausage_specify_collected",
-                place = here
-            )));
-        };
-        let mut collected: Vec<DataKind> = Vec::new();
-        for name in names {
-            let Some(kind) = DataKind::parse(&name) else {
-                return Err(Error::Config(tr!(
-                    "config.privacy_unknown_data_kind",
-                    place = here,
-                    name = name,
-                    allowed = DataKind::config_keys()
-                )));
-            };
-            if collected.contains(&kind) {
-                return Err(Error::Config(tr!(
-                    "config.privacy_duplicate_data_kind",
-                    place = here,
-                    name = name
-                )));
-            }
-            collected.push(kind);
-        }
-        // 「宣誓」は true だけを許す。false や省略を黙って「入れない」とすると、
-        // 審査に必要な 3 つの宣誓を外す書き換えになりうるため、設定の誤りとして止める
-        if usage.certify != Some(true) {
-            return Err(Error::Config(tr!(
-                "config.privacy_datausage_certify_must_be_true",
-                place = here
-            )));
-        }
-        config.data_usage = Some(DataUsageConfig {
-            collected,
-            certify: true,
-        });
+        config.data_usage = Some(parse_data_usage(usage, &place)?);
     }
-
     if let Some(value) = dto.policy_url {
-        // キーなしは対象外。空文字は「空欄が正本」。それ以外は http(s) の絶対 URL だけ
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            let ok = parse_absolute_url(trimmed)
-                .is_some_and(|u| (u.scheme == "https" || u.scheme == "http") && !u.host.is_empty());
-            if !ok {
-                return Err(Error::Config(tr!(
-                    "config.specify_an_absolute_http_s_url",
-                    config_key = "policyUrl",
-                    place = place,
-                    value = value
-                )));
-            }
-            let length = utf16_len(trimmed);
-            if length > POLICY_URL_MAX_LENGTH {
-                return Err(Error::Config(tr!(
-                    "config.privacy_policy_url_too_long",
-                    place = place,
-                    length = format_n0(length),
-                    max = format_n0(POLICY_URL_MAX_LENGTH)
-                )));
-            }
-        }
-        config.policy_url = Some(trimmed.to_string());
+        config.policy_url = Some(parse_policy_url(&value, &place)?);
     }
 
     if config.single_purpose.is_none()
@@ -288,6 +164,144 @@ pub(super) fn parse_privacy(
         )));
     }
     Ok(config)
+}
+
+/// `permissions`（権限名ごとの正当性の取り出し元）
+fn parse_permissions(
+    entries: Vec<(String, Option<TextSourceDto>)>,
+    place: &str,
+    base_dir: &Path,
+) -> Result<Vec<(String, TextSource)>> {
+    if entries.is_empty() {
+        return Err(Error::Config(tr!(
+            "config.privacy_permissions_is_empty",
+            place = place
+        )));
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut list = Vec::new();
+    for (key, source) in entries {
+        let here = format!("{place}.permissions.{key}");
+        if key.trim().is_empty() || key.trim() != key {
+            return Err(Error::Config(tr!(
+                "config.privacy_invalid_permission_name",
+                place = place,
+                key = key
+            )));
+        }
+        if !seen.insert(key.clone()) {
+            return Err(Error::Config(tr!(
+                "config.privacy_duplicate_permission_name",
+                place = place,
+                key = key
+            )));
+        }
+        let Some(source) = source else {
+            return Err(Error::Config(tr!(
+                "config.privacy_entry_is_empty",
+                place = here
+            )));
+        };
+        list.push((key, parse_source(source, &here, base_dir)?));
+    }
+    Ok(list)
+}
+
+/// `remoteCode`（`uses` と、true のときだけ必須の `justification`）
+fn parse_remote_code(
+    remote: RemoteCodeDto,
+    place: &str,
+    base_dir: &Path,
+) -> Result<RemoteCodeConfig> {
+    let here = format!("{place}.remoteCode");
+    let Some(uses) = remote.uses else {
+        return Err(Error::Config(tr!(
+            "config.privacy_remotecode_specify_uses",
+            place = here
+        )));
+    };
+    let justification = match (uses, remote.justification) {
+        (true, Some(source)) => Some(parse_source(
+            source,
+            &format!("{here}.justification"),
+            base_dir,
+        )?),
+        (true, None) => {
+            return Err(Error::Config(tr!(
+                "config.privacy_remotecode_justification_required",
+                place = here
+            )));
+        }
+        (false, Some(_)) => {
+            return Err(Error::Config(tr!(
+                "config.privacy_remotecode_justification_not_allowed",
+                place = here
+            )));
+        }
+        (false, None) => None,
+    };
+    Ok(RemoteCodeConfig {
+        uses,
+        justification,
+    })
+}
+
+/// `dataUsage`（収集するデータの種類と、true だけを許す宣誓）
+fn parse_data_usage(usage: DataUsageDto, place: &str) -> Result<DataUsageConfig> {
+    let here = format!("{place}.dataUsage");
+    let Some(names) = usage.collected else {
+        return Err(Error::Config(tr!(
+            "config.privacy_datausage_specify_collected",
+            place = here
+        )));
+    };
+    let mut collected: Vec<DataKind> = Vec::new();
+    for name in names {
+        let Some(kind) = DataKind::parse(&name) else {
+            return Err(Error::Config(tr!(
+                "config.privacy_unknown_data_kind",
+                place = here,
+                name = name,
+                allowed = DataKind::config_keys()
+            )));
+        };
+        if collected.contains(&kind) {
+            return Err(Error::Config(tr!(
+                "config.privacy_duplicate_data_kind",
+                place = here,
+                name = name
+            )));
+        }
+        collected.push(kind);
+    }
+    // 「宣誓」は true だけを許す。false や省略を黙って「入れない」とすると、
+    // 審査に必要な 3 つの宣誓を外す書き換えになりうるため、設定の誤りとして止める
+    if usage.certify != Some(true) {
+        return Err(Error::Config(tr!(
+            "config.privacy_datausage_certify_must_be_true",
+            place = here
+        )));
+    }
+    Ok(DataUsageConfig {
+        collected,
+        certify: true,
+    })
+}
+
+/// `policyUrl`。キーなしは対象外（呼び出し側）。空文字は「空欄が正本」。
+/// それ以外は http(s) の絶対 URL だけ（公式 URL などと共通の検査）で、長さの上限は ここで見る
+fn parse_policy_url(value: &str, place: &str) -> Result<String> {
+    let trimmed = check_http_url(value, "policyUrl", place)?;
+    let length = utf16_len(&trimmed);
+    if length > POLICY_URL_MAX_LENGTH {
+        return Err(Error::Config(tr!(
+            "config.privacy_policy_url_too_long",
+            place = place,
+            length = format_n0(length),
+            max = format_n0(POLICY_URL_MAX_LENGTH)
+        )));
+    }
+    Ok(trimmed)
 }
 
 /// 本文の取り出し元 1 つ（`description` と同じ形: file と、sectionStart / sectionEnd の組）
@@ -310,7 +324,7 @@ fn parse_source(dto: TextSourceDto, place: &str, base_dir: &Path) -> Result<Text
     if let Some(p) = &dto.section_end {
         section::validate_pattern(p, &format!("{place}.sectionEnd"))?;
     }
-    let file = full_path(&base_dir.join(expand(dto.file.as_deref()).unwrap_or_default()));
+    let file = resolve_under(base_dir, dto.file.as_deref());
     if !file.is_file() {
         return Err(Error::Config(tr!(
             "config.privacy_source_file_not_found",

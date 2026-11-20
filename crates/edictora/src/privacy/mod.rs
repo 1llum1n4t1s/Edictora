@@ -128,7 +128,7 @@ pub struct ExpectedDataUsage {
 }
 
 /// アイテム 1 件の「プライバシー」タブの正本（設定に書いた欄だけを持つ）
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExpectedPrivacy {
     /// 単一用途の説明
     pub single_purpose: Option<String>,
@@ -408,30 +408,7 @@ pub struct PrivacyComparison {
 impl PrivacyComparison {
     /// 全体の状態。エラー > 未取得 > 差分あり > 一致 の順に強い方を採る（`LocaleComparison` と同じ）
     pub fn status(&self) -> ComparisonStatus {
-        if self.error.is_some()
-            || self
-                .rows
-                .iter()
-                .any(|r| r.status == ComparisonStatus::Error)
-        {
-            return ComparisonStatus::Error;
-        }
-        if self.rows.is_empty()
-            || self
-                .rows
-                .iter()
-                .any(|r| r.status == ComparisonStatus::NotFetched)
-        {
-            return ComparisonStatus::NotFetched;
-        }
-        if self
-            .rows
-            .iter()
-            .any(|r| r.status == ComparisonStatus::Different)
-        {
-            return ComparisonStatus::Different;
-        }
-        ComparisonStatus::Match
+        ComparisonStatus::overall(self.error.is_some(), self.rows.iter().map(|r| r.status))
     }
 
     /// 差分のある（書き換えで直せる）欄

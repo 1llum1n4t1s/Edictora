@@ -25,6 +25,16 @@ pub enum Only {
 }
 
 impl Only {
+    /// `--only` の値を解釈する（前後の空白と大文字小文字を許す）。`all` は指定できない（None）
+    fn parse(value: &str) -> Option<Only> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "text" => Some(Only::Text),
+            "images" => Some(Only::Images),
+            "privacy" => Some(Only::Privacy),
+            _ => None,
+        }
+    }
+
     /// テキストを対象にするか
     pub fn text(self) -> bool {
         matches!(self, Only::All | Only::Text)
@@ -167,6 +177,9 @@ impl CliCommand {
 }
 
 /// 引数を解釈する。誤りは `Usage` エラー
+///
+/// 検査の順序は契約（エラー文言が変わる）: help / version の走査 → コマンドの種類 →
+/// （使えないオプション → 値の有無・空 → 重複 → 値の妥当性）→ submit の組み合わせ
 pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
     let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
     if args
@@ -187,100 +200,30 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
     if let Some(first) = args.first()
         && !first.starts_with('-')
     {
-        kind = match first.to_lowercase().as_str() {
-            "login" => CliCommandKind::Login,
-            "pull" => CliCommandKind::Pull,
-            "diff" => CliCommandKind::Diff,
-            "push" => CliCommandKind::Push,
-            "submit" => CliCommandKind::Submit,
-            "update" => CliCommandKind::Update,
-            _ => {
-                return Err(Error::Usage(tr!(
-                    "cli.unknown_command_run_help_for_usage",
-                    first = first
-                )));
-            }
-        };
+        kind = parse_kind(first)?;
         index = 1;
     }
 
-    let command_name = kind.name();
     let mut cmd = CliCommand::of(kind);
-    let (mut seen_only, mut seen_scope) = (false, false);
+    // 重複を検出するため、--only と --image-scope は最後まで Option で持つ
+    let mut only: Option<Only> = None;
+    let mut image_scope: Option<ImageScope> = None;
 
     while index < args.len() {
-        let arg = args[index];
-        if !arg.starts_with("--") {
-            return Err(Error::Usage(tr!("cli.unexpected_argument", arg = arg)));
-        }
-
-        // --name=value 形式にも対応する
-        let (name, mut value) = match arg.find('=') {
-            Some(eq) if eq > 0 => (arg[..eq].to_lowercase(), Some(arg[eq + 1..].to_string())),
-            _ => (arg.to_lowercase(), None),
-        };
-
-        if !kind.allowed_options().contains(&name.as_str()) {
-            return Err(Error::Usage(tr!(
-                "cli.cannot_be_used_with_run_help_for",
-                name = name,
-                command_name = command_name
-            )));
-        }
-
-        if VALUE_OPTIONS.contains(&name.as_str()) {
-            if value.is_none() {
-                match args.get(index + 1) {
-                    Some(next) if !next.starts_with("--") => {
-                        value = Some(next.to_string());
-                        index += 1;
-                    }
-                    _ => {
-                        return Err(Error::Usage(tr!("cli.requires_a_value", name = name)));
-                    }
-                }
-            }
-            if value.as_deref().is_none_or(|v| v.trim().is_empty()) {
-                return Err(Error::Usage(tr!("cli.the_value_of_is_empty", name = name)));
-            }
-        } else if value.is_some() {
-            return Err(Error::Usage(tr!("cli.does_not_take_a_value", name = name)));
-        }
-
-        let v = value.unwrap_or_default();
+        let (name, v) = next_option(&args, &mut index, kind)?;
         match name.as_str() {
-            "--only" => {
-                if seen_only {
-                    return Err(Error::Usage(tr!(
-                        "cli.is_specified_more_than_once",
-                        name = name
-                    )));
-                }
-                seen_only = true;
-                cmd.only = match v.trim().to_ascii_lowercase().as_str() {
-                    "text" => Only::Text,
-                    "images" => Only::Images,
-                    "privacy" => Only::Privacy,
-                    _ => {
-                        return Err(Error::Usage(tr!("cli.invalid_value_for_only", value = v)));
-                    }
-                };
-            }
-            "--image-scope" => {
-                if seen_scope {
-                    return Err(Error::Usage(tr!(
-                        "cli.is_specified_more_than_once",
-                        name = name
-                    )));
-                }
-                seen_scope = true;
-                cmd.image_scope = ImageScope::parse(&v).ok_or_else(|| {
+            "--only" => set_once(&mut only, &name, || {
+                Only::parse(&v)
+                    .ok_or_else(|| Error::Usage(tr!("cli.invalid_value_for_only", value = v)))
+            })?,
+            "--image-scope" => set_once(&mut image_scope, &name, || {
+                ImageScope::parse(&v).ok_or_else(|| {
                     Error::Usage(tr!("cli.invalid_value_for_image_scope", value = v))
-                })?;
-            }
-            "--config" => set_once(&mut cmd.config_path, v, &name)?,
-            "--profile" => set_once(&mut cmd.profile_dir, v, &name)?,
-            "--chrome" => set_once(&mut cmd.chrome_path, v, &name)?,
+                })
+            })?,
+            "--config" => set_once(&mut cmd.config_path, &name, || Ok(v))?,
+            "--profile" => set_once(&mut cmd.profile_dir, &name, || Ok(v))?,
+            "--chrome" => set_once(&mut cmd.chrome_path, &name, || Ok(v))?,
             "--item" => {
                 let id = v.trim().to_lowercase();
                 if !is_valid_item_id(&id) {
@@ -323,39 +266,107 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<CliCommand> {
             "--show-browser" => cmd.show_browser = true,
             _ => {}
         }
-        index += 1;
     }
+    cmd.only = only.unwrap_or_default();
+    cmd.image_scope = image_scope.unwrap_or_default();
 
     if kind == CliCommandKind::Submit {
-        // 審査送信は取り返しがつかないので、複数アイテムの一括送信はさせない
-        if cmd.item_ids.is_empty() {
-            return Err(Error::Usage(
-                trs!("cli.submit_requires_exactly_one_item_item_id").to_string(),
-            ));
-        }
-        if cmd.item_ids.len() > 1 {
-            return Err(Error::Usage(
-                trs!("cli.run_submit_for_one_item_at_a").to_string(),
-            ));
-        }
-        if !cmd.yes {
-            return Err(Error::Usage(
-                trs!("cli.submit_sends_the_item_for_review_add").to_string(),
-            ));
-        }
+        check_submit(&cmd)?;
     }
 
     Ok(cmd)
 }
 
-fn set_once(slot: &mut Option<String>, value: String, name: &str) -> Result<()> {
+/// 先頭の語からサブコマンドを決める（先頭が `-` で始まらないときだけ呼ぶ）
+fn parse_kind(first: &str) -> Result<CliCommandKind> {
+    match first.to_lowercase().as_str() {
+        "login" => Ok(CliCommandKind::Login),
+        "pull" => Ok(CliCommandKind::Pull),
+        "diff" => Ok(CliCommandKind::Diff),
+        "push" => Ok(CliCommandKind::Push),
+        "submit" => Ok(CliCommandKind::Submit),
+        "update" => Ok(CliCommandKind::Update),
+        _ => Err(Error::Usage(tr!(
+            "cli.unknown_command_run_help_for_usage",
+            first = first
+        ))),
+    }
+}
+
+/// `args[*index]` のオプションを 1 つ読み、（小文字の名前, 値）を返す。`*index` は次の要素へ進める。
+/// 値を取らないオプションの値は空文字列
+fn next_option(args: &[&str], index: &mut usize, kind: CliCommandKind) -> Result<(String, String)> {
+    let arg = args[*index];
+    if !arg.starts_with("--") {
+        return Err(Error::Usage(tr!("cli.unexpected_argument", arg = arg)));
+    }
+
+    // --name=value 形式にも対応する
+    let (name, mut value) = match arg.find('=') {
+        Some(eq) if eq > 0 => (arg[..eq].to_lowercase(), Some(arg[eq + 1..].to_string())),
+        _ => (arg.to_lowercase(), None),
+    };
+
+    if !kind.allowed_options().contains(&name.as_str()) {
+        return Err(Error::Usage(tr!(
+            "cli.cannot_be_used_with_run_help_for",
+            name = name,
+            command_name = kind.name()
+        )));
+    }
+
+    if VALUE_OPTIONS.contains(&name.as_str()) {
+        if value.is_none() {
+            match args.get(*index + 1) {
+                Some(next) if !next.starts_with("--") => {
+                    value = Some(next.to_string());
+                    *index += 1;
+                }
+                _ => {
+                    return Err(Error::Usage(tr!("cli.requires_a_value", name = name)));
+                }
+            }
+        }
+        if value.as_deref().is_none_or(|v| v.trim().is_empty()) {
+            return Err(Error::Usage(tr!("cli.the_value_of_is_empty", name = name)));
+        }
+    } else if value.is_some() {
+        return Err(Error::Usage(tr!("cli.does_not_take_a_value", name = name)));
+    }
+
+    *index += 1;
+    Ok((name, value.unwrap_or_default()))
+}
+
+/// submit の組み合わせ検査。審査送信は取り返しがつかないので、複数アイテムの一括送信はさせない
+fn check_submit(cmd: &CliCommand) -> Result<()> {
+    if cmd.item_ids.is_empty() {
+        return Err(Error::Usage(
+            trs!("cli.submit_requires_exactly_one_item_item_id").to_string(),
+        ));
+    }
+    if cmd.item_ids.len() > 1 {
+        return Err(Error::Usage(
+            trs!("cli.run_submit_for_one_item_at_a").to_string(),
+        ));
+    }
+    if !cmd.yes {
+        return Err(Error::Usage(
+            trs!("cli.submit_sends_the_item_for_review_add").to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// 一度だけ指定できるオプションの値を入れる。重複は値の妥当性（`make`）より先に検査する
+fn set_once<T>(slot: &mut Option<T>, name: &str, make: impl FnOnce() -> Result<T>) -> Result<()> {
     if slot.is_some() {
         return Err(Error::Usage(tr!(
             "cli.is_specified_more_than_once",
             name = name
         )));
     }
-    *slot = Some(value);
+    *slot = Some(make()?);
     Ok(())
 }
 

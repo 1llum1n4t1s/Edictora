@@ -30,7 +30,7 @@ fn main() {
     // ── Velopack のフック（引数の解釈より前。処理後は必ず 0 で終える）──
     if let Some(hook) = hooks::parse_hook(&args) {
         logging::init(&paths.log_directory());
-        let code = hooks::run_hook(&hook);
+        let code = hooks::run_hook(&hook, &paths);
         logging::shutdown();
         std::process::exit(code);
     }
