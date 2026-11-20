@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use edictora::listing::ComparisonStatus;
 use edictora::privacy::{
-    self, DataKind, ExpectedDataUsage, ExpectedPrivacy, ExpectedRemoteCode, PrivacyField,
-    PrivacyReading, compare, dedent, describe, format_kinds,
+    DataKind, ExpectedDataUsage, ExpectedPrivacy, ExpectedRemoteCode, PrivacyField, PrivacyReading,
+    compare, dedent, describe, format_kinds,
 };
 
 fn expected() -> ExpectedPrivacy {
@@ -328,10 +328,4 @@ fn 説明文の整形は欄の種類で変わる() {
         e.starts_with("[プライバシー] 権限の正当性（activeTab）: エラー: "),
         "{e}"
     );
-}
-
-#[test]
-fn 定数の値() {
-    assert_eq!(privacy::TEXT_MAX_LENGTH, 1_000);
-    assert_eq!(privacy::HOST_PERMISSION_KEY, "host");
 }

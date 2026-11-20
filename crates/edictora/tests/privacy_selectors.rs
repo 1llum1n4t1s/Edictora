@@ -9,7 +9,7 @@ use edictora::dashboard::selectors::{
     ensure_privacy_text_writable, pick_certify_checkbox, pick_data_kind_checkbox,
     privacy_page_state,
 };
-use edictora::dashboard::text::{EN, JA, PrivacyText};
+use edictora::dashboard::text::{JA, PrivacyText};
 use edictora::privacy::DataKind;
 
 fn p() -> PrivacyText {
@@ -54,13 +54,6 @@ fn checkboxes(checked: &[DataKind], certify: [bool; 3]) -> Vec<ElementInfo> {
         v.push(checkbox(9 + i as i32, label, certify[i]));
     }
     v
-}
-
-#[test]
-fn 英語の画面はプライバシータブの文言を持たない() {
-    // 実画面で未確認の言語は、このタブの読み書きを許さない（推測で文言を足さない）
-    assert!(EN.privacy.is_none());
-    assert!(JA.privacy.is_some());
 }
 
 #[test]

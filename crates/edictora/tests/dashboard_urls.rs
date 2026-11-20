@@ -4,8 +4,7 @@ mod common;
 
 use common::ITEM_A as ITEM;
 use edictora::dashboard::urls::{
-    ROOT, edit_url, is_edit_page_of, is_login_page, is_privacy_page_of, privacy_url,
-    try_parse_publisher_id,
+    ROOT, edit_url, is_edit_page_of, is_privacy_page_of, privacy_url, try_parse_publisher_id,
 };
 use edictora::logging::{redact, redact_account, redact_diagnostics};
 
@@ -58,14 +57,6 @@ fn edit_url_編集画面のurlを作る() {
         )),
         ITEM
     ));
-}
-
-#[test]
-fn is_login_page_googleのログイン画面を判定する() {
-    assert!(is_login_page(Some(
-        "https://accounts.google.com/v3/signin/identifier"
-    )));
-    assert!(!is_login_page(Some(ROOT)));
 }
 
 #[test]

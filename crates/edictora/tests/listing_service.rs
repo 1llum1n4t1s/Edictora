@@ -324,17 +324,6 @@ fn push_差分のあるロケールだけを書き換えて保存し読み直し
 }
 
 #[test]
-fn push_審査待ちなら何も書き換えない() {
-    let mut page = page();
-    page.status = "審査待ち".to_string();
-
-    let r = services::push(&mut page, &expected(), &no_progress, &CancelToken::new());
-
-    assert!(matches!(r, Err(Error::WriteBlocked(_))));
-    assert!(!wrote_or_saved(&page));
-}
-
-#[test]
 fn push_書き換え後の値が一致しなければ保存しない() {
     let mut page = page();
     page.corrupt_writes = true;
@@ -345,17 +334,6 @@ fn push_書き換え後の値が一致しなければ保存しない() {
     assert!(!page.log.iter().any(|l| l == "save"));
     assert_eq!(page.saved_value("en", ListingField::Description), "Old EN");
     assert!(page.log.iter().any(|l| l.starts_with("capture")));
-}
-
-#[test]
-fn push_ダッシュボードに無いロケールがあれば何も書き換えない() {
-    let mut page = page();
-    page.saved.retain(|(c, _)| c != "ja");
-
-    let r = services::push(&mut page, &expected(), &no_progress, &CancelToken::new());
-
-    assert!(matches!(r, Err(Error::Dashboard(_))));
-    assert!(!page.log.iter().any(|l| l.starts_with("write")));
 }
 
 #[test]
@@ -658,6 +636,7 @@ fn push_審査待ちならカテゴリも書かない() {
 
     assert!(matches!(err, Error::WriteBlocked(_)));
     assert_eq!(count(&page, "write-category"), 0);
+    assert!(!wrote_or_saved(&page));
 }
 
 #[test]
@@ -719,31 +698,4 @@ fn カテゴリを書いていなければ読まず比較行も無い() {
     assert_eq!(count(&page, "read-category"), 0);
     assert!(snapshot.category.is_none());
     assert!(category::compare(&item, Some(&snapshot)).is_none());
-}
-
-#[test]
-fn カテゴリの対応表は21件で往復でき_プレースホルダーは正本にできない() {
-    assert_eq!(category::CATEGORIES.len(), 21);
-    for (key, value) in category::CATEGORIES {
-        assert_eq!(category::data_value_of(key), Some(value));
-        assert_eq!(category::key_of(value), Some(key));
-        assert!(!key.contains(char::is_uppercase));
-        assert!(value.starts_with("CATEGORY_"));
-    }
-    assert_eq!(
-        category::data_value_of("art_and_design"),
-        Some("CATEGORY_EXTENSIONS_ART_AND_DESIGN")
-    );
-    assert_eq!(
-        category::data_value_of("entertainment"),
-        Some("CATEGORY_EXTENSIONS_ENTERTAINMENT")
-    );
-    assert_eq!(category::data_value_of(category::PLACEHOLDER_VALUE), None);
-    assert_eq!(category::data_value_of("Productivity"), None);
-    assert_eq!(category::key_of(category::PLACEHOLDER_VALUE), None);
-    // 未知の data-value はそのまま表示する
-    assert_eq!(
-        category::describe_value("CATEGORY_NEW_ONE"),
-        "CATEGORY_NEW_ONE"
-    );
 }

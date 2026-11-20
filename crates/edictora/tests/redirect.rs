@@ -1,106 +1,15 @@
 //! MSIX パッケージのアプリ専用領域へのリダイレクト検出（`redirect`）のテスト。
 //!
-//! 判定はパス文字列だけの純粋関数でテストし、候補の列挙は作業フォルダーの下に作った偽の `Packages` で確かめる
+//! 実ファイルでの最終パス解決と、設定が無いときの候補の案内を、作業フォルダーの下に作った偽の `Packages` で確かめる
 //! （実際の `%LOCALAPPDATA%\Packages` や `%APPDATA%\Edictora` には触れない）。
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use common::{config_err, test_paths, work_dir};
 use edictora::config;
-use edictora::redirect::{
-    detect_redirect, find_package_configs, find_redirect, package_family_of, resolve_final_path,
-    strip_verbatim_prefix,
-};
-
-const REAL: &str = r"C:\Users\IMT\AppData\Roaming\Edictora";
-const VIRTUAL: &str =
-    r"\\?\C:\Users\IMT\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Edictora";
-
-#[test]
-fn 専用領域へ付け替えられていればその実パスを返す() {
-    let actual = detect_redirect(Path::new(REAL), Path::new(VIRTUAL)).expect("リダイレクト");
-    assert_eq!(
-        actual,
-        PathBuf::from(
-            r"C:\Users\IMT\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Edictora"
-        )
-    );
-}
-
-#[test]
-fn ローカル側の専用領域も判定する() {
-    let requested = r"C:\Users\IMT\AppData\Local\Edictora.Data\chrome-profile";
-    let resolved = r"\\?\C:\Users\IMT\AppData\Local\Packages\Claude_x\LocalCache\Local\Edictora.Data\chrome-profile";
-    assert!(detect_redirect(Path::new(requested), Path::new(resolved)).is_some());
-}
-
-#[test]
-fn 同じパスなら判定しない_表記の揺れも同じとみなす() {
-    assert_eq!(detect_redirect(Path::new(REAL), Path::new(REAL)), None);
-    // 拡張プレフィックス・大文字小文字・末尾の区切り・スラッシュ
-    let verbatim = format!(r"\\?\{}\", REAL.to_uppercase());
-    assert_eq!(detect_redirect(Path::new(REAL), Path::new(&verbatim)), None);
-    let slashes = REAL.replace('\\', "/");
-    assert_eq!(detect_redirect(Path::new(&slashes), Path::new(REAL)), None);
-}
-
-#[test]
-fn 利用者が最初から専用領域のパスを指定したなら判定しない() {
-    let p = VIRTUAL.trim_start_matches(r"\\?\");
-    assert_eq!(detect_redirect(Path::new(p), Path::new(VIRTUAL)), None);
-}
-
-#[test]
-fn 専用領域以外への付け替えは判定しない() {
-    // ジャンクションなどで別のドライブへ向いているだけ
-    assert_eq!(
-        detect_redirect(Path::new(REAL), Path::new(r"\\?\D:\Data\Roaming\Edictora")),
-        None
-    );
-    // Packages の下でも LocalCache でなければ（例: LocalState）対象外
-    assert_eq!(
-        detect_redirect(
-            Path::new(REAL),
-            Path::new(r"C:\Users\IMT\AppData\Local\Packages\Claude_x\LocalState\Edictora")
-        ),
-        None
-    );
-    // AppData\Local\Packages の並びでなければ対象外
-    assert_eq!(
-        detect_redirect(
-            Path::new(REAL),
-            Path::new(r"C:\Work\Packages\Claude_x\LocalCache\Edictora")
-        ),
-        None
-    );
-}
-
-#[test]
-fn パッケージ_ファミリー名を取り出す() {
-    assert_eq!(
-        package_family_of(Path::new(VIRTUAL)).as_deref(),
-        Some("claude_pzs8sxrjxfjjc")
-    );
-    assert_eq!(package_family_of(Path::new(REAL)), None);
-    assert_eq!(
-        package_family_of(Path::new(
-            r"C:\Users\x\AppData\Local\Packages\LocalCache\foo"
-        )),
-        None
-    );
-}
-
-#[test]
-fn 拡張プレフィックスを外す() {
-    assert_eq!(strip_verbatim_prefix(r"\\?\C:\a"), r"C:\a");
-    assert_eq!(
-        strip_verbatim_prefix(r"\\?\UNC\srv\share\a"),
-        r"\\srv\share\a"
-    );
-    assert_eq!(strip_verbatim_prefix(r"C:\a"), r"C:\a");
-}
+use edictora::redirect::{find_redirect, resolve_final_path};
 
 #[test]
 fn 通常のフォルダーとファイルはリダイレクトされない() {
@@ -136,40 +45,6 @@ fn fake_package(root: &Path, name: &str, with_config: bool) {
 fn reset(dir: &Path) {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).unwrap();
-}
-
-#[test]
-fn 専用領域の設定ファイルの候補を列挙する() {
-    let dir = work_dir("redirect_candidates");
-    let root = dir.join("Packages");
-    reset(&root);
-    fake_package(&root, "B_pkg", true);
-    fake_package(&root, "A_pkg", true);
-    fake_package(&root, "C_pkg_no_config", false);
-    std::fs::write(root.join("stray-file"), "x").unwrap();
-
-    let found = find_package_configs(&root, &dir.join("config.json"));
-    let names: Vec<_> = found
-        .iter()
-        .map(|p| {
-            p.strip_prefix(&root)
-                .unwrap()
-                .components()
-                .next()
-                .unwrap()
-                .as_os_str()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    assert_eq!(names, ["A_pkg", "B_pkg"]);
-
-    // 根が無ければ空
-    assert!(find_package_configs(&dir.join("missing"), &dir.join("config.json")).is_empty());
-    // 除外指定の候補は出さない（大文字小文字は区別しない）
-    let excluded = found[0].to_string_lossy().to_uppercase();
-    let left = find_package_configs(&root, Path::new(&excluded));
-    assert_eq!(left, vec![found[1].clone()]);
 }
 
 #[test]

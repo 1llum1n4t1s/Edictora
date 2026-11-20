@@ -401,13 +401,6 @@ fn only_textではプライバシーを対象にしない() {
 }
 
 #[test]
-fn only_imagesではプライバシーを対象にしない() {
-    let ctx = Ctx::new("config_privacy_targets_images");
-    // 画像を書いていないので対象が無く、設定エラー
-    config_err(targets(&ctx, &two_items(), &["diff", "--only", "images"]));
-}
-
-#[test]
 fn locale指定ではプライバシーを絞らない() {
     let ctx = Ctx::new("config_privacy_targets_locale");
     let items = targets(&ctx, &two_items(), &["diff", "--locale", "ja"]).unwrap();

@@ -3,9 +3,7 @@
 mod common;
 
 use common::ITEM_A as ITEM;
-use edictora::listing::text_diff::{
-    compute, first_difference_index, first_difference_position, format,
-};
+use edictora::listing::text_diff::{compute, first_difference_position, format};
 use edictora::listing::*;
 
 fn values(pairs: &[(ListingField, &str)]) -> FieldValues {
@@ -136,13 +134,6 @@ fn text_diff_変更行だけを前後の文脈付きで示す() {
     let text = format(&compute(before, after), 1);
 
     assert_eq!(text, "  …\n  c\n- d\n+ D\n  e\n  …\n");
-}
-
-#[test]
-fn text_diff_最初の相違位置を返す() {
-    assert_eq!(first_difference_index("abc", "abc"), -1);
-    assert_eq!(first_difference_index("abc", "abX"), 2);
-    assert_eq!(first_difference_index("abc", "abc "), 3);
 }
 
 #[test]

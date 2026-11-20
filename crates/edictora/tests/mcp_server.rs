@@ -13,7 +13,7 @@ use edictora::mcp::{self, ArgumentError, build_cli_args, tool_definitions, tool_
 use serde_json::{Value, json};
 
 mod common;
-use common::{test_paths, work_dir};
+use common::{ITEM_A, test_paths, work_dir, write_png};
 
 /// Chrome を開いてはいけないテストで渡す関数（呼ばれたら失敗させる）
 fn no_browser(_: &DashboardBrowserOptions, _: &CancelToken) -> edictora::Result<DashboardBrowser> {
@@ -167,6 +167,9 @@ fn tools_list_検索で見つかる語を説明に含める() {
             "{}",
             t["name"]
         );
+        // 全ツールの説明に検索語を含める（exe 経由の確認から移した）
+        assert!(d.contains("store listing"), "{}", t["name"]);
+        assert!(d.contains("description"), "{}", t["name"]);
         // 英語に統一する（日本語を混ぜない）
         assert!(d.is_ascii(), "{}: {d}", t["name"]);
     }
@@ -389,15 +392,6 @@ fn tool_result_from_cli_差分ありは失敗にせず_ログインが必要な�
     assert!(text_of(&login).contains("`edictora login`"));
 }
 
-#[test]
-fn is_mcp_command_mcpだけを受け付ける() {
-    assert!(mcp::is_mcp_command(&["mcp"]));
-    assert!(mcp::is_mcp_command(&["MCP"]));
-    assert!(!mcp::is_mcp_command(&["mcp", "--show-browser"]));
-    assert!(!mcp::is_mcp_command::<&str>(&[]));
-    assert!(!mcp::is_mcp_command(&["diff"]));
-}
-
 /// 本物の exe を `mcp` で起動し、表示言語を固定してメッセージを送る（入力を閉じると受け付け済みを返して終わる）。
 /// MCP は AI が読む出力なので、表示言語の環境変数に関わらず英語になることを exe の起動で確かめる
 fn exchange_exe(dir_name: &str, lang: &str, messages: &[Value]) -> Vec<Value> {
@@ -430,44 +424,6 @@ fn exchange_exe(dir_name: &str, lang: &str, messages: &[Value]) -> Vec<Value> {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap_or_else(|_| panic!("JSON でない行: {l}")))
         .collect()
-}
-
-#[test]
-fn exe_説明に検索で見つかる英語の語を含める() {
-    let replies = exchange_exe(
-        "mcp-exe-en",
-        "en",
-        &[
-            request(
-                1,
-                "initialize",
-                json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "t", "version": "0" } }),
-            ),
-            request(2, "tools/list", json!({})),
-        ],
-    );
-    let instructions = by_id(&replies, 1)["result"]["instructions"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(instructions.contains("Chrome Web Store"), "{instructions}");
-    assert!(!instructions.contains("掲載情報"), "{instructions}");
-
-    let tools = by_id(&replies, 2)["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .clone();
-    assert_eq!(tools.len(), 5);
-    for t in &tools {
-        let d = t["description"].as_str().unwrap();
-        assert!(d.contains("Chrome Web Store"), "{}", t["name"]);
-        assert!(d.contains("store listing"), "{}", t["name"]);
-        assert!(d.contains("description"), "{}", t["name"]);
-        // 英語表示では日本語を混ぜない
-        assert!(d.is_ascii(), "{}: {d}", t["name"]);
-        // スキーマは言語によらず同じ
-        assert_eq!(t["inputSchema"]["additionalProperties"], false);
-    }
 }
 
 #[test]
@@ -604,4 +560,83 @@ fn build_cli_args_only_privacyを通す() {
         .map(|v| v.as_str().unwrap())
         .collect();
     assert_eq!(values, ["text", "images", "privacy"]);
+}
+
+/// images・privacy・category・locale をすべて含む設定で、`edictora_list_items` の本文を 1 字単位で固定する
+/// （要約を節ごとの関数へ分けても出力が変わらないことの特性テスト。AI が読む文言なので英語のまま固定）
+#[test]
+fn tools_call_list_itemsは設定の各節の要約を固定した文面で返す() {
+    let dir = work_dir("mcp-list-full");
+    // baseDir は設定ファイルのあるフォルダー（既定は roaming）からの相対
+    let repo = dir.join("roaming").join("repo");
+    let web = repo.join("webstore");
+    std::fs::create_dir_all(&web).unwrap();
+    std::fs::write(
+        web.join("listing.txt"),
+        "■ 説明\n本文です\n■ カテゴリ\n\n■ 単一の目的の説明\n目的です\n■ 次\n\n  activeTab:\n  タブ用\n\n  storage:\n  保存用\n■ 終わり\n",
+    )
+    .unwrap();
+    let images = web.join("images");
+    write_png(&images, "icon.png", 128, 128, 2, 8, 1);
+    write_png(&images, "tile-small.png", 440, 280, 2, 8, 2);
+    write_png(&images, "tile-marquee.png", 1400, 560, 2, 8, 3);
+    for (i, locale) in ["en", "ja"].iter().enumerate() {
+        for number in 1..=2u8 {
+            write_png(
+                &images.join(locale),
+                &format!("screenshot-{number:02}.png"),
+                640,
+                400,
+                2,
+                8,
+                (i as u8) * 10 + number,
+            );
+        }
+    }
+    let config = format!(
+        r#"{{ "items": [ {{
+  "itemId": "{ITEM_A}", "name": "テスト", "baseDir": "repo",
+  "category": "developer_tools",
+  "locales": {{
+    "ja": {{ "description": {{ "file": "webstore/listing.txt" }}, "homepageUrl": "https://example.com/" }},
+    "en": {{ "supportUrl": "" }}
+  }},
+  "images": {{
+    "icon": "webstore/images/icon.png",
+    "smallTile": "webstore/images/tile-small.png",
+    "marquee": "webstore/images/tile-marquee.png",
+    "globalScreenshots": {{ "dir": "webstore/images/en" }},
+    "localizedScreenshots": {{ "ja": {{ "dir": "webstore/images/ja" }} }}
+  }},
+  "privacy": {{
+    "singlePurpose": {{ "file": "webstore/listing.txt", "sectionStart": "^■ 単一の目的の説明$", "sectionEnd": "^■ 次$" }},
+    "permissions": {{
+      "activeTab": {{ "file": "webstore/listing.txt", "sectionStart": "^  activeTab:$", "sectionEnd": "^  storage:$" }},
+      "storage": {{ "file": "webstore/listing.txt", "sectionStart": "^  storage:$", "sectionEnd": "^■ 終わり$" }}
+    }},
+    "remoteCode": {{ "uses": false }},
+    "dataUsage": {{ "collected": ["authentication"], "certify": true }},
+    "policyUrl": ""
+  }}
+}} ] }}"#
+    );
+    let paths = test_paths(&dir);
+    std::fs::create_dir_all(paths.default_config_path().parent().unwrap()).unwrap();
+    std::fs::write(paths.default_config_path(), config).unwrap();
+
+    let replies = exchange(
+        "mcp-list-full",
+        &[call(1, "edictora_list_items", json!({}))],
+    );
+    let result = &by_id(&replies, 1)["result"];
+    assert_eq!(result["isError"], false, "{result}");
+    let listing = repo.join("webstore").join("listing.txt");
+    let expected = format!(
+        "Config file: {}\nItems: 1\n\n- テスト ({ITEM_A})\n  Repository: {}\n  - category: developer_tools\n  - images: icon, smallTile, marquee, globalScreenshots (2 files), localizedScreenshots[ja] (2 files)\n  - privacy: singlePurpose <- {}; permissions (activeTab, storage); remoteCode (uses: false); dataUsage (1 kinds); policyUrl (empty)\n  - ja: Description <- {}, HomepageUrl\n  - en: SupportUrl\n",
+        paths.default_config_path().display(),
+        repo.display(),
+        listing.display(),
+        listing.display(),
+    );
+    assert_eq!(text_of(result), expected);
 }

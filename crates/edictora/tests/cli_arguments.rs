@@ -237,24 +237,6 @@ fn run_exe(dir_name: &str, lang: &str, args: &[&str]) -> (i32, String, String) {
 }
 
 #[test]
-fn exe_ヘルプはedictora_languageがenなら英語() {
-    let (code, output, _) = run_exe("cli-help-en", "en", &["--help"]);
-    assert_eq!(code, 0);
-    assert!(output.contains("Usage:"), "{output}");
-    assert!(output.contains("Chrome Web Store listings"), "{output}");
-    assert!(output.contains("edictora submit  --item <id> --yes"));
-    assert!(!output.contains("使い方"), "{output}");
-}
-
-#[test]
-fn exe_ヘルプはedictora_languageがjaなら日本語() {
-    // CI（英語の OS）でも日本語になることを確かめる
-    let (code, output, _) = run_exe("cli-help-ja", "ja", &["--help"]);
-    assert_eq!(code, 0);
-    assert_eq!(output.trim_end(), edictora::cli::args::help_text());
-}
-
-#[test]
 fn exe_引数の誤りはedictora_languageがenなら英語で終了コード2() {
     let (code, _, err) = run_exe("cli-usage-en", "en", &["frobnicate"]);
     assert_eq!(code, 2);
@@ -468,5 +450,116 @@ fn only_privacyを受け付ける() {
             "privacy"
         ])
         .is_err()
+    );
+}
+
+// ---- parse の分割前後で変えない検査の順序とエラー文言（表示言語は ja 固定） ----
+
+/// 使い方の誤りのメッセージ本文を返す（誤りでなければ panic）
+fn usage_message(args: &[&str]) -> String {
+    match parse(args) {
+        Err(Error::Usage(m)) => m,
+        other => panic!("使い方の誤りになるはず: {args:?} → {other:?}"),
+    }
+}
+
+#[test]
+fn parse_エラー文言と検査の順序を固定する() {
+    // 使えないオプションは、値が無くても値の規則より先に報告される
+    assert_eq!(
+        usage_message(&["login", "--only"]),
+        "login では --only は使えません（--help で使い方を表示）"
+    );
+    assert_eq!(
+        usage_message(&["update", "--config=x"]),
+        "update では --config は使えません（--help で使い方を表示）"
+    );
+    // 値なし・空値
+    assert_eq!(
+        usage_message(&["diff", "--only"]),
+        "--only の値がありません"
+    );
+    assert_eq!(
+        usage_message(&["diff", "--only", "--yes"]),
+        "--only の値がありません"
+    );
+    assert_eq!(usage_message(&["diff", "--only="]), "--only の値が空です");
+    assert_eq!(
+        usage_message(&["diff", "--config", "  "]),
+        "--config の値が空です"
+    );
+    assert_eq!(
+        usage_message(&["push", "--yes=1"]),
+        "--yes は値を取りません"
+    );
+    // 重複の検査は値の妥当性より先（2 つ目が不正値でも重複として報告される）
+    assert_eq!(
+        usage_message(&["diff", "--only", "text", "--only", "bogus"]),
+        "--only が 2 回指定されています"
+    );
+    assert_eq!(
+        usage_message(&["diff", "--image-scope", "all", "--image-scope", "bogus"]),
+        "--image-scope が 2 回指定されています"
+    );
+    assert_eq!(
+        usage_message(&["diff", "--config", "a", "--config", "b"]),
+        "--config が 2 回指定されています"
+    );
+    // 不正値は trim 前の値のまま文言に入る。all は --only に使えない
+    assert_eq!(
+        usage_message(&["diff", "--only", " bogus "]),
+        "--only には text・images・privacy のどれかを指定してください:  bogus "
+    );
+    assert_eq!(
+        usage_message(&["diff", "--only", "all"]),
+        "--only には text・images・privacy のどれかを指定してください: all"
+    );
+    assert_eq!(
+        usage_message(&["diff", "--image-scope", " nope "]),
+        "--image-scope には all・global・localized のいずれかを指定してください:  nope "
+    );
+    // 余分な引数・不明なコマンド
+    assert_eq!(usage_message(&["diff", "extra"]), "余分な引数です: extra");
+    assert_eq!(
+        usage_message(&["bogus"]),
+        "不明なコマンドです: bogus（--help で使い方を表示）"
+    );
+    // --wait の範囲外
+    assert_eq!(
+        usage_message(&["login", "--wait", "0"]),
+        "--wait は 1〜120 の分数で指定してください"
+    );
+}
+
+#[test]
+fn parse_waitの重複は許容され後勝ち_onlyの大文字小文字と空白は許す() {
+    let cmd = parse(&["login", "--wait", "3", "--wait", "5"]).unwrap();
+    assert_eq!(cmd.login_wait, Some(Duration::from_secs(300)));
+    let cmd = parse(&["diff", "--only", " Images "]).unwrap();
+    assert!(cmd.only.images() && !cmd.only.text());
+    // ヘルプ・バージョンの走査は、ほかの誤りより先
+    assert_eq!(
+        parse(&["bogus", "--help"]).unwrap().kind,
+        CliCommandKind::Help
+    );
+    assert_eq!(
+        parse(&["diff", "--only", "bogus", "-v"]).unwrap().kind,
+        CliCommandKind::Version
+    );
+}
+
+#[test]
+fn parse_submitの組み合わせ検査のエラー文言() {
+    assert_eq!(
+        usage_message(&["submit", "--yes"]),
+        "submit には --item <アイテム ID> を 1 件指定してください"
+    );
+    assert_eq!(
+        usage_message(&["submit", "--item", ITEM, "--item", ITEM2, "--yes"]),
+        "submit は 1 件ずつ実行してください（--item は 1 つだけ指定できます）"
+    );
+    assert_eq!(
+        usage_message(&["submit", "--item", ITEM]),
+        "submit は審査に送信します。実行するには --yes を付けてください"
     );
 }

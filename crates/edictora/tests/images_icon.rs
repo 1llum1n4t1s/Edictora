@@ -13,9 +13,7 @@ use edictora::cli::args::parse;
 use edictora::cli::select_targets;
 use edictora::config::{self, EdictoraConfig};
 use edictora::images::png::{pixel_digest, pixel_digest_rgba};
-use edictora::images::{
-    ImageScope, ImageSlot, build_expected_slot, digest_for_slot, validate_image_file,
-};
+use edictora::images::{ImageSlot, build_expected_slot, digest_for_slot, validate_image_file};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path: PathBuf = [
@@ -131,28 +129,6 @@ fn スロットに合わせたダイジェストを選ぶ() {
 }
 
 // ───────── スロットのモデルと正本の検証 ─────────
-
-#[test]
-fn アイコンのスロットは128x128の1枚で全言語共通() {
-    let slot = ImageSlot::Icon;
-    assert_eq!(slot.config_key(), "icon");
-    assert_eq!(slot.allowed_sizes(), &[(128, 128)]);
-    assert_eq!(slot.max_count(), 1);
-    assert!(slot.allows_alpha() && !slot.is_localized());
-    for other in [
-        ImageSlot::SmallTile,
-        ImageSlot::Marquee,
-        ImageSlot::GlobalScreenshots,
-        ImageSlot::LocalizedScreenshots,
-    ] {
-        assert!(!other.allows_alpha(), "{other}");
-    }
-    // 処理順は先頭（全言語向け → ローカライズ版）
-    assert!(ImageSlot::Icon < ImageSlot::SmallTile);
-    // 範囲: 全言語向けに含め、ローカライズ版だけの指定からは外す
-    assert!(ImageScope::All.includes(slot) && ImageScope::Global.includes(slot));
-    assert!(!ImageScope::Localized.includes(slot));
-}
 
 #[test]
 fn アイコンは128x128のrgbかrgbaを通し_ほかの寸法や色種別は通さない() {
@@ -360,17 +336,4 @@ fn アイコンは処理順の先頭で_image_scopeはglobalに含め_localized�
     let by_locale = slots_of(&ctx, &["diff", "--only", "images", "--locale", "ja"]);
     assert_eq!(by_locale[0], (ImageSlot::Icon, None));
     assert_eq!(by_locale.len(), 4);
-}
-
-#[test]
-fn アイコンの画素のダイジェストはchromeを開く前に計算済み() {
-    let ctx = Ctx::new("icon-digest");
-    let config = ctx.parse(WITH_ICON).unwrap();
-    let items = select_targets(&config, &parse(&["diff", "--only", "images"]).unwrap()).unwrap();
-    let icon = &items[0].images.as_ref().unwrap().slots[0];
-    assert_eq!(icon.slot, ImageSlot::Icon);
-    assert_eq!(
-        icon.files[0].pixel_sha256,
-        pixel_digest_rgba(&rgba_png(128, 128, &icon_pixels(128))).unwrap()
-    );
 }

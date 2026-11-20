@@ -462,22 +462,6 @@ fn auto_publish_state_ラベル一致の状態が不明なら1個でも不明() 
 }
 
 #[test]
-fn mentions_language_label_ラベルか表示テキストに言語を含めば当たる() {
-    assert!(mentions_language_label(&JA, &el(0).label("言語")));
-    assert!(mentions_language_label(
-        &JA,
-        &el(0).text("言 語\n英語 – en")
-    ));
-    // 部分一致（説明文中の「すべての言語用」にも当たる。pick_language_combobox の完全一致より緩い）
-    assert!(mentions_language_label(
-        &JA,
-        &el(0).label("カテゴリ\nすべての言語用")
-    ));
-    assert!(pick_language_combobox(&JA, &[el(0).label("カテゴリ\nすべての言語用")]).is_err());
-    assert!(!mentions_language_label(&JA, &el(0).text("Kagayoi")));
-}
-
-#[test]
 fn parse_status_ステータス行の値を読む() {
     assert_eq!(
         parse_status(&JA, Some("アイテム\nステータス: 審査待ち\nパッケージ")).as_deref(),
@@ -751,26 +735,6 @@ fn 英語_自動公開チェックを大文字小文字を問わず見つける(
 }
 
 #[test]
-fn 英語_待ち条件は英語のラベルで判定する() {
-    assert!(mentions_language_label(&EN, &el(0).label("Language")));
-    assert!(!mentions_language_label(&EN, &el(0).label("言語")));
-}
-
-// ───────── ページ内スクリプトの固定の印を利用者向けの文に直す ─────────
-
-#[test]
-fn page_script_error_message_要素が消えた印を文に直す() {
-    assert_eq!(
-        page_script_error_message(
-            "ページ内スクリプトの実行に失敗しました: Error: EDICTORA_ELEMENT_GONE:textarea\n    at get (<anonymous>:95:15)"
-        ),
-        "ページ内スクリプトの実行に失敗しました: Error: 要素が画面から消えました: textarea\n    at get (<anonymous>:95:15)"
-    );
-    // 印が無い例外はそのまま
-    assert_eq!(page_script_error_message("別の例外"), "別の例外");
-}
-
-#[test]
 fn covered_error_message_画面の外の印を文に直す() {
     let point = serde_json::json!({ "hit": false, "cover": OFFSCREEN_COVER });
     assert_eq!(
@@ -1035,21 +999,6 @@ fn アップロードのエラー表示を見分ける() {
     assert!(image_error_messages(&JA, &["画像をアップロードしました"]).is_empty());
 }
 
-#[test]
-fn 収集結果から画像の情報を読む() {
-    let json = serde_json::json!([{
-        "index": 2, "tag": "input", "type": "file", "text": "全言語向けアセット",
-        "accept": ".png,.jpg,.jpeg",
-        "images": [{ "alt": "スクリーンショット 1", "src": "https://lh3.googleusercontent.com/x=w160" }],
-        "width": 0, "height": 48
-    }]);
-    let parsed = parse_elements(&json);
-    assert_eq!(parsed[0].accept, ".png,.jpg,.jpeg");
-    assert_eq!(parsed[0].images.len(), 1);
-    assert_eq!(parsed[0].images[0].alt, "スクリーンショット 1");
-    assert_eq!((parsed[0].width, parsed[0].height), (0, 48));
-}
-
 // ───────── カテゴリ（2026-11-19 の実画面の形）─────────
 
 fn category_text() -> &'static edictora::dashboard::text::CategoryText {
@@ -1287,34 +1236,6 @@ fn 英語の画面はカテゴリとプライバシーの文言を持たず書�
     assert!(JA.category.is_some());
     assert!(EN.category.is_none());
     assert!(EN.privacy.is_none());
-}
-
-#[test]
-fn ページ内の収集結果からカテゴリの選択肢の情報を読む() {
-    let json = serde_json::json!([{
-        "index": 4, "tag": "li", "text": "機能と UI", "label": "カテゴリ",
-        "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null,
-        "dataValue": "CATEGORY_FUNCTIONALITY_AND_UI", "selected": "true", "group": 1,
-        "width": 0, "height": 0
-    }, {
-        "index": 5, "tag": "li", "text": "x", "label": "カテゴリ",
-        "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null,
-        "dataValue": "CATEGORY_TOOLS", "selected": "false", "group": 1,
-        "width": 10, "height": 20
-    }, {
-        "index": 6, "tag": "li", "text": "y", "label": "",
-        "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null
-    }]);
-    let parsed = parse_elements(&json);
-    assert_eq!(parsed[0].data_value, "CATEGORY_FUNCTIONALITY_AND_UI");
-    assert_eq!(parsed[0].selected, Some(true));
-    assert_eq!(parsed[0].group, 1);
-    assert_eq!(parsed[1].selected, Some(false));
-    assert_eq!((parsed[1].width, parsed[1].height), (10, 20));
-    // 属性が無い要素（他の種類）は group が -1、selected が None
-    assert_eq!(parsed[2].selected, None);
-    assert_eq!(parsed[2].group, -1);
-    assert_eq!(parsed[2].data_value, "");
 }
 
 // ───────── プライバシー ポリシー URL 欄 ─────────

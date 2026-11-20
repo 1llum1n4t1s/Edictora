@@ -71,9 +71,38 @@ fn 収集結果の変換() {
         { "index": 2, "tag": "input", "text": "", "label": "公式 URL", "disabled": false, "readOnly": true,
           "type": "url", "expanded": null, "checked": null },
         { "index": 5, "tag": "div", "text": "言語", "label": "", "disabled": true, "readOnly": false,
-          "type": "", "expanded": "false", "checked": true }
+          "type": "", "expanded": "false", "checked": true },
+        // 画像の欄（element_selectors から移した assertion）
+        { "index": 2, "tag": "input", "type": "file", "text": "全言語向けアセット",
+          "accept": ".png,.jpg,.jpeg",
+          "images": [{ "alt": "スクリーンショット 1", "src": "https://lh3.googleusercontent.com/x=w160" }],
+          "width": 0, "height": 48 },
+        // カテゴリの選択肢（同上）
+        { "index": 4, "tag": "li", "text": "機能と UI", "label": "カテゴリ",
+          "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null,
+          "dataValue": "CATEGORY_FUNCTIONALITY_AND_UI", "selected": "true", "group": 1,
+          "width": 0, "height": 0 },
+        { "index": 5, "tag": "li", "text": "x", "label": "カテゴリ",
+          "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null,
+          "dataValue": "CATEGORY_TOOLS", "selected": "false", "group": 1,
+          "width": 10, "height": 20 },
+        { "index": 6, "tag": "li", "text": "y", "label": "",
+          "disabled": false, "readOnly": false, "type": "", "expanded": null, "checked": null }
     ]));
-    assert_eq!(elements.len(), 2);
+    assert_eq!(elements.len(), 6);
+    assert_eq!(elements[2].accept, ".png,.jpg,.jpeg");
+    assert_eq!(elements[2].images.len(), 1);
+    assert_eq!(elements[2].images[0].alt, "スクリーンショット 1");
+    assert_eq!((elements[2].width, elements[2].height), (0, 48));
+    assert_eq!(elements[3].data_value, "CATEGORY_FUNCTIONALITY_AND_UI");
+    assert_eq!(elements[3].selected, Some(true));
+    assert_eq!(elements[3].group, 1);
+    assert_eq!(elements[4].selected, Some(false));
+    assert_eq!((elements[4].width, elements[4].height), (10, 20));
+    // 属性が無い要素（他の種類）は group が -1、selected が None
+    assert_eq!(elements[5].selected, None);
+    assert_eq!(elements[5].group, -1);
+    assert_eq!(elements[5].data_value, "");
     assert_eq!(elements[0].index, 2);
     assert!(elements[0].read_only);
     assert_eq!(elements[0].r#type, "url");

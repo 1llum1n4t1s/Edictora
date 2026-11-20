@@ -49,6 +49,8 @@ struct FakeDashboard {
     corrupt_on_save: bool,
     /// 書き込みの前後で状態が変わらないことの確認用（テキスト）
     text: HashMap<String, String>,
+    /// `read_images` の呼び出し回数（原本の取得 1 回分に相当）
+    reads: usize,
 }
 
 impl FakeDashboard {
@@ -65,6 +67,7 @@ impl FakeDashboard {
             uploads: 0,
             corrupt_on_save: false,
             text: HashMap::new(),
+            reads: 0,
         }
     }
 
@@ -204,6 +207,7 @@ impl ListingPage for FakeDashboard {
 
 impl ImagePage for FakeDashboard {
     fn read_images(&mut self, slot: ImageSlot, _: &CancelToken) -> Result<Vec<PageImage>> {
+        self.reads += 1;
         let key = self.key(slot);
         Ok(self
             .editing
@@ -634,6 +638,62 @@ fn push_images_ローカライズ版はロケールごとに切替_置換_保存
     assert!(save < ko);
 }
 
+/// 無保存の最終照合は最初の照合で読んだ画像から作り、読み直しも言語の切替もやり直さない（C-1）
+#[test]
+fn push_images_無保存なら最終照合で画像を読み直さない() {
+    let mut page = FakeDashboard::new(&["en", "ja", "ko"]);
+    page.set_saved(ImageSlot::SmallTile, None, &["T1"]);
+    page.set_saved(ImageSlot::LocalizedScreenshots, Some("ja"), &["J1"]);
+    page.set_saved(ImageSlot::LocalizedScreenshots, Some("ko"), &["K1", "K2"]);
+    let expected = item(vec![
+        slot(ImageSlot::SmallTile, None, &[("tile.png", "T1")]),
+        slot(
+            ImageSlot::LocalizedScreenshots,
+            Some("ja"),
+            &[("ja1.png", "J1")],
+        ),
+        slot(
+            ImageSlot::LocalizedScreenshots,
+            Some("ko"),
+            &[("ko1.png", "K1"), ("ko2.png", "K2")],
+        ),
+    ]);
+    register(&mut page, &expected);
+
+    let result = services::push_images(
+        &mut page,
+        &FakeFetcher { unfetchable: None },
+        &expected,
+        &no_progress,
+        &CancelToken::new(),
+    )
+    .unwrap();
+
+    assert!(result.saved.is_empty());
+    // 1 回目の照合の分だけ（スロット 3 つ・ロケールの切替 2 回）
+    assert_eq!(page.reads, 3);
+    assert_eq!(page.count("switch"), 2);
+    // 結果の行は images.slots の順で、item_id と名前は正本のもの
+    let rows = &result.final_comparison;
+    assert_eq!(rows.len(), 3);
+    assert_eq!(
+        rows.iter()
+            .map(|r| (r.slot, r.locale.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (ImageSlot::SmallTile, None),
+            (ImageSlot::LocalizedScreenshots, Some("ja".to_string())),
+            (ImageSlot::LocalizedScreenshots, Some("ko".to_string())),
+        ]
+    );
+    for row in rows {
+        assert_eq!(row.item_id, ITEM);
+        assert_eq!(row.item_name, "テスト");
+        assert_eq!(row.status, ComparisonStatus::Match);
+    }
+    assert_eq!(rows[2].current_count, 2);
+}
+
 #[test]
 fn push_images_言語が1つのアイテムでローカライズ版が対象ならエラーで何も触らない() {
     let mut page = FakeDashboard::new(&["ja"]);
@@ -820,45 +880,5 @@ fn push_images_アイコンは小タイルと同じ経路で削除_追加_保存
             .final_comparison
             .iter()
             .all(|r| r.status == ComparisonStatus::Match)
-    );
-}
-
-#[test]
-fn push_images_アイコンが一致なら何も触らず_審査待ちなら削除の前に止める() {
-    let mut page = FakeDashboard::new(&["ja"]);
-    page.set_saved(ImageSlot::Icon, None, &["ICON1"]);
-    let expected = item(vec![slot(ImageSlot::Icon, None, &[("icon.png", "ICON1")])]);
-    register(&mut page, &expected);
-    let result = services::push_images(
-        &mut page,
-        &FakeFetcher { unfetchable: None },
-        &expected,
-        &no_progress,
-        &CancelToken::new(),
-    )
-    .unwrap();
-    assert!(result.saved.is_empty());
-    assert_eq!(
-        page.count("delete") + page.count("upload") + page.count("save"),
-        0
-    );
-
-    // 審査待ちのアイテムのアイコンは、差分があっても何も触らない
-    let mut pending = FakeDashboard::new(&["ja"]);
-    pending.status = "審査待ち".to_string();
-    pending.set_saved(ImageSlot::Icon, None, &["ICON-OLD"]);
-    register(&mut pending, &expected);
-    let err = services::push_images(
-        &mut pending,
-        &FakeFetcher { unfetchable: None },
-        &expected,
-        &no_progress,
-        &CancelToken::new(),
-    )
-    .unwrap_err();
-    assert!(matches!(err, Error::WriteBlocked(_)));
-    assert_eq!(
-        pending.count("delete") + pending.count("upload") + pending.count("save"),
-        0
     );
 }

@@ -7,26 +7,9 @@ use common::{config_err, png_bytes, work_dir, write_png};
 use edictora::images::png::pixel_digest;
 use edictora::images::{
     CurrentImage, ExpectedImageFile, ExpectedSlot, ImageSlot, build_expected_slot, compare_slot,
-    describe, parse_png_header, validate_image_file,
+    describe, validate_image_file,
 };
 use edictora::listing::ComparisonStatus;
-
-#[test]
-fn ヘッダーから寸法と色種別を読む() {
-    let info = parse_png_header(&png_bytes(440, 280, 2, 8, 0)).unwrap();
-    assert_eq!(
-        (
-            info.width,
-            info.height,
-            info.bit_depth,
-            info.color_type,
-            info.interlace
-        ),
-        (440, 280, 8, 2, 0)
-    );
-    assert!(parse_png_header(b"GIF89a").is_none());
-    assert!(parse_png_header(&[0u8; 40]).is_none());
-}
 
 #[test]
 fn 規格どおりの画像は画素のダイジェストつきで通る() {

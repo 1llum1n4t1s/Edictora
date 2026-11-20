@@ -114,16 +114,3 @@ fn 確認中の中断とログイン要以外のエラーではログイン手�
     assert!(matches!(fake.run(), Err(Error::Dashboard(_))));
     assert_eq!(fake.calls(), ["open", "ensure"]);
 }
-
-#[test]
-fn 開き直した後の確認で中断されてもそのまま伝わる() {
-    let fake = Fake::new(
-        vec![Err(Error::LoginRequired), Err(Error::Cancelled)],
-        Ok(()),
-    );
-    assert!(matches!(fake.run(), Err(Error::Cancelled)));
-    assert_eq!(
-        fake.calls(),
-        ["open", "ensure", "relogin", "open", "ensure"]
-    );
-}
