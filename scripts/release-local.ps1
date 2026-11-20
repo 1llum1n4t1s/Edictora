@@ -15,7 +15,7 @@
 #   9. -Cleanup のときだけ、直近 2 版より古い版付きファイルを R2 から消す (今回のフィードが参照するファイルは必ず残す)
 #
 # 署名は Sigilune (Certum SimplySign のクラウド鍵を signtool /dlib で使う CLI) で行う。
-# 通常のリリースは GitHub Actions の .github/workflows/release.yml (手動起動・Environment "release") が
+# 通常のリリースは GitHub Actions の .github/workflows/release.yml (タグ v<version> の push で起動・Environment "release") が
 # 本スクリプトを実行する。ローカル実行も同じ手順で動き、検証や再実行に使う。
 #
 # 前提:

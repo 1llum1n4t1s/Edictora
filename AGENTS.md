@@ -65,7 +65,8 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **AI エージェントは edictora を `--show-browser` 付きで実行しない**（利用者の画面にウィンドウが出る）。原因調査はエラー文と diagnostics のスナップショット（テキスト）で行う。「覆われていて押せません」のエラー文には、中心にあった要素・要素の枠・画面の大きさを含める（`selectors::covered_error_message`）。
 - **自動更新（Velopack）**: インストール・差し替え・アンインストールは Velopack の Setup.exe / Update.exe に任せ、Edictora は更新の確認とダウンロードだけを自前で行う（velopack crate は使わない）。約束（フック引数・`sq.version`・`releases.{channel}.json`・`.partial` → 検証 → 改名・`apply` の引数）は vendored の Velopack 1.2.161 Rust SDK に合わせ、推測で変えない。SDK との違いは DESIGN.md「配布・インストール・自動更新」。
 - **フックは引数の解釈より前に処理して必ず 0 で終える**（`edictora.exe`・`edictora-updater.exe` の両方）。install / updated で HKCU の Run に更新用 exe、ユーザー PATH に `<根>\current` を登録し、uninstall で取り除く。名前と要素は根から決める。PATH は型と他の要素を壊さない。インストール先から起動されていなければレジストリに触れない。テストは RegLoadAppKeyW の専用ハイブを使い、実際の Run・PATH に触れない。
-- **Chrome を開くコマンドの実行中は更新を適用しない**（契約）。apply がインストール先配下のプロセスを止め、push の途中で落ちると書き込みの安全策が崩れるため。login / pull / diff / push / submit は、設定の検証の後・ブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`）を共有で持つ（開けないだけなら続行）。更新側は Update.exe の直前にこれを排他で取り、取れなければ適用せず `AppInUse`（`update` は終了コード 1）。適用中に Chrome を開くコマンドを実行したら、開かずに終了コード 1。Run の同名の値が「別の場所に実在する」更新用 exe を指すときだけ上書きしない- **Portable 版（根に `.portable`）では install / updated フックで Run・PATH を登録しない**（手動の `edictora update` は使える）。Run の値の削除は現在の値が自分の値と一致するときだけ
+- **Chrome を開くコマンドの実行中は更新を適用しない**（契約）。apply がインストール先配下のプロセスを止め、push の途中で落ちると書き込みの安全策が崩れるため。login / pull / diff / push / submit は、設定の検証の後・ブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`）を共有で持つ（開けないだけなら続行）。更新側は Update.exe の直前にこれを排他で取り、取れなければ適用せず `AppInUse`（`update` は終了コード 1）。適用中に Chrome を開くコマンドを実行したら、開かずに終了コード 1。Run の同名の値が「別の場所に実在する」更新用 exe を指すときだけ上書きしない
+- **Portable 版（根に `.portable`）では install / updated フックで Run・PATH を登録しない**（手動の `edictora update` は使える）。Run の値の削除は現在の値が自分の値と一致するときだけ
 - **更新は `edictora update` とログオン時の `edictora-updater.exe` だけ**。pull / diff / push / submit の中では確かめない。`update` は設定を読まず Chrome を開かない。検証（サイズと SHA256、無ければ SHA1）に通らないパッケージは適用しない。配信元は定数 `https://edictora.kagayoi.com`、検証用に `EDICTORA_UPDATE_URL`（平文は 127.0.0.1 だけ）。テストは 127.0.0.1 の偽配信元と偽の `ApplyLauncher` を使う。
 
 ## 保存先
@@ -85,7 +86,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - 依存は最小限（`serde` / `serde_json` / `regex` / `tungstenite`（同期・TLS なし・`handshake` のみ）、テスト専用に `sha2`）。HTTP/TLS crate は使わない（DevTools の確認は localhost への素の HTTP/1.1）。**外部への HTTPS（自動更新、画像の原本）は、crate を足さず WinHTTP を FFI で直接使い、`net/winhttp.rs` に集める**（リダイレクト無効・タイムアウトと全体の期限・Ctrl+C で抜ける・応答の上限・平文は 127.0.0.1 のテストだけ）。Ctrl+C・レジストリ・ハッシュ（CNG）などは Windows API を直接宣言して使う
 - CDP は入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答待ちの間もイベントを配る
 - `AppPaths` は値として注入する。テストは `target/tmp` 配下を根にし、実プロファイル・実設定を解決しない。CLI のテストはブラウザを開く関数に「呼ばれたら panic」を渡す
-- Bun 側のパッケージ管理は Bun（`packageManager: bun@1.4.4`、`bunfig.toml` の `minimumReleaseAge`）。依存は `typescript` だけ
+- Bun 側のパッケージ管理は Bun（`packageManager: bun@1.4.5`、`bunfig.toml` の `minimumReleaseAge`）。依存は `typescript` だけ
 - バージョンは `Cargo.toml` の `[workspace.package] version` に一元化。**更新は /vava 指示時のみ**
 
 ## ビルド / テスト
