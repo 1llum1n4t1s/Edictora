@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "description": "Edictora がダッシュボードのページ内で評価するスクリプト（TypeScript）。生成物 dist/ を Rust が埋め込む。",
-  "packageManager": "bun@1.4.4",
+  "packageManager": "bun@1.4.5",
   "scripts": {
     "build": "bun build.ts",
     "check": "bun build.ts --check",
