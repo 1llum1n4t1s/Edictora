@@ -95,3 +95,8 @@ jobs:
         # dist/ を src/ から生成し直し、コミット済みの内容と一致しなければ失敗する (改行の CRLF/LF 差は無視する)。
         working-directory: page-scripts
         run: bun run check
+
+      - name: page-scripts のテスト (snapshot() を偽の DOM で評価)
+        # dist/edictora.js を読んで評価するので、上の check（dist が最新か）の後に実行する。
+        working-directory: page-scripts
+        run: bun test

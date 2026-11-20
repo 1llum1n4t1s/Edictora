@@ -39,7 +39,7 @@ pub struct DashboardBrowserOptions {
     /// ウィンドウを表示するか。false（既定）ならヘッドレスで起動し、作業中に前面へ出てこない。
     /// ログインは利用者の操作が要るので true で開くこと
     pub show_browser: bool,
-    /// 失敗時の画面保存先
+    /// 失敗時のページのスナップショット（テキスト）の保存先
     pub diagnostics_directory: PathBuf,
 }
 

@@ -212,9 +212,9 @@ edictora submit --item <id> --yes               # Submit one item for review
 
 > [!WARNING]
 > `--show-browser` 是給在螢幕前觀看的人使用的。從 AI 代理程式或指令碼執行 Edictora 時請勿使用：Chrome 視窗會跳出在使用者的螢幕上，而 AI 本來也看不到它。
-> 若要找出失敗的原因，請使用錯誤訊息，以及失敗時儲存的螢幕截圖。
+> 若要找出失敗的原因，請使用錯誤訊息，以及失敗時儲存的頁面文字快照。
 > - 錯誤訊息包含遮住目標的元素、該元素的邊界，以及可視區域的大小。
-> - 螢幕截圖會儲存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，錯誤訊息會顯示其路徑。當 `pull` 或 `diff` 讀取資訊主頁失敗時，也會儲存螢幕截圖。
+> - 頁面快照（逐行列出每個可見元素的角色、名稱、值、狀態與位置的文字檔）會儲存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，錯誤訊息會顯示其路徑。當 `pull` 或 `diff` 讀取資訊主頁失敗時，也會儲存快照。Edictora 不會擷取螢幕截圖。
 
 ### 4. 從 AI 代理程式使用（MCP）
 
@@ -291,7 +291,7 @@ args = ["mcp"]
 - 當項目的狀態無法確認可安全編輯時（例如「審查中」），Edictora 不會寫入。它絕不會取消審查。
 - 欄位與按鈕是依標籤、角色與文字尋找的，絕不依賴 CSS 類別名稱。若搜尋結果不是剛好一個元素，Edictora 就會停止。
 - Chrome 不帶自動化旗標啟動，並會正常關閉。**設定檔絕不會被刪除。**
-- 失敗時擷取的螢幕截圖會儲存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，絕不會儲存到您的儲存庫。
+- 失敗時儲存的頁面文字快照會儲存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，絕不會儲存到您的儲存庫。其中可能包含資訊主頁上欄位的值（publisherId 以及 Google 帳戶的姓名與電子郵件地址會被遮蔽）。
 - 圖片更新只取代有差異的位置。不會調整順序，更不可能送出審核（圖片處理中沒有呼叫送出的途徑）。
 - 「隱私」分頁的更新只更動有差異的欄位，不會送出審核（程式碼中沒有可呼叫的途徑）；如果後台上的權限與設定不一致，會在寫入任何內容之前停止。
 
@@ -302,7 +302,7 @@ args = ["mcp"]
 | 組態檔（來源檔案對應） | `%APPDATA%\Edictora\config.json` |
 | Chrome 設定檔（包含您的登入狀態） | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | 記錄檔（包含更新結果） | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| 失敗時的螢幕截圖 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| 失敗時的頁面文字快照 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | 應用程式本身（以 Setup 安裝時） | `%LOCALAPPDATA%\Edictora`（解除安裝時會整個移除） |
 
 資料保存在 `Edictora.Data` 中，與應用程式分開，這樣解除安裝時就不會連同您已登入的 Chrome 設定檔一併刪除。舊位置的資料（例如 `%LOCALAPPDATA%\Edictora\chrome-profile`）不會自動遷移。
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **`sectionStart` / `sectionEnd` 中的規則運算式**：Edictora 使用 Rust 的 `regex` crate，因此不支援正向預測、反向預測（`(?=…)`、`(?!…)`、`(?<=…)`、`(?<!…)`）與反向參照（`\1`），載入組態時會導致錯誤。像 `^■ Description` 這樣的一般模式可照原樣使用。

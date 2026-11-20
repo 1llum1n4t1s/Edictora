@@ -7,7 +7,8 @@
   "scripts": {
     "build": "bun build.ts",
     "check": "bun build.ts --check",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
   },
   "devDependencies": {
     "typescript": "7.0.2"

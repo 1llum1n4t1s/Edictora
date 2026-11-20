@@ -14,7 +14,6 @@ use serde_json::{Value, json};
 use crate::cancel::CancelToken;
 use crate::cdp::client::{CdpClient, DEFAULT_TIMEOUT};
 use crate::error::{Error, Result};
-use crate::util::base64_decode;
 
 /// flatten モードで attach したタブ
 pub struct CdpPage {
@@ -347,19 +346,5 @@ impl CdpPage {
                 None => continue,
             }
         }
-    }
-
-    /// 画面を PNG で取得する
-    pub fn capture_screenshot(&self, cancel: &CancelToken) -> Result<Vec<u8>> {
-        let res = self.send(
-            "Page.captureScreenshot",
-            Some(json!({ "format": "png" })),
-            Duration::from_secs(30),
-            cancel,
-        )?;
-        let data = res.get("data").and_then(Value::as_str).unwrap_or("");
-        base64_decode(data).ok_or_else(|| {
-            Error::Cdp(crate::trs!("cdp.could_not_decode_the_screenshot_data").to_string())
-        })
     }
 }

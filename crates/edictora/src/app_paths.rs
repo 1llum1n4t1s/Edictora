@@ -98,7 +98,7 @@ impl AppPaths {
         self.local_root.join("logs")
     }
 
-    /// 失敗時の画面保存先（`%LOCALAPPDATA%\Edictora.Data\diagnostics`）
+    /// 失敗時のページのスナップショット（テキスト）の保存先（`%LOCALAPPDATA%\Edictora.Data\diagnostics`）
     pub fn diagnostics_directory(&self) -> PathBuf {
         self.local_root.join("diagnostics")
     }

@@ -212,9 +212,9 @@ Pour observer ce qui se passe, ajoutez `--show-browser`. `login` affiche toujour
 
 > [!WARNING]
 > `--show-browser` est destiné aux personnes qui regardent l'écran. Ne l'utilisez pas lorsque vous exécutez Edictora depuis un agent IA ou un script : une fenêtre Chrome apparaîtrait sur l'écran de l'utilisateur, et l'IA ne peut de toute façon pas la voir.
-> Pour trouver la cause d'un échec, utilisez le message d'erreur et la capture d'écran enregistrée lors de l'échec.
+> Pour trouver la cause d'un échec, utilisez le message d'erreur et l'instantané texte de la page enregistré lors de l'échec.
 > - Le message d'erreur indique l'élément qui recouvre, les limites de l'élément et la taille de la fenêtre d'affichage.
-> - Les captures d'écran sont enregistrées dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, et le message d'erreur indique le chemin. Une capture d'écran est aussi enregistrée lorsque `pull` ou `diff` ne parvient pas à lire le tableau de bord.
+> - Les instantanés de la page (fichiers texte listant, ligne par ligne, le rôle, le nom, la valeur, l'état et la position de chaque élément visible) sont enregistrés dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, et le message d'erreur indique le chemin. Un instantané est aussi enregistré lorsque `pull` ou `diff` ne parvient pas à lire le tableau de bord. Edictora ne fait aucune capture d'écran.
 
 ### 4. L'utiliser depuis des agents IA (MCP)
 
@@ -291,7 +291,7 @@ Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même comma
 - Edictora n'écrit pas lorsque le statut de l'élément ne peut pas être confirmé comme sûr pour la modification, par exemple « Examen en attente ». Il n'annule jamais un examen.
 - Les champs et les boutons sont trouvés par leur libellé, leur rôle et leur texte, jamais par des noms de classes CSS. Si une recherche ne correspond pas à exactement un élément, Edictora s'arrête.
 - Chrome est démarré sans indicateurs d'automatisation et fermé proprement. **Le profil n'est jamais supprimé.**
-- Les captures d'écran prises en cas d'échec sont enregistrées dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, jamais dans votre dépôt.
+- Les instantanés texte de la page pris en cas d'échec sont enregistrés dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, jamais dans votre dépôt. Ils peuvent contenir les valeurs des champs de la page du tableau de bord (le publisherId ainsi que le nom et l'adresse e-mail de votre compte Google sont masqués).
 - Les mises à jour d'images ne remplacent que les emplacements qui diffèrent. Elles ne touchent pas à l'ordre des images, et ne peuvent jamais soumettre à l'examen (le code des images n'a aucun moyen de l'appeler).
 - Les mises à jour de l'onglet Confidentialité ne modifient que les champs qui diffèrent, ne soumettent jamais à l'examen (le code n'a aucun moyen de l'appeler) et s'arrêtent sans rien écrire si les permissions du tableau de bord ne correspondent pas à la configuration.
 
@@ -302,7 +302,7 @@ Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même comma
 | Fichier de configuration (association des fichiers sources) | `%APPDATA%\Edictora\config.json` |
 | Profil Chrome (contient votre connexion) | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | Journaux (y compris les résultats des mises à jour) | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| Captures d'écran en cas d'échec | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| Instantanés texte de la page en cas d'échec | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | L'application elle-même (installée avec Setup) | `%LOCALAPPDATA%\Edictora` (entièrement supprimée à la désinstallation) |
 
 Les données sont conservées dans `Edictora.Data`, séparément de l'application, afin que la désinstallation ne supprime pas aussi votre profil Chrome connecté. Les données situées dans d'anciens emplacements (comme `%LOCALAPPDATA%\Edictora\chrome-profile`) ne sont pas migrées automatiquement.
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **Expressions régulières dans `sectionStart` / `sectionEnd`** : Edictora utilise la crate `regex` de Rust ; les assertions avant (lookahead), arrière (lookbehind) (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`) et les références arrière (`\1`) ne sont donc pas prises en charge ; elles provoquent une erreur au chargement de la configuration. Les motifs ordinaires comme `^■ Description` fonctionnent tels quels.

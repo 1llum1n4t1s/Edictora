@@ -216,7 +216,7 @@ fn pull_core(
     })
 }
 
-/// 読み出しに失敗したときの画面を診断用に保存し、保存先を返す（保存できなければ None）。
+/// 読み出しに失敗したときのページのスナップショット（テキスト）を診断用に保存し、保存先を返す（保存できなければ None）。
 ///
 /// pull / diff は読み取りだけで続行するため、以前は画面を残していなかった。そのため原因を調べる側
 /// （AI エージェントを含む）が `--show-browser` で表示して確かめようとし、利用者の画面にウィンドウが出ていた。
@@ -234,23 +234,26 @@ fn capture_read_failure(
     };
     let shot = page.capture_diagnostics(&label);
     if let Some(s) = &shot {
-        progress(&tr!("services.saved_a_screenshot_of_the_failure", path = s));
+        progress(&tr!(
+            "services.saved_a_page_snapshot_of_the_failure",
+            path = s
+        ));
     }
     shot
 }
 
-/// エラー文の後ろに付ける「（失敗時の画面: <パス>）」（保存できなかったときは空）。
+/// エラー文の後ろに付ける「（失敗時のページのスナップショット: <パス>）」（保存できなかったときは空）。
 /// 結果（標準出力）に入るので表示言語に合わせる。ログには [`log_shot_suffix`] を使う
 fn shot_suffix(shot: &Option<String>) -> String {
     shot.as_ref()
-        .map(|s| tr!("services.failure_screenshot", path = s))
+        .map(|s| tr!("services.failure_page_snapshot", path = s))
         .unwrap_or_default()
 }
 
-/// ログ用の「（失敗時の画面: <パス>）」。ログは作者の調査用なので表示言語によらず日本語
+/// ログ用の「（失敗時のページのスナップショット: <パス>）」。ログは作者の調査用なので表示言語によらず日本語
 fn log_shot_suffix(shot: &Option<String>) -> String {
     shot.as_ref()
-        .map(|s| format!("（失敗時の画面: {s}）"))
+        .map(|s| format!("（失敗時のページのスナップショット: {s}）"))
         .unwrap_or_default()
 }
 
@@ -267,7 +270,7 @@ pub fn diff(
 }
 
 /// 差分のある欄だけを書き換えて下書き保存し、読み直して照合する。
-/// 失敗したらエラー（`WriteBlocked` / `Dashboard` など）。失敗時は画面を診断用に保存する
+/// 失敗したらエラー（`WriteBlocked` / `Dashboard` など）。失敗時はページのスナップショットを診断用に保存する
 pub fn push(
     page: &mut dyn ListingPage,
     expected: &ExpectedItem,
@@ -276,7 +279,7 @@ pub fn push(
 ) -> Result<PushResult> {
     match push_core(page, expected, progress, cancel) {
         Ok(r) => Ok(r),
-        // 画面を保存する条件: ダッシュボード系の失敗のうちログイン切れ以外。書き込み不可（WriteBlocked）でも保存する。
+        // スナップショットを保存する条件: ダッシュボード系の失敗のうちログイン切れ以外。書き込み不可（WriteBlocked）でも保存する。
         // submit は WriteBlocked を除くので条件が違う。この差を保つため、条件は report_failure に入れず呼び出し側に置く。
         Err(e) if e.is_dashboard() && e != Error::LoginRequired => {
             report_failure(page, "push", &expected.item_id, &e, progress);
@@ -286,13 +289,13 @@ pub fn push(
     }
 }
 
-/// 失敗時の記録: 画面を診断用に保存し、エラーログを書き、保存できたら進捗にその場所を出す。
+/// 失敗時の記録: ページのスナップショット（テキスト）を診断用に保存し、エラーログを書き、保存できたら進捗にその場所を出す。
 ///
 /// push と submit で同じ形だった処理をまとめたもの。どの失敗で呼ぶか（保存の条件）は
 /// 呼び出し側ごとに違うため、ここでは判断せず、呼ばれたら必ず記録する。
-/// - 画面のラベル: `<operation>-<item_id>`（診断ファイル名の一部になる）
-/// - ログ: `<operation> 失敗 <item_id>: <エラー>（画面: <パス>）`（保存できなければ括弧部分なし）
-/// - 進捗: `失敗時の画面を保存しました: <パス>`（保存できたときだけ）
+/// - ラベル: `<operation>-<item_id>`（診断ファイル名の一部になる）
+/// - ログ: `<operation> 失敗 <item_id>: <エラー>（スナップショット: <パス>）`（保存できなければ括弧部分なし）
+/// - 進捗: `失敗時のページのスナップショット（テキスト）を保存しました: <パス>`（保存できたときだけ）
 fn report_failure(
     page: &mut dyn EditorPage,
     operation: &str,
@@ -305,13 +308,16 @@ fn report_failure(
         &format!(
             "{operation} 失敗 {item_id}: {error}{}",
             shot.as_ref()
-                .map(|s| format!("（画面: {s}）"))
+                .map(|s| format!("（スナップショット: {s}）"))
                 .unwrap_or_default()
         ),
         LogLevel::Error,
     );
     if let Some(s) = shot {
-        progress(&tr!("services.saved_a_screenshot_of_the_failure", path = s));
+        progress(&tr!(
+            "services.saved_a_page_snapshot_of_the_failure",
+            path = s
+        ));
     }
 }
 
@@ -587,7 +593,7 @@ pub fn submit(
         };
     match run(page, confirm) {
         Ok(r) => Ok(r),
-        // 画面を保存する条件: ダッシュボード系の失敗のうち、ログイン切れと書き込み不可（WriteBlocked）以外。
+        // スナップショットを保存する条件: ダッシュボード系の失敗のうち、ログイン切れと書き込み不可（WriteBlocked）以外。
         // push（WriteBlocked でも保存する）と条件が違うので、条件は report_failure に入れず呼び出し側に置く。
         Err(e)
             if e.is_dashboard() && !matches!(e, Error::LoginRequired | Error::WriteBlocked(_)) =>
@@ -931,7 +937,7 @@ fn slot_matches(
 /// 順序: テキストの push は呼び出し側が済ませる → 編集画面を開く → 書き込み可否 → 全言語向け（アイコン → 小タイル → マーキー →
 /// スクリーンショット。差分のあるスロットだけ全入れ替え）→ 保存 → 読み直して照合 → ロケールごとに
 /// （切替 → 置換 → 保存 → 読み直し → 切替 → 照合）→ 最後に読み直して全対象スロットを再照合。
-/// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時は画面を診断用に保存する
+/// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時はページのスナップショットを診断用に保存する
 pub fn push_images(
     page: &mut dyn ImagePage,
     fetcher: &dyn ImageFetcher,
@@ -1259,7 +1265,7 @@ pub fn compare_privacy(expected: &ExpectedItem, snapshot: &PrivacySnapshot) -> P
 ///
 /// 順序: 編集画面（プライバシー タブ）を開く → 書き込み可否 → 現在値を読んで比較 → 画面に無い欄・設定に無い権限があれば
 /// 何も書かずに止める → 差分のある欄だけ書き換え → 保存前に全欄を照合 → 書き込み可否 → 下書き保存 → 読み込み直して全欄を再照合。
-/// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時は画面を診断用に保存する
+/// どの段の失敗でも保存せず、そのアイテムの残りは行わない。失敗時はページのスナップショットを診断用に保存する
 pub fn push_privacy(
     page: &mut dyn PrivacyPage,
     expected: &ExpectedItem,

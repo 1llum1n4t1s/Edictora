@@ -60,9 +60,9 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 - **カテゴリ**（`category`・`listing/category.rs`・`ListingPage::read_category` / `write_category`）: 全言語共通のアイテム単位の欄なので `ListingField`（ロケール単位）には入れず、`ExpectedItem::category`（キー）で持つ。値は言語に依らない小文字のキーで、`data-value` との対応表は `listing/category.rs` の 1 か所（未知のキーは Chrome を開く前に終了コード 2。未選択のプレースホルダーは正本にできない）。画面は `ul[role=listbox][aria-label="カテゴリ"]` の選択肢の `aria-selected="true"` の `data-value` を**閉じたまま**読み（page-scripts の `listboxOption` は情報を返すだけ。判断は `selectors::category_options` / `selected_category` / `pick_category_option`）、書き込みはコンボボックスを実マウスで開く → 一覧が見えるまで待つ → `data-value` が一致する選択肢をちょうど 1 つ実クリック → 閉じて選択を確かめる（閉じなければ Escape）。**日本語の画面だけ**（`DashboardText::category` が EN は None）。手順（`services::push_core`）はロケールのループの前に独立した 1 サイクルで行い、不足ロケールの確認より後なので、不足で止まる push はカテゴリも書かない。読み出しの失敗はこの欄だけのエラー（`ItemSnapshot::category` が `Err`）にしてロケールの読み出しは続ける。`--only text` に含み、`--locale` では絞らない
 - **プライバシー ポリシー URL**（`privacy.policyUrl`・`PrivacyField::PolicyUrl`・`PrivacyPage::write_policy_url`）: 短い 1 行の欄（`input[type=text]`、検査は textarea 用を広げず `selectors::ensure_privacy_url_writable` を別に持つ）。ラベル「プライバシー ポリシーの URL」の 1 行完全一致で 1 つに絞る（`find_policy_url_input`）。契約は公式 URL などと同じ（http(s) の絶対 URL、2,048 文字以内）。`privacy` の「1 欄も無ければエラー」では policyUrl も 1 欄に数える
 - **引数と設定の誤りは Chrome を開く前に終了コード 2 で止める。** 終了コードは 0 / 1 / 2 / 3（差分あり）/ 4（書き込み中止）/ 5（ログインが必要）/ 130（中断）。進捗は標準エラー、結果は標準出力。
-- 失敗時の画面保存は `%LOCALAPPDATA%\Edictora.Data\diagnostics` に置き、リポジトリには置かない。push / submit の失敗と、pull / diff の読み出し失敗（ログイン切れ以外）で保存し、保存先を結果のエラー文に含める。
+- 失敗時の診断は**スクリーンショットではなくページのテキスト スナップショット**（UTF-8 の `.txt`、`yyyyMMdd-HHmmss-<ラベル>.txt`）を `%LOCALAPPDATA%\Edictora.Data\diagnostics` に置き、リポジトリには置かない。Edictora は画像のスクリーンショットを撮らない（`Page.captureScreenshot` は使わない）。中身はページ内スクリプトの `snapshot()` が作る（URL・タイトル・lang・ビューポート・readyState、続けて見えている要素の 役割・名前・値・状態・矩形 の字下げツリー。非表示・0x0 は省き、open な shadowRoot と同一オリジンの iframe もたどる。1 値 2,000 文字・全体 1,000,000 文字で切る）。保存前に必ず `logging::redact_diagnostics` を通し、URL に限らず publisherId の文字列そのものも `<publisher>` にし、アカウント ボタンの名前にある Google アカウントの氏名を `<name>`、メールアドレスを `<email>` にする（`logging::redact_account`）。push / submit の失敗と、pull / diff の読み出し失敗（ログイン切れ以外）で保存し、保存先を結果のエラー文に含める。
 - **MCP（`edictora mcp`）は CLI の薄い皮にする**: ツールは `edictora_list_items` / `edictora_diff` / `edictora_pull` / `edictora_push` / `edictora_submit` だけで、中身は引数の配列を組み立てて `CliApp::run` を呼び、出力をメモリで受ける（手順・安全策・終了コード・伏せ字を二重に持たない）。**画面表示・login・update・プロファイル・chrome.exe の指定はツールに持たせない**（再ログイン時に CLI 側が表示つきの Chrome を自動で開く動きだけは例外で、引数では制御できない。説明文・INSTRUCTIONS に英語で書く）（スキーマは `additionalProperties: false`）。push / submit は `confirm: true` が無ければ書かず、`destructiveHint` を付ける。終了コード 3 は `isError: false`。呼び出しは作業スレッド 1 本で順に実行し、`notifications/cancelled` で中断する。標準出力には JSON-RPC 以外を書かない。**実行中ロックはサーバーの生存期間中ずっと共有で持つ**（`main.rs`。更新の apply が待機中の MCP を止めないため）。説明文には検索で見つかる英語の語（Chrome Web Store・store listing・description）を入れ、日本語は混ぜない（ASCII だけ。テストで固定）。**Setup 版はフックで Claude Code・Codex へ自動登録・解除する**（`install/connect.rs`。公式 CLI の `.exe` だけを時間制限つきで呼ぶ、既に自分を指す登録は触らない、登録済みの CLI は `Edictora.Data\setup-registration.json` に覚える、解除は自分の exe を指す登録だけ、Portable 版は登録しない。テストはスタブで検証する）。Claude Desktop などは README の手順で手動登録する。詳細は DESIGN.md「MCP サーバー」
-- **AI エージェントは edictora を `--show-browser` 付きで実行しない**（利用者の画面にウィンドウが出る）。原因調査はエラー文と diagnostics の画面で行う。「覆われていて押せません」のエラー文には、中心にあった要素・要素の枠・画面の大きさを含める（`selectors::covered_error_message`）。
+- **AI エージェントは edictora を `--show-browser` 付きで実行しない**（利用者の画面にウィンドウが出る）。原因調査はエラー文と diagnostics のスナップショット（テキスト）で行う。「覆われていて押せません」のエラー文には、中心にあった要素・要素の枠・画面の大きさを含める（`selectors::covered_error_message`）。
 - **自動更新（Velopack）**: インストール・差し替え・アンインストールは Velopack の Setup.exe / Update.exe に任せ、Edictora は更新の確認とダウンロードだけを自前で行う（velopack crate は使わない）。約束（フック引数・`sq.version`・`releases.{channel}.json`・`.partial` → 検証 → 改名・`apply --package … --waitPid <自分> --silent --norestart --root … --packageDir …`）は vendored の Velopack 1.2.161 Rust SDK に合わせ、推測で変えない。SDK との違いは DESIGN.md「配布・インストール・自動更新」。
 - **フックは引数の解釈より前に処理して必ず 0 で終える**（`edictora.exe`・`edictora-updater.exe` の両方）。install / updated で HKCU の Run に更新用 exe、ユーザー PATH に `<根>\current` を登録し、uninstall で取り除く。名前と要素は根から決める。PATH は型と他の要素を壊さない。インストール先から起動されていなければレジストリに触れない。テストは RegLoadAppKeyW の専用ハイブを使い、実際の Run・PATH に触れない。
 - **Chrome を開くコマンドの実行中は更新を適用しない**（契約）。apply がインストール先配下のプロセスを止め、push の途中で落ちると書き込みの安全策が崩れるため。login / pull / diff / push / submit は、設定の検証の後・ブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`）を共有で持つ（開けないだけなら続行）。更新側は Update.exe を起動する直前にこれを排他で取り、取れなければ適用せず `AppInUse`（`update` は終了コード 1、更新用 exe は試し直す）。適用中に Chrome を開くコマンド（MCP サーバーを含む）を実行したら、Chrome を開かずに終了コード 1。Run の同名の値が「別の場所に実在する」更新用 exe を指すときだけ上書きしない（指す先が消えた古い登録は上書きする）
@@ -75,7 +75,7 @@ tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が 
 
 - 設定（正本の対応づけ）: `%APPDATA%\Edictora\config.json`（`--config` で変更可）
 - Chrome プロファイル: `%LOCALAPPDATA%\Edictora.Data\chrome-profile`（設定の `profileDir` / `--profile` で変更可）
-- ログ: `%LOCALAPPDATA%\Edictora.Data\logs`、失敗時の画面: `%LOCALAPPDATA%\Edictora.Data\diagnostics`
+- ログ: `%LOCALAPPDATA%\Edictora.Data\logs`、失敗時のページのスナップショット（テキスト）: `%LOCALAPPDATA%\Edictora.Data\diagnostics`
 - アプリ本体（Velopack のインストール先）: `%LOCALAPPDATA%\Edictora`。アンインストールで消えるので、データはここに置かない
 - 検証用に環境変数 `EDICTORA_LOCAL_ROOT` / `EDICTORA_ROAMING_ROOT` で保存先の根を、`EDICTORA_UPDATE_URL` で更新の配信元を差し替えられる
 
@@ -96,7 +96,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo build --release          # target\release\edictora.exe と edictora-updater.exe
-cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run check
+cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run build; bun run check; bun test
 ```
 
 - 実ダッシュボードに接続するテストは書かない。**テスト・動作確認で Chrome を起動しない**（実画面の確認は手動で行う）

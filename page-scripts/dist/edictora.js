@@ -188,7 +188,293 @@
         throw new Error("EDICTORA_ELEMENT_GONE:" + kind);
       return el;
     };
+    const SNAPSHOT_MAX_CHARS = 1e6;
+    const SNAPSHOT_VALUE_MAX = 2000;
+    const SNAPSHOT_MAX_DEPTH = 80;
+    const NAME_FROM_CONTENT = new Set([
+      "button",
+      "link",
+      "heading",
+      "option",
+      "tab",
+      "menuitem",
+      "checkbox",
+      "radio",
+      "switch",
+      "img"
+    ]);
+    const IMPLICIT_ROLE = {
+      button: "button",
+      textarea: "textbox",
+      select: "combobox",
+      dialog: "dialog",
+      nav: "navigation",
+      main: "main",
+      header: "banner",
+      footer: "contentinfo",
+      aside: "complementary",
+      form: "form",
+      ul: "list",
+      ol: "list",
+      li: "listitem",
+      table: "table",
+      tr: "row",
+      td: "cell",
+      th: "columnheader",
+      progress: "progressbar",
+      option: "option",
+      details: "group",
+      article: "article",
+      img: "img",
+      h1: "heading",
+      h2: "heading",
+      h3: "heading",
+      h4: "heading",
+      h5: "heading",
+      h6: "heading"
+    };
+    const INPUT_ROLE = {
+      button: "button",
+      submit: "button",
+      reset: "button",
+      image: "button",
+      checkbox: "checkbox",
+      radio: "radio",
+      range: "slider",
+      number: "spinbutton",
+      file: "file-input"
+    };
+    const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "META", "LINK"]);
+    const clip = (s) => s.length > SNAPSHOT_VALUE_MAX ? `${s.slice(0, SNAPSHOT_VALUE_MAX)}...(${s.length} chars)` : s;
+    const oneLine = (s) => s.replace(/\s+/g, " ").trim();
+    const quoted = (s) => JSON.stringify(clip(oneLine(s)));
+    const roleOf = (el) => {
+      const explicit = (el.getAttribute("role") || "").trim().split(/\s+/)[0];
+      if (explicit === "presentation" || explicit === "none" || explicit === "generic")
+        return "";
+      if (explicit)
+        return explicit;
+      const tag = el.tagName.toLowerCase();
+      if (tag === "a")
+        return el.hasAttribute("href") ? "link" : "";
+      if (tag === "input") {
+        const type = (el.getAttribute("type") || "text").toLowerCase();
+        if (type === "hidden")
+          return "";
+        return INPUT_ROLE[type] || (el.hasAttribute("list") ? "combobox" : "textbox");
+      }
+      if (tag === "select") {
+        const s = el;
+        return s.multiple || s.size > 1 ? "listbox" : "combobox";
+      }
+      if (tag === "section")
+        return el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby") ? "region" : "";
+      return IMPLICIT_ROLE[tag] || "";
+    };
+    const nameOf = (el, role) => {
+      const al = el.getAttribute("aria-label");
+      if (al && al.trim())
+        return al;
+      const lb = el.getAttribute("aria-labelledby");
+      if (lb) {
+        const t = lb.split(/\s+/).map((id) => document.getElementById(id)).filter((n) => !!n).map(text).join(" ");
+        if (t.trim())
+          return t;
+      }
+      const labels = el.labels;
+      if (labels && labels.length > 0) {
+        const t = [...labels].map(text).join(" ");
+        if (t.trim())
+          return t;
+      }
+      if (el.tagName === "IMG" && el.getAttribute("alt"))
+        return el.getAttribute("alt") || "";
+      if (NAME_FROM_CONTENT.has(role) && el.tagName !== "IMG") {
+        const t = text(el);
+        if (t)
+          return t;
+      }
+      return el.getAttribute("placeholder") || el.getAttribute("title") || "";
+    };
+    const statesOf = (el) => {
+      const f = el;
+      const out = [];
+      if (f.disabled || el.getAttribute("aria-disabled") === "true")
+        out.push("disabled");
+      if (f.readOnly || el.getAttribute("aria-readonly") === "true")
+        out.push("readonly");
+      if (f.required || el.getAttribute("aria-required") === "true")
+        out.push("required");
+      for (const a of ["expanded", "selected", "pressed", "current", "invalid", "haspopup", "busy"]) {
+        const v = el.getAttribute("aria-" + a);
+        if (v !== null)
+          out.push(`${a}=${v}`);
+      }
+      if (f.type === "checkbox" || f.type === "radio")
+        out.push(`checked=${!!f.checked}`);
+      else if (el.hasAttribute("aria-checked"))
+        out.push(`checked=${el.getAttribute("aria-checked")}`);
+      if (document.activeElement === el)
+        out.push("focused");
+      const dv = el.getAttribute("data-value");
+      if (dv)
+        out.push(`data-value=${quoted(dv)}`);
+      return out;
+    };
+    const valueOf = (el) => {
+      const tag = el.tagName;
+      if (tag === "TEXTAREA")
+        return clip(el.value);
+      if (tag === "INPUT") {
+        const i = el;
+        const type = (i.getAttribute("type") || "text").toLowerCase();
+        if (type === "password")
+          return "(masked)";
+        if (["checkbox", "radio", "button", "submit", "reset", "image", "file"].includes(type))
+          return null;
+        return clip(i.value);
+      }
+      if (tag === "SELECT") {
+        return [...el.selectedOptions].map((o) => oneLine(o.textContent || "")).join(", ");
+      }
+      return null;
+    };
+    const renderState = (el) => {
+      const s = getComputedStyle(el);
+      if (s.display === "contents")
+        return "contents";
+      if (s.display === "none" || s.visibility === "hidden")
+        return "gone";
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 ? "shown" : "empty";
+    };
+    const snapshot = () => {
+      const lines = [];
+      let size = 0;
+      let truncated = false;
+      const push = (depth, line) => {
+        if (truncated)
+          return;
+        if (size + line.length > SNAPSHOT_MAX_CHARS) {
+          truncated = true;
+          lines.push("... (truncated: output size limit reached)");
+          return;
+        }
+        lines.push("  ".repeat(depth) + line);
+        size += line.length + depth * 2 + 1;
+      };
+      const walkChildren = (nodes, depth, level, shown) => {
+        for (const n of nodes) {
+          if (truncated)
+            return;
+          if (n.nodeType === Node.TEXT_NODE) {
+            const t = oneLine(n.textContent || "");
+            if (t && shown)
+              push(depth, `text ${quoted(t)}`);
+          } else if (n.nodeType === Node.ELEMENT_NODE) {
+            walk(n, depth, level + 1, shown);
+          }
+        }
+      };
+      const walk = (el, depth, level, parentShown) => {
+        if (truncated || SKIP_TAGS.has(el.tagName))
+          return;
+        if (level > SNAPSHOT_MAX_DEPTH) {
+          push(depth, "... (truncated: depth limit reached)");
+          return;
+        }
+        const state = renderState(el);
+        if (state === "gone")
+          return;
+        const shown = state === "contents" ? parentShown : state === "shown";
+        const tag = el.tagName.toLowerCase();
+        if (tag === "svg") {
+          const label = el.getAttribute("aria-label");
+          if (label && shown)
+            push(depth, `img ${quoted(label)}`);
+          return;
+        }
+        if (tag === "slot") {
+          const assigned = el.assignedNodes({ flatten: true });
+          walkChildren(assigned.length > 0 ? assigned : el.childNodes, depth, level, shown);
+          return;
+        }
+        if (tag === "iframe") {
+          const frame = el;
+          let doc = null;
+          try {
+            doc = frame.contentDocument;
+          } catch {
+            doc = null;
+          }
+          const fr = el.getBoundingClientRect();
+          if (shown) {
+            push(depth, `iframe ${quoted(el.getAttribute("title") || "")}${doc ? "" : " (not readable: cross-origin)"} ${rectOf(fr)}`);
+          }
+          if (doc && doc.body)
+            walk(doc.body, depth + 1, level + 1, shown);
+          return;
+        }
+        const role = roleOf(el);
+        const leaf = NAME_FROM_CONTENT.has(role) || tag === "textarea" || tag === "select";
+        const hiddenKept = !shown && state === "empty" && (role === "option" || tag === "input" && role === "file-input");
+        const printSelf = !!role && (shown || hiddenKept);
+        const children = () => {
+          if (leaf)
+            return;
+          const root = el.shadowRoot;
+          walkChildren(root ? root.childNodes : el.childNodes, printSelf ? depth + 1 : depth, level, shown);
+        };
+        if (!printSelf) {
+          children();
+          return;
+        }
+        const parts = [role === "heading" ? headingRole(el) : role];
+        const name = nameOf(el, role);
+        if (name.trim())
+          parts.push(quoted(name));
+        const value = valueOf(el);
+        if (value !== null)
+          parts.push(`value=${JSON.stringify(value)}`);
+        const states = statesOf(el);
+        if (hiddenKept)
+          states.unshift("hidden");
+        if (states.length > 0)
+          parts.push(`{${states.join(" ")}}`);
+        parts.push(rectOf(el.getBoundingClientRect()));
+        push(depth, parts.join(" "));
+        children();
+      };
+      const rectOf = (r) => `@${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`;
+      const headingRole = (el) => {
+        const level = el.getAttribute("aria-level") || (/^H[1-6]$/.test(el.tagName) ? el.tagName.slice(1) : "");
+        return level ? `heading[${level}]` : "heading";
+      };
+      const rootEl = document.body || document.documentElement;
+      try {
+        if (rootEl)
+          walk(rootEl, 0, 0, true);
+      } catch (err) {
+        lines.push(`... (snapshot error: ${err instanceof Error ? err.message : String(err)})`);
+      }
+      const header = [
+        "# Edictora page snapshot (text)",
+        `url: ${location.href}`,
+        `title: ${JSON.stringify(clip(document.title || ""))}`,
+        `lang: ${JSON.stringify(document.documentElement ? document.documentElement.lang : "")}`,
+        `viewport: ${innerWidth}x${innerHeight}`,
+        `readyState: ${document.readyState}`,
+        'format: <role> "<name>" value="<value>" {<state>...} @x,y,w,h  (indent = nesting; text "..." = plain text; invisible elements omitted except option / file-input marked {hidden})',
+        "---"
+      ];
+      return header.join(`
+`) + `
+` + lines.join(`
+`) + `
+`;
+    };
     return {
+      snapshot,
       collect: (kind) => {
         const els = sources[kind]();
         store[kind] = els;

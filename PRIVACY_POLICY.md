@@ -28,11 +28,11 @@ Google へのログインは、本アプリが開いた Chrome の画面で利�
 
 - 設定: `%APPDATA%\Edictora`
 - ログ: `%LOCALAPPDATA%\Edictora.Data\logs`（パブリッシャー ID は伏せて記録します。更新の確認・ダウンロードの結果も記録します）
-- 失敗時の画面: `%LOCALAPPDATA%\Edictora.Data\diagnostics`（ダッシュボードの画面が写ります）
+- 失敗時のページのスナップショット（テキスト）: `%LOCALAPPDATA%\Edictora.Data\diagnostics`（ダッシュボードのページにある要素の名前・欄の値などが含まれます。publisherId と、Google アカウントの氏名・メールアドレスは伏せます。スクリーンショットは撮りません）
 - Chrome プロファイル: 既定は `%LOCALAPPDATA%\Edictora.Data\chrome-profile`
 - アプリ本体（Setup でインストールしたとき）: `%LOCALAPPDATA%\Edictora`。ログオン時の自動更新のため、HKCU の `Run` に `Edictora Updater` を、ユーザー環境変数 `Path` に `%LOCALAPPDATA%\Edictora\current` を登録します。アンインストールすると、このフォルダーと両方の登録が取り除かれます（`Edictora.Data` と設定は残ります）
 
-設定・ログ・失敗時の画面・Chrome プロファイルは、いずれも利用者の PC 内にだけ保存されます。不要になったデータは、利用者が該当フォルダを削除できます。Chrome プロファイルにはログイン情報が入るため、他人と共有しないでください。
+設定・ログ・失敗時のページのスナップショット・Chrome プロファイルは、いずれも利用者の PC 内にだけ保存されます。不要になったデータは、利用者が該当フォルダを削除できます。Chrome プロファイルにはログイン情報が入るため、他人と共有しないでください。
 
 ## 5. お問い合わせと改定
 

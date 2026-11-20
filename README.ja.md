@@ -214,7 +214,7 @@ edictora submit --item <id> --yes               # 1 件を審査に送信
 
 > [!WARNING]
 > `--show-browser` は人が画面を見るためのものです。AI エージェントやスクリプトから実行するときは付けないでください。利用者の画面に Chrome のウィンドウが出て、作業の邪魔になります（AI には画面が見えないので、原因調査の役にも立ちません）。
-> 失敗の原因は、エラー文（覆っていた要素・要素の枠・画面の大きさを含みます）と、失敗時に保存する画面（`%LOCALAPPDATA%\Edictora.Data\diagnostics`、保存先はエラー文にも出ます）で調べてください。`pull` / `diff` の読み出しに失敗したときも画面を保存します。
+> 失敗の原因は、エラー文（覆っていた要素・要素の枠・画面の大きさを含みます）と、失敗時に保存するページのスナップショット（テキスト。`%LOCALAPPDATA%\Edictora.Data\diagnostics`、保存先はエラー文にも出ます）で調べてください。見えている要素の役割・名前・値・状態・位置を 1 行ずつ並べたものです。`pull` / `diff` の読み出しに失敗したときも保存します。Edictora はスクリーンショットを撮りません。
 
 ### 4. AI エージェントから使う（MCP）
 
@@ -283,7 +283,7 @@ MCP のゲートウェイ（Toolport など）を使っている場合は、ゲ�
 - ステータスが「審査待ち」など、書き込んでよいと確認できない状態では書き込みません。審査の取り消しはしません。
 - 欄やボタンはラベル・役割・文言で探し、ちょうど 1 つに絞れないときは止めます（クラス名には依存しません）。
 - Chrome は自動化フラグを付けずに起動し、終了時は正常終了させます。**プロファイルは削除しません。**
-- 失敗時の画面は `%LOCALAPPDATA%\Edictora.Data\diagnostics` に保存します（リポジトリには置きません）。
+- 失敗時のページのスナップショット（テキスト）は `%LOCALAPPDATA%\Edictora.Data\diagnostics` に保存します（リポジトリには置きません）。ダッシュボードの欄の値が含まれることがあります（publisherId と、Google アカウントの氏名・メールアドレスは伏せます）。
 - 画像の更新は、差分のあるスロットだけを入れ替えます。並べ替えには触れず、審査への送信も呼べません（画像の処理にその経路がありません）。
 - 「プライバシー」タブの更新は、差分のある欄だけを書き換え、審査には送信できません（コードに呼び出す手段がありません）。ダッシュボードの権限が設定と合わないときは、何も書かずに止まります。
 
@@ -294,7 +294,7 @@ MCP のゲートウェイ（Toolport など）を使っている場合は、ゲ�
 | 設定ファイル（正本の対応づけ） | `%APPDATA%\Edictora\config.json` |
 | Chrome プロファイル（ログイン情報を含む） | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | ログ（更新の結果を含む） | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| 失敗時の画面 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| 失敗時のページのスナップショット（テキスト） | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | アプリ本体（Setup でインストールしたとき） | `%LOCALAPPDATA%\Edictora`（アンインストールでフォルダーごと消えます） |
 
 データの置き場を `Edictora.Data` としてアプリ本体と分けているのは、アンインストールでログイン済みの Chrome プロファイルまで消えないようにするためです。以前の場所（`%LOCALAPPDATA%\Edictora\chrome-profile` など）からの自動移行はしません。
@@ -325,6 +325,7 @@ bun install --frozen-lockfile   # 依存（typescript だけ）を入れる
 bun run typecheck      # 型検査
 bun run build          # dist/edictora.js を作り直す
 bun run check          # dist/edictora.js が最新か確かめる
+bun test               # ページ内スクリプトのテスト（偽の DOM で評価）
 ```
 
 **`sectionStart` / `sectionEnd` の正規表現**: Rust の `regex` を使うため、先読み・後読み（`(?=…)` `(?!…)` `(?<=…)` `(?<!…)`）と後方参照（`\1`）は使えません（設定の読み込み時にエラーになります）。`^■ 説明` のような通常の書き方はそのまま使えます。

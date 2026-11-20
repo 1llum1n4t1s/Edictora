@@ -523,7 +523,7 @@ fn push_images_アップロードの失敗では保存せず残りも行わな�
     .unwrap_err();
 
     assert!(matches!(err, Error::Dashboard(_)));
-    // 保存しない・次の置き場へ進まない・失敗時の画面を残す
+    // 保存しない・次の置き場へ進まない・失敗時のページのスナップショットを残す
     assert_eq!(page.count("save"), 0);
     assert!(!page.log.iter().any(|l| l.contains("marquee.png")));
     assert!(

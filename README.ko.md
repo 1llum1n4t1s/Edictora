@@ -212,9 +212,9 @@ edictora submit --item <id> --yes               # Submit one item for review
 
 > [!WARNING]
 > `--show-browser`는 사람이 화면을 지켜보는 용도입니다. AI 에이전트나 스크립트에서 Edictora를 실행할 때는 사용하지 마십시오. 사용자의 화면에 Chrome 창이 나타나는데, AI는 그 창을 볼 수도 없습니다.
-> 실패 원인을 조사하려면 오류 메시지와 실패 시 저장되는 스크린샷을 사용하십시오.
+> 실패 원인을 조사하려면 오류 메시지와 실패 시 저장되는 페이지의 텍스트 스냅샷을 사용하십시오.
 > - 오류 메시지에는 가리고 있는 요소, 요소의 영역, 뷰포트 크기가 포함됩니다.
-> - 스크린샷은 `%LOCALAPPDATA%\Edictora.Data\diagnostics`에 저장되며, 오류 메시지에 경로가 표시됩니다. `pull`이나 `diff`가 대시보드를 읽지 못했을 때도 스크린샷이 저장됩니다.
+> - 페이지 스냅샷(보이는 요소마다 역할·이름·값·상태·위치를 한 줄씩 나열한 텍스트 파일)은 `%LOCALAPPDATA%\Edictora.Data\diagnostics`에 저장되며, 오류 메시지에 경로가 표시됩니다. `pull`이나 `diff`가 대시보드를 읽지 못했을 때도 스냅샷이 저장됩니다. Edictora는 스크린샷을 찍지 않습니다.
 
 ### 4. AI 에이전트에서 사용하기(MCP)
 
@@ -291,7 +291,7 @@ MCP 게이트웨이(Toolport 등)를 사용한다면, 게이트웨이에도 같�
 - 항목의 상태가 "심사 대기 중"처럼 안전하게 편집할 수 있다고 확인되지 않으면 Edictora는 쓰지 않습니다. 심사를 취소하는 일은 절대 없습니다.
 - 필드와 버튼은 레이블, 역할, 텍스트로 찾으며 CSS 클래스 이름은 사용하지 않습니다. 검색 결과가 정확히 하나의 요소가 아니면 Edictora는 중지합니다.
 - Chrome은 자동화 플래그 없이 시작되고 정상적으로 종료됩니다. **프로필은 절대 삭제하지 않습니다.**
-- 실패 시 찍은 스크린샷은 `%LOCALAPPDATA%\Edictora.Data\diagnostics`에 저장되며, 저장소에는 저장되지 않습니다.
+- 실패 시 저장되는 페이지의 텍스트 스냅샷은 `%LOCALAPPDATA%\Edictora.Data\diagnostics`에 저장되며, 저장소에는 저장되지 않습니다. 대시보드 페이지의 필드 값이 포함될 수 있습니다(publisherId와 Google 계정의 이름·이메일 주소는 가려집니다).
 - 이미지 갱신은 차이가 있는 슬롯만 교체합니다. 순서에는 손대지 않으며, 심사 제출도 호출할 수 없습니다(이미지 처리에는 그 경로가 없습니다).
 - '개인정보 보호' 탭 업데이트는 차이가 있는 입력란만 바꾸고, 심사에 제출하지 않으며(코드에 호출할 방법이 없음), 대시보드의 권한이 설정과 맞지 않으면 아무것도 쓰기 전에 멈춥니다.
 
@@ -302,7 +302,7 @@ MCP 게이트웨이(Toolport 등)를 사용한다면, 게이트웨이에도 같�
 | 설정 파일(원본 파일 대응) | `%APPDATA%\Edictora\config.json` |
 | Chrome 프로필(로그인 정보 포함) | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | 로그(업데이트 결과 포함) | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| 실패 시 스크린샷 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| 실패 시 페이지 텍스트 스냅샷 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | 앱 자체(Setup으로 설치한 경우) | `%LOCALAPPDATA%\Edictora`(제거 시 전체 삭제) |
 
 제거할 때 로그인된 Chrome 프로필까지 함께 삭제되지 않도록, 데이터는 앱과 분리하여 `Edictora.Data`에 보관합니다. 이전 위치(`%LOCALAPPDATA%\Edictora\chrome-profile` 등)의 데이터는 자동으로 이전되지 않습니다.
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **`sectionStart` / `sectionEnd`의 정규식**: Edictora는 Rust의 `regex` crate를 사용하므로, 전방 탐색, 후방 탐색(`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`), 역참조(`\1`)는 지원되지 않으며 설정을 불러올 때 오류가 됩니다. `^■ Description` 같은 일반적인 패턴은 그대로 동작합니다.

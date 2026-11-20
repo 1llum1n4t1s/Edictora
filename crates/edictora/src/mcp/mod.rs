@@ -7,7 +7,7 @@
 //!
 //! 設計:
 //! - ツールの中身は [`CliApp::run`] をそのまま呼ぶ（引数の配列を組み立て、出力をメモリで受ける）。
-//!   設定の検証・終了コード・publisherId の伏せ字・書き込みの安全策・実行中ロック・失敗時の画面保存を、
+//!   設定の検証・終了コード・publisherId の伏せ字・書き込みの安全策・実行中ロック・失敗時のページのスナップショット保存を、
 //!   CLI と同じ実装で使うため。手順を二重に持たない。
 //! - **画面表示・ログイン・プロファイルや chrome.exe の指定は、ツールに持たせない。** `--show-browser` を
 //!   選べないようにし、通常は利用者の画面に Chrome が出ない形でしか呼べなくする。**唯一の例外**として、入口の
@@ -54,7 +54,7 @@ To view or fix store listings, first call edictora_list_items to check the items
 then use edictora_push (confirm: true saves as draft) and edictora_submit (confirm: true submits for review, one item at a time). \
 Ask the user before writing or submitting for review. If the dashboard sign-in has expired, Edictora opens a visible Chrome window for the user to sign in and waits for it (up to 10 minutes) before continuing, so tell the user to expect that window; if the wait fails, ask the user to run `edictora login` in a terminal. \
 When something fails, investigate with the error message in the result (it includes the covering element and the viewport size) \
-and the failure screenshots (%LOCALAPPDATA%\\Edictora.Data\\diagnostics).";
+and the failure page snapshots (text files listing roles, names, values, states and rectangles of the visible elements; %LOCALAPPDATA%\\Edictora.Data\\diagnostics).";
 
 /// 案内（英語のみ）
 fn instructions() -> &'static str {

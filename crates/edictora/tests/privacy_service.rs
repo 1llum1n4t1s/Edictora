@@ -355,7 +355,7 @@ fn 画面に無い権限が設定にあれば何も書かずに止める() {
     assert!(m.contains("tabs"), "{m}");
     assert_eq!(page.count("write"), 0);
     assert_eq!(page.count("save"), 0);
-    // 失敗時の画面を保存する
+    // 失敗時のページのスナップショットを保存する
     assert_eq!(page.count("capture push-privacy-"), 1);
 }
 
@@ -444,7 +444,7 @@ fn 書き換えに失敗したら保存せずに残りも行わない() {
     assert_eq!(page.count("write"), 1, "1 つ目の失敗で残りは行わない");
     assert_eq!(page.count("set-kinds") + page.count("certify"), 0);
     assert_eq!(page.count("save"), 0);
-    // 失敗時の画面を保存する
+    // 失敗時のページのスナップショットを保存する
     assert_eq!(page.count("capture push-privacy-"), 1);
     // 保存していないので、保存済みの値は元のまま
     assert_eq!(page.saved, screen());
@@ -542,7 +542,7 @@ fn 読み出しに失敗したらアイテム単位のエラーとして返す()
             .contains("開けませんでした")
     );
     assert!(snapshot.reading.is_none());
-    // 失敗時の画面を保存する（pull の失敗）
+    // 失敗時のページのスナップショットを保存する（pull の失敗）
     assert_eq!(page.count("capture pull-"), 1);
     // 比較は全欄が未取得＋エラー
     let c = services::compare_privacy(&item(expected_privacy()), &snapshot);
@@ -610,7 +610,7 @@ fn ログイン切れはそのまま返す() {
         services::push_privacy(&mut page, &e, &no_progress, &CancelToken::new()).unwrap_err(),
         Error::LoginRequired
     );
-    // ログイン切れでは画面を保存しない
+    // ログイン切れではスナップショットを保存しない
     assert_eq!(page.0.count("capture"), 0);
 }
 

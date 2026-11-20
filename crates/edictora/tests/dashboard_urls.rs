@@ -7,7 +7,7 @@ use edictora::dashboard::urls::{
     ROOT, edit_url, is_edit_page_of, is_login_page, is_privacy_page_of, privacy_url,
     try_parse_publisher_id,
 };
-use edictora::logging::redact;
+use edictora::logging::{redact, redact_account, redact_diagnostics};
 
 // テスト用の架空の publisherId（実在の値は使わない）
 const PUBLISHER: &str = "00000000-1111-2222-3333-444444444444";
@@ -79,6 +79,60 @@ fn redact_ログに出す文字列からpublisher_idを伏せる() {
     assert!(redacted.contains(&format!("devconsole/<publisher>/{ITEM}/edit")));
     // 2 回通しても変わらない
     assert_eq!(redacted, redact(&redacted));
+}
+
+// 実画面のアカウント ボタンの名前と同じ形（氏名・アドレスは架空の値）
+#[test]
+fn redact_account_アカウントボタンの氏名とメールアドレスを伏せる() {
+    let ja = r#"button "Google アカウント: Taro Example (taro.example@example.com), Google メンバーシップ" {expanded=false}"#;
+    let en = r#"button "Google Account: 山田 花子 (hanako+cws@mail.example.co.jp)" @1,2,3,4"#;
+
+    let ja_r = redact_account(ja);
+    let en_r = redact_account(en);
+
+    assert_eq!(
+        ja_r,
+        r#"button "Google アカウント: <name> (<email>), Google メンバーシップ" {expanded=false}"#
+    );
+    assert_eq!(
+        en_r,
+        r#"button "Google Account: <name> (<email>)" @1,2,3,4"#
+    );
+    // 2 回通しても変わらない
+    assert_eq!(ja_r, redact_account(&ja_r));
+}
+
+#[test]
+fn redact_account_本文中のメールアドレスも伏せ_ほかの文字列は変えない() {
+    let text = r#"textbox "説明" value="お問い合わせ: support@example.com まで。Google アカウントの設定は不要です""#;
+
+    assert_eq!(
+        redact_account(text),
+        r#"textbox "説明" value="お問い合わせ: <email> まで。Google アカウントの設定は不要です""#
+    );
+    // @ を含んでもアドレスの形でなければ変えない
+    let plain = r#"text "@x,y,w,h の矩形" link "user@localhost""#;
+    assert_eq!(redact_account(plain), plain);
+}
+
+#[test]
+fn redact_diagnostics_publisher_idと氏名とメールアドレスをまとめて伏せる() {
+    let text = format!(
+        "url: https://chrome.google.com/webstore/devconsole/{PUBLISHER}/{ITEM}/edit\n\
+         option \"投稿者\" {{selected=true data-value=\"{PUBLISHER}\"}}\n\
+         button \"Google アカウント: Taro Example (taro@example.com)\""
+    );
+
+    let redacted = redact_diagnostics(&text, PUBLISHER);
+
+    assert!(!redacted.contains(PUBLISHER));
+    assert!(!redacted.contains("Taro Example"));
+    assert!(!redacted.contains("taro@example.com"));
+    assert!(redacted.contains(&format!("devconsole/<publisher>/{ITEM}/edit")));
+    assert!(redacted.contains("data-value=\"<publisher>\""));
+    assert!(redacted.contains("Google アカウント: <name> (<email>)"));
+    // publisherId が空でも、アカウントの伏せ字は行う
+    assert!(!redact_diagnostics(&text, "").contains("taro@example.com"));
 }
 
 #[test]

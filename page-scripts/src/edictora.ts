@@ -96,6 +96,8 @@ interface EdictoraApi {
   messages(): string[];
   dialogs(): string[];
   bodyText(): string;
+  /** 失敗時の診断用: 見えている要素の役割・名前・値・状態・矩形をたどったテキスト */
+  snapshot(): string;
 }
 
 /** 導入先（window に API を 1 つだけぶら下げる） */
@@ -336,7 +338,260 @@ function createApi(): EdictoraApi {
     return el as FormLike;
   };
 
+  // ---- 失敗時の診断用: ページのテキスト スナップショット ----
+  // スクリーンショットの代わりに、AI が画像を見ずに読めるテキストで「今の画面」を返す。
+  // 返すのは見えている要素の 役割・名前・値・状態・矩形 だけで、どれが原因かの判断は読み手（人・AI）に任せる。
+  // 利用者の入力値は埋め込まない（読み出すだけ）。出力は ASCII の印と JSON 風の引用で 1 行 1 要素にする。
+  // publisherId・アカウントの氏名・メールアドレスの伏せ字は Rust 側（logging::redact_diagnostics）が保存前に行う。
+  const SNAPSHOT_MAX_CHARS = 1_000_000; // 全体の上限
+  const SNAPSHOT_VALUE_MAX = 2000; // 1 つの値（名前・値・本文）の上限
+  const SNAPSHOT_MAX_DEPTH = 80;
+  const NAME_FROM_CONTENT = new Set([
+    "button", "link", "heading", "option", "tab", "menuitem", "checkbox", "radio", "switch", "img",
+  ]);
+  const IMPLICIT_ROLE: Record<string, string> = {
+    button: "button", textarea: "textbox", select: "combobox", dialog: "dialog", nav: "navigation",
+    main: "main", header: "banner", footer: "contentinfo", aside: "complementary", form: "form",
+    ul: "list", ol: "list", li: "listitem", table: "table", tr: "row", td: "cell", th: "columnheader",
+    progress: "progressbar", option: "option", details: "group", article: "article", img: "img",
+    h1: "heading", h2: "heading", h3: "heading", h4: "heading", h5: "heading", h6: "heading",
+  };
+  const INPUT_ROLE: Record<string, string> = {
+    button: "button", submit: "button", reset: "button", image: "button", checkbox: "checkbox",
+    radio: "radio", range: "slider", number: "spinbutton", file: "file-input",
+  };
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "META", "LINK"]);
+
+  /** 長い値は上限で切り、元の文字数を添える */
+  const clip = (s: string): string =>
+    s.length > SNAPSHOT_VALUE_MAX ? `${s.slice(0, SNAPSHOT_VALUE_MAX)}...(${s.length} chars)` : s;
+  const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
+  const quoted = (s: string): string => JSON.stringify(clip(oneLine(s)));
+
+  const roleOf = (el: Element): string => {
+    const explicit = (el.getAttribute("role") || "").trim().split(/\s+/)[0];
+    // 意味を持たない役割は付けず、暗黙の役割にも頼らず、子へ畳む
+    if (explicit === "presentation" || explicit === "none" || explicit === "generic") return "";
+    if (explicit) return explicit;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "a") return el.hasAttribute("href") ? "link" : "";
+    if (tag === "input") {
+      const type = (el.getAttribute("type") || "text").toLowerCase();
+      if (type === "hidden") return "";
+      return INPUT_ROLE[type] || (el.hasAttribute("list") ? "combobox" : "textbox");
+    }
+    if (tag === "select") {
+      const s = el as HTMLSelectElement;
+      return s.multiple || s.size > 1 ? "listbox" : "combobox";
+    }
+    if (tag === "section") return el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby") ? "region" : "";
+    return IMPLICIT_ROLE[tag] || "";
+  };
+
+  const nameOf = (el: Element, role: string): string => {
+    const al = el.getAttribute("aria-label");
+    if (al && al.trim()) return al;
+    const lb = el.getAttribute("aria-labelledby");
+    if (lb) {
+      const t = lb
+        .split(/\s+/)
+        .map((id) => document.getElementById(id))
+        .filter((n): n is HTMLElement => !!n)
+        .map(text)
+        .join(" ");
+      if (t.trim()) return t;
+    }
+    const labels = (el as FormLike).labels;
+    if (labels && labels.length > 0) {
+      const t = [...labels].map(text).join(" ");
+      if (t.trim()) return t;
+    }
+    if (el.tagName === "IMG" && el.getAttribute("alt")) return el.getAttribute("alt") || "";
+    if (NAME_FROM_CONTENT.has(role) && el.tagName !== "IMG") {
+      const t = text(el);
+      if (t) return t;
+    }
+    return el.getAttribute("placeholder") || el.getAttribute("title") || "";
+  };
+
+  /** 状態の印（値のあるものだけ）。disabled / readonly / required は真のときだけ出す */
+  const statesOf = (el: Element): string[] => {
+    const f = el as FormLike & { required?: boolean };
+    const out: string[] = [];
+    if (f.disabled || el.getAttribute("aria-disabled") === "true") out.push("disabled");
+    if (f.readOnly || el.getAttribute("aria-readonly") === "true") out.push("readonly");
+    if (f.required || el.getAttribute("aria-required") === "true") out.push("required");
+    for (const a of ["expanded", "selected", "pressed", "current", "invalid", "haspopup", "busy"]) {
+      const v = el.getAttribute("aria-" + a);
+      if (v !== null) out.push(`${a}=${v}`);
+    }
+    if (f.type === "checkbox" || f.type === "radio") out.push(`checked=${!!f.checked}`);
+    else if (el.hasAttribute("aria-checked")) out.push(`checked=${el.getAttribute("aria-checked")}`);
+    if (document.activeElement === el) out.push("focused");
+    const dv = el.getAttribute("data-value");
+    if (dv) out.push(`data-value=${quoted(dv)}`);
+    return out;
+  };
+
+  const valueOf = (el: Element): string | null => {
+    const tag = el.tagName;
+    if (tag === "TEXTAREA") return clip((el as HTMLTextAreaElement).value);
+    if (tag === "INPUT") {
+      const i = el as HTMLInputElement;
+      const type = (i.getAttribute("type") || "text").toLowerCase();
+      if (type === "password") return "(masked)"; // 文字数も出さない
+      if (["checkbox", "radio", "button", "submit", "reset", "image", "file"].includes(type)) return null;
+      return clip(i.value);
+    }
+    if (tag === "SELECT") {
+      return [...(el as HTMLSelectElement).selectedOptions].map((o) => oneLine(o.textContent || "")).join(", ");
+    }
+    return null;
+  };
+
+  /**
+   * 描画の状態。
+   * - gone: display:none / visibility:hidden。部分木ごと省く
+   * - contents: 枠を持たないが子は描画される（親の状態を引き継ぐ）
+   * - empty: 0x0。自分の行は省くが子へは降りる（Edictora が非表示でも集める閉じた一覧の option や
+   *   input[type=file] を残すため）。ただし option と file 入力だけは (hidden) 印つきで出す
+   * - shown: 通常に表示されている
+   */
+  const renderState = (el: Element): "gone" | "contents" | "empty" | "shown" => {
+    const s = getComputedStyle(el);
+    if (s.display === "contents") return "contents";
+    if (s.display === "none" || s.visibility === "hidden") return "gone";
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? "shown" : "empty";
+  };
+
+  const snapshot = (): string => {
+    const lines: string[] = [];
+    let size = 0;
+    let truncated = false;
+    const push = (depth: number, line: string): void => {
+      if (truncated) return;
+      if (size + line.length > SNAPSHOT_MAX_CHARS) {
+        truncated = true;
+        lines.push("... (truncated: output size limit reached)");
+        return;
+      }
+      lines.push("  ".repeat(depth) + line);
+      size += line.length + depth * 2 + 1;
+    };
+
+    // shown: 親までが描画されているか（0x0 の部分木の中の素の文字列は出さない）
+    const walkChildren = (nodes: Iterable<Node>, depth: number, level: number, shown: boolean): void => {
+      for (const n of nodes) {
+        if (truncated) return;
+        if (n.nodeType === Node.TEXT_NODE) {
+          const t = oneLine(n.textContent || "");
+          if (t && shown) push(depth, `text ${quoted(t)}`);
+        } else if (n.nodeType === Node.ELEMENT_NODE) {
+          walk(n as Element, depth, level + 1, shown);
+        }
+      }
+    };
+
+    const walk = (el: Element, depth: number, level: number, parentShown: boolean): void => {
+      if (truncated || SKIP_TAGS.has(el.tagName)) return;
+      if (level > SNAPSHOT_MAX_DEPTH) {
+        push(depth, "... (truncated: depth limit reached)");
+        return;
+      }
+      const state = renderState(el);
+      if (state === "gone") return;
+      const shown = state === "contents" ? parentShown : state === "shown";
+      const tag = el.tagName.toLowerCase();
+      if (tag === "svg") {
+        // 名前のある SVG だけ画像として出し、中身はたどらない
+        const label = el.getAttribute("aria-label");
+        if (label && shown) push(depth, `img ${quoted(label)}`);
+        return;
+      }
+      if (tag === "slot") {
+        const assigned = (el as HTMLSlotElement).assignedNodes({ flatten: true });
+        walkChildren(assigned.length > 0 ? assigned : el.childNodes, depth, level, shown);
+        return;
+      }
+      if (tag === "iframe") {
+        const frame = el as HTMLIFrameElement;
+        let doc: Document | null = null;
+        try {
+          doc = frame.contentDocument;
+        } catch {
+          doc = null;
+        }
+        const fr = el.getBoundingClientRect();
+        if (shown) {
+          push(
+            depth,
+            `iframe ${quoted(el.getAttribute("title") || "")}${doc ? "" : " (not readable: cross-origin)"} ${rectOf(fr)}`,
+          );
+        }
+        if (doc && doc.body) walk(doc.body, depth + 1, level + 1, shown);
+        return;
+      }
+      const role = roleOf(el);
+      // 内容で名前が決まる要素と、値を別に出す textarea / select は子をたどらない
+      // （textarea の初期値の text が value と並ばないように）
+      const leaf = NAME_FROM_CONTENT.has(role) || tag === "textarea" || tag === "select";
+      // 0x0 の要素は option と file 入力だけ (hidden) 印つきで出す。それ以外は自分の行を省いて子へ降りる
+      const hiddenKept = !shown && state === "empty" && (role === "option" || (tag === "input" && role === "file-input"));
+      const printSelf = !!role && (shown || hiddenKept);
+      const children = (): void => {
+        if (leaf) return;
+        const root = (el as HTMLElement).shadowRoot;
+        walkChildren(root ? root.childNodes : el.childNodes, printSelf ? depth + 1 : depth, level, shown);
+      };
+      if (!printSelf) {
+        // 意味の無い入れ子・0x0 の要素は子へ畳む（字下げも増やさない）
+        children();
+        return;
+      }
+      const parts: string[] = [role === "heading" ? headingRole(el) : role];
+      const name = nameOf(el, role);
+      if (name.trim()) parts.push(quoted(name));
+      const value = valueOf(el);
+      if (value !== null) parts.push(`value=${JSON.stringify(value)}`);
+      const states = statesOf(el);
+      if (hiddenKept) states.unshift("hidden");
+      if (states.length > 0) parts.push(`{${states.join(" ")}}`);
+      parts.push(rectOf(el.getBoundingClientRect()));
+      push(depth, parts.join(" "));
+      children();
+    };
+
+    const rectOf = (r: DOMRect): string =>
+      `@${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`;
+
+    const headingRole = (el: Element): string => {
+      const level = el.getAttribute("aria-level") || (/^H[1-6]$/.test(el.tagName) ? el.tagName.slice(1) : "");
+      return level ? `heading[${level}]` : "heading";
+    };
+
+    const rootEl = document.body || document.documentElement;
+    // 例外でも途中までの行を残し、必ず文字列を返す（診断の取得自体で失敗を増やさない）
+    try {
+      if (rootEl) walk(rootEl, 0, 0, true);
+    } catch (err) {
+      lines.push(`... (snapshot error: ${err instanceof Error ? err.message : String(err)})`);
+    }
+    const header = [
+      "# Edictora page snapshot (text)",
+      `url: ${location.href}`,
+      `title: ${JSON.stringify(clip(document.title || ""))}`,
+      `lang: ${JSON.stringify(document.documentElement ? document.documentElement.lang : "")}`,
+      `viewport: ${innerWidth}x${innerHeight}`,
+      `readyState: ${document.readyState}`,
+      "format: <role> \"<name>\" value=\"<value>\" {<state>...} @x,y,w,h  (indent = nesting; text \"...\" = plain text; invisible elements omitted except option / file-input marked {hidden})",
+      "---",
+    ];
+    return header.join("\n") + "\n" + lines.join("\n") + "\n";
+  };
+
   return {
+    snapshot,
     collect: (kind) => {
       const els = sources[kind]();
       store[kind] = els;

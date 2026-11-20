@@ -115,6 +115,41 @@ pub fn redact(text: &str) -> String {
     RE.replace_all(text, "${prefix}<publisher>").into_owned()
 }
 
+/// 診断用スナップショットの保存前の伏せ字。
+///
+/// - URL 以外（リンク先・属性値・本文）にも publisherId が現れうるため、分かっている publisherId の文字列そのものを
+///   先に `<publisher>` へ置き換え、続けて [`redact`] を通す（空文字は置き換えない。全文字の間に挿入されてしまうため）
+/// - テキストのスナップショットには、PNG では写らなかったアカウント ボタンの名前
+///   （「Google アカウント: <氏名> (<メール>)」）が入るため、[`redact_account`] で氏名とメールアドレスも伏せる
+pub fn redact_diagnostics(text: &str, publisher_id: &str) -> String {
+    let text = if publisher_id.is_empty() {
+        text.to_owned()
+    } else {
+        text.replace(publisher_id, "<publisher>")
+    };
+    redact_account(&redact(&text))
+}
+
+/// アカウントの氏名とメールアドレスを伏せる（診断用スナップショット向け）。
+///
+/// - 氏名: Google のアカウント ボタンの名前「Google アカウント: <氏名> (」「Google Account: <氏名> (」の氏名を `<name>` にする
+///   （ボタンの名前の言語は画面の言語に従うため、ja と en の表記を持つ）
+/// - メールアドレス: `local@domain.tld` の形を `<email>` にする。説明文中のサポート用アドレスなども伏せるが、
+///   診断の目的（画面の構造と状態を読む）には影響しない
+pub fn redact_account(text: &str) -> String {
+    // 固定の正規表現は初回参照時に 1 度だけコンパイルする
+    static NAME: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?P<prefix>Google (?:アカウント|Account)\s*[:：]\s*)[^()\n]+?(?P<suffix>\s*[(（])")
+            .expect("固定の正規表現")
+    });
+    static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+")
+            .expect("固定の正規表現")
+    });
+    let named = NAME.replace_all(text, "${prefix}<name>${suffix}");
+    EMAIL.replace_all(&named, "<email>").into_owned()
+}
+
 /// 保持期間を超えた古いログファイルを片付ける（自アプリのログファイルだけが対象）
 fn cleanup_old_log_files(directory: &Path) {
     let cutoff = LocalTime::now().days() - RETENTION_DAYS;

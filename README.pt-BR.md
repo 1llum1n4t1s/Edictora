@@ -212,9 +212,9 @@ Para acompanhar o que acontece, adicione `--show-browser`. O `login` sempre most
 
 > [!WARNING]
 > `--show-browser` é para quem acompanha a tela. Não o use ao executar o Edictora a partir de um agente de IA ou de um script: uma janela do Chrome apareceria na tela do usuário, e a IA não conseguiria vê-la de qualquer forma.
-> Para encontrar a causa de uma falha, use a mensagem de erro e a captura de tela salva na falha.
+> Para encontrar a causa de uma falha, use a mensagem de erro e o instantâneo de texto da página salvo na falha.
 > - A mensagem de erro inclui o elemento que cobre o alvo, os limites do elemento e o tamanho da área visível.
-> - As capturas de tela são salvas em `%LOCALAPPDATA%\Edictora.Data\diagnostics`, e a mensagem de erro mostra o caminho. Uma captura de tela também é salva quando `pull` ou `diff` não consegue ler o painel.
+> - Os instantâneos da página (arquivos de texto que listam, linha por linha, a função, o nome, o valor, o estado e a posição de cada elemento visível) são salvos em `%LOCALAPPDATA%\Edictora.Data\diagnostics`, e a mensagem de erro mostra o caminho. Um instantâneo também é salvo quando `pull` ou `diff` não consegue ler o painel. O Edictora não faz capturas de tela.
 
 ### 4. Uso a partir de agentes de IA (MCP)
 
@@ -291,7 +291,7 @@ Se você usa um gateway MCP (como o Toolport), registre o mesmo comando (stdio, 
 - O Edictora não grava quando não é possível confirmar que a situação do item é segura para edição, como "Revisão pendente". Ele nunca cancela uma revisão.
 - Os campos e botões são encontrados por rótulo, função e texto, nunca por nomes de classe CSS. Se uma busca não corresponder a exatamente um elemento, o Edictora para.
 - O Chrome é iniciado sem flags de automação e encerrado de forma limpa. **O perfil nunca é excluído.**
-- As capturas de tela feitas em caso de falha são salvas em `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca no seu repositório.
+- Os instantâneos de texto da página feitos em caso de falha são salvos em `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca no seu repositório. Podem conter os valores dos campos da página do painel (o publisherId e o nome e o endereço de e-mail da sua conta do Google são ocultados).
 - As atualizações de imagens substituem apenas os locais que diferem. Não reordenam imagens, e nunca podem enviar para revisão (o código de imagens não tem como chamá-lo).
 - As atualizações da guia Privacidade alteram apenas os campos que diferem, nunca enviam para revisão (o código não tem como chamá-lo) e param sem gravar nada se as permissões do painel não corresponderem à configuração.
 
@@ -302,7 +302,7 @@ Se você usa um gateway MCP (como o Toolport), registre o mesmo comando (stdio, 
 | Arquivo de configuração (mapeamento dos arquivos de origem) | `%APPDATA%\Edictora\config.json` |
 | Perfil do Chrome (inclui o seu login) | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | Logs (incluindo resultados de atualização) | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| Capturas de tela de falhas | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| Instantâneos de texto da página em falhas | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | O próprio aplicativo (quando instalado com o Setup) | `%LOCALAPPDATA%\Edictora` (removido por completo na desinstalação) |
 
 Os dados ficam em `Edictora.Data`, separados do aplicativo, para que desinstalar não exclua também o seu perfil do Chrome com login. Os dados em locais mais antigos (como `%LOCALAPPDATA%\Edictora\chrome-profile`) não são migrados automaticamente.
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **Expressões regulares em `sectionStart` / `sectionEnd`**: o Edictora usa o crate `regex` do Rust, então lookahead, lookbehind (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`) e referências inversas (`\1`) não são compatíveis; eles causam um erro quando a configuração é carregada. Padrões comuns, como `^■ Description`, funcionam como estão.

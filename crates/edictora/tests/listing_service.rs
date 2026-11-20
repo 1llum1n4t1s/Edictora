@@ -475,13 +475,13 @@ fn pull_ロケール単位のエラー文はpublisher_idを伏せる() {
 }
 
 #[test]
-fn pull_ロケール単位の失敗では画面を保存し結果のエラー文に保存先を含める() {
+fn pull_ロケール単位の失敗ではスナップショットを保存し結果のエラー文に保存先を含める() {
     let mut page = page();
     page.switch_error = Some((
         "ja".to_string(),
         "言語の選択肢（ja）が他の要素に覆われていて押せません".to_string(),
     ));
-    page.shot = Some(r"C:\diag\20261115-103133-pull-x-ja.png".to_string());
+    page.shot = Some(r"C:\diag\20261115-103133-pull-x-ja.txt".to_string());
 
     let snapshot =
         services::pull(&mut page, &expected(), &no_progress, &CancelToken::new()).unwrap();
@@ -497,7 +497,7 @@ fn pull_ロケール単位の失敗では画面を保存し結果のエラー文
         .expect("ja のエラー");
     assert_eq!(
         error,
-        r"言語の選択肢（ja）が他の要素に覆われていて押せません（失敗時の画面: C:\diag\20261115-103133-pull-x-ja.png）"
+        r"言語の選択肢（ja）が他の要素に覆われていて押せません（失敗時のページのスナップショット: C:\diag\20261115-103133-pull-x-ja.txt）"
     );
     // 成功したロケールでは保存しない
     assert_eq!(
@@ -507,7 +507,7 @@ fn pull_ロケール単位の失敗では画面を保存し結果のエラー文
 }
 
 #[test]
-fn pull_アイテム単位の失敗でも画面を保存する() {
+fn pull_アイテム単位の失敗でもスナップショットを保存する() {
     let mut page = page();
     page.open_error = Some("画面を開けませんでした".to_string());
 
@@ -524,7 +524,7 @@ fn pull_アイテム単位の失敗でも画面を保存する() {
 }
 
 #[test]
-fn pull_成功したときは画面を保存しない() {
+fn pull_成功したときはスナップショットを保存しない() {
     let mut page = page();
 
     services::pull(&mut page, &expected(), &no_progress, &CancelToken::new()).unwrap();

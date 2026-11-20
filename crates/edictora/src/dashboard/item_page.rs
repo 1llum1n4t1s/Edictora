@@ -30,7 +30,7 @@ use crate::error::{Error, Result};
 use crate::images::ImageSlot;
 use crate::listing::text_diff::first_difference_position;
 use crate::listing::{FieldValues, ListingField};
-use crate::logging::{LogLevel, log};
+use crate::logging::{LogLevel, log, redact_diagnostics};
 use crate::privacy::{DataKind, ExpectedPrivacy, PrivacyField, PrivacyReading};
 use crate::tr;
 use crate::util::{LocalTime, contains_ic, diagnostics_file_name, eq_ic, utf16_len};
@@ -530,17 +530,36 @@ impl EditorPage for DashboardItemPage<'_> {
         // 失敗時の記録なので、中断の後でも保存を試みる（新しい合図を使う）
         let run = || -> Result<String> {
             std::fs::create_dir_all(&self.diagnostics_dir)?;
-            // ファイル名の規則（yyyyMMdd-HHmmss-<安全化したラベル>.png）は純粋関数にまとめ、util のテストで固めている
+            // ファイル名の規則（yyyyMMdd-HHmmss-<安全化したラベル>.txt）は純粋関数にまとめ、util のテストで固めている
             let name = diagnostics_file_name(&LocalTime::now(), label);
             let path = self.diagnostics_dir.join(name);
-            let png = self.page.capture_screenshot(&CancelToken::new())?;
-            std::fs::write(&path, png)?;
+            // 言語の判定前の失敗でも取れるよう、未判定なら日本語の文言セットで導入部を作る
+            // （スナップショットは文言を使わない。失敗した項目の残りは行わないので、導入部が固定されても影響しない）
+            let t = match self.text {
+                Some(t) => t,
+                None => sel::dashboard_text_for_lang(Some(""))?,
+            };
+            let snapshot = self
+                .page
+                .evaluate(&scripts::snapshot(t), &CancelToken::new())?;
+            // 文字列でない・空なら空ファイルを成功として残さず、失敗（警告ログと None）にする
+            let body = snapshot
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| {
+                    Error::Dashboard("the page snapshot was not a non-empty string".to_string())
+                })?;
+            // 保存前に必ず伏せ字を通す（URL の publisherId に加え、本文・属性に現れる分と、アカウントの氏名・メールアドレスも）
+            std::fs::write(&path, redact_diagnostics(body, &self.publisher_id))?;
             Ok(path.display().to_string())
         };
         match run() {
             Ok(p) => Some(p),
             Err(e) => {
-                log(&format!("診断用の画面保存に失敗: {e}"), LogLevel::Warning);
+                log(
+                    &format!("診断用のページのスナップショット保存に失敗: {e}"),
+                    LogLevel::Warning,
+                );
                 None
             }
         }

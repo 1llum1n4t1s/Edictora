@@ -212,9 +212,9 @@ Um zu beobachten, was passiert, fügen Sie `--show-browser` hinzu. `login` zeigt
 
 > [!WARNING]
 > `--show-browser` ist für Personen gedacht, die den Bildschirm beobachten. Verwenden Sie es nicht, wenn Sie Edictora über einen KI-Agenten oder ein Skript ausführen: Auf dem Bildschirm des Benutzers würde ein Chrome-Fenster aufspringen, und die KI kann es ohnehin nicht sehen.
-> Um die Ursache eines Fehlers zu finden, nutzen Sie die Fehlermeldung und den bei einem Fehler gespeicherten Screenshot.
+> Um die Ursache eines Fehlers zu finden, nutzen Sie die Fehlermeldung und den bei einem Fehler gespeicherten Text-Snapshot der Seite.
 > - Die Fehlermeldung enthält das verdeckende Element, die Abmessungen des Elements und die Größe des Viewports.
-> - Screenshots werden unter `%LOCALAPPDATA%\Edictora.Data\diagnostics` gespeichert, und die Fehlermeldung nennt den Pfad. Ein Screenshot wird auch gespeichert, wenn `pull` oder `diff` das Dashboard nicht lesen kann.
+> - Seiten-Snapshots (Textdateien, die zeilenweise Rolle, Name, Wert, Zustand und Position jedes sichtbaren Elements auflisten) werden unter `%LOCALAPPDATA%\Edictora.Data\diagnostics` gespeichert, und die Fehlermeldung nennt den Pfad. Ein Snapshot wird auch gespeichert, wenn `pull` oder `diff` das Dashboard nicht lesen kann. Edictora erstellt keine Screenshots.
 
 ### 4. Verwendung mit KI-Agenten (MCP)
 
@@ -291,7 +291,7 @@ Wenn Sie ein MCP-Gateway verwenden (etwa Toolport), registrieren Sie denselben B
 - Edictora schreibt nicht, wenn sich nicht bestätigen lässt, dass der Status des Elements eine Bearbeitung sicher zulässt, etwa bei „Prüfung ausstehend“. Eine Prüfung wird nie abgebrochen.
 - Felder und Schaltflächen werden über Beschriftung, Rolle und Text gefunden, nie über CSS-Klassennamen. Trifft eine Suche nicht genau ein Element, bricht Edictora ab.
 - Chrome wird ohne Automatisierungs-Flags gestartet und sauber beendet. **Das Profil wird nie gelöscht.**
-- Bei einem Fehler aufgenommene Screenshots werden unter `%LOCALAPPDATA%\Edictora.Data\diagnostics` gespeichert, nie in Ihrem Repository.
+- Bei einem Fehler gespeicherte Text-Snapshots der Seite werden unter `%LOCALAPPDATA%\Edictora.Data\diagnostics` gespeichert, nie in Ihrem Repository. Sie können Feldwerte der Dashboard-Seite enthalten (die publisherId sowie Name und E-Mail-Adresse Ihres Google-Kontos werden maskiert).
 - Bild-Updates ersetzen nur die Plätze, die abweichen. Sie ordnen keine Bilder um, und sie können nie zur Prüfung einreichen (der Bildcode hat keinen Weg, das aufzurufen).
 - Aktualisierungen der Registerkarte „Datenschutz“ ändern nur die abweichenden Felder, reichen nie zur Prüfung ein (der Code hat keine Möglichkeit, das aufzurufen) und halten an, ohne etwas zu schreiben, wenn die Berechtigungen im Dashboard nicht zur Konfiguration passen.
 
@@ -302,7 +302,7 @@ Wenn Sie ein MCP-Gateway verwenden (etwa Toolport), registrieren Sie denselben B
 | Konfigurationsdatei (Zuordnung der Quelldateien) | `%APPDATA%\Edictora\config.json` |
 | Chrome-Profil (enthält Ihre Anmeldung) | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | Logs (einschließlich Aktualisierungsergebnissen) | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| Screenshots bei Fehlern | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| Text-Snapshots der Seite bei Fehlern | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | Die App selbst (bei Installation mit Setup) | `%LOCALAPPDATA%\Edictora` (wird bei der Deinstallation vollständig entfernt) |
 
 Die Daten liegen getrennt von der App in `Edictora.Data`, damit beim Deinstallieren nicht auch Ihr angemeldetes Chrome-Profil gelöscht wird. Daten an älteren Speicherorten (etwa `%LOCALAPPDATA%\Edictora\chrome-profile`) werden nicht automatisch migriert.
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **Reguläre Ausdrücke in `sectionStart` / `sectionEnd`**: Edictora verwendet die Rust-Crate `regex`, daher werden Lookahead, Lookbehind (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`) und Rückreferenzen (`\1`) nicht unterstützt; sie führen beim Laden der Konfiguration zu einem Fehler. Gewöhnliche Muster wie `^■ Description` funktionieren unverändert.

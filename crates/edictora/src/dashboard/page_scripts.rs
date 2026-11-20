@@ -118,3 +118,9 @@ pub fn dialogs(t: &DashboardText) -> String {
 pub fn body_text(t: &DashboardText) -> String {
     call(t, "bodyText()")
 }
+
+/// 失敗時の診断用に、ページのテキスト スナップショット（役割・名前・値・状態・矩形のツリー）を作る式。
+/// 利用者の入力値は埋め込まない（ページ側が現在の画面を読み出すだけ）
+pub fn snapshot(t: &DashboardText) -> String {
+    call(t, "snapshot()")
+}

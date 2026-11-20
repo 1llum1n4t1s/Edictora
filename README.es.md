@@ -212,9 +212,9 @@ Para ver lo que ocurre, añada `--show-browser`. `login` siempre muestra una ven
 
 > [!WARNING]
 > `--show-browser` es para quien observa la pantalla. No lo use al ejecutar Edictora desde un agente de IA o un script: aparecería una ventana de Chrome en la pantalla del usuario, y la IA tampoco puede verla.
-> Para averiguar la causa de un fallo, use el mensaje de error y la captura de pantalla que se guarda al fallar.
+> Para averiguar la causa de un fallo, use el mensaje de error y la instantánea de texto de la página que se guarda al fallar.
 > - El mensaje de error incluye el elemento que lo cubre, los límites del elemento y el tamaño del área visible.
-> - Las capturas de pantalla se guardan en `%LOCALAPPDATA%\Edictora.Data\diagnostics`, y el mensaje de error muestra la ruta. También se guarda una captura cuando `pull` o `diff` no consiguen leer el panel.
+> - Las instantáneas de la página (archivos de texto que listan, línea por línea, el rol, el nombre, el valor, el estado y la posición de cada elemento visible) se guardan en `%LOCALAPPDATA%\Edictora.Data\diagnostics`, y el mensaje de error muestra la ruta. También se guarda una instantánea cuando `pull` o `diff` no consiguen leer el panel. Edictora no hace capturas de pantalla.
 
 ### 4. Uso desde agentes de IA (MCP)
 
@@ -291,7 +291,7 @@ Si usa una pasarela MCP (como Toolport), registre en ella el mismo comando (stdi
 - Edictora no escribe cuando no se puede confirmar que el estado del elemento es seguro para editar, como «Pendiente de revisión». Nunca cancela una revisión.
 - Los campos y los botones se encuentran por etiqueta, rol y texto, nunca por nombres de clase CSS. Si una búsqueda no coincide con exactamente un elemento, Edictora se detiene.
 - Chrome se inicia sin indicadores de automatización y se cierra de forma limpia. **El perfil nunca se elimina.**
-- Las capturas de pantalla tomadas al fallar se guardan en `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca en su repositorio.
+- Las instantáneas de texto de la página tomadas al fallar se guardan en `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca en su repositorio. Pueden contener los valores de los campos de la página del panel (el publisherId y el nombre y la dirección de correo de su cuenta de Google se ocultan).
 - Las actualizaciones de imágenes reemplazan solo las ubicaciones que difieren. No reordenan imágenes, y nunca pueden enviar a revisión (el código de imágenes no tiene forma de llamarlo).
 - Las actualizaciones de la pestaña Privacidad solo cambian los campos que difieren, nunca envían a revisión (el código no tiene forma de llamarlo) y se detienen sin escribir nada si los permisos del panel no coinciden con la configuración.
 
@@ -302,7 +302,7 @@ Si usa una pasarela MCP (como Toolport), registre en ella el mismo comando (stdi
 | Archivo de configuración (asociación de archivos de origen) | `%APPDATA%\Edictora\config.json` |
 | Perfil de Chrome (incluye su inicio de sesión) | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | Registros (incluidos los resultados de actualización) | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| Capturas de pantalla al fallar | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| Instantáneas de texto de la página al fallar | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | La propia aplicación (cuando se instala con Setup) | `%LOCALAPPDATA%\Edictora` (se elimina por completo al desinstalar) |
 
 Los datos se guardan en `Edictora.Data`, separados de la aplicación, para que al desinstalar no se elimine también su perfil de Chrome con la sesión iniciada. Los datos de ubicaciones anteriores (como `%LOCALAPPDATA%\Edictora\chrome-profile`) no se migran automáticamente.
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **Expresiones regulares en `sectionStart` / `sectionEnd`**: Edictora usa el crate `regex` de Rust, así que no se admiten las aserciones de búsqueda hacia delante ni hacia atrás (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`) ni las referencias inversas (`\1`); provocan un error al cargar la configuración. Los patrones habituales, como `^■ Description`, funcionan tal cual.

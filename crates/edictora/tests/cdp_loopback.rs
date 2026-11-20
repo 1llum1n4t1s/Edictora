@@ -120,12 +120,7 @@ fn 分割して遅れて届く大きなメッセージを組み立てられる()
 
     let client = CdpClient::connect(&url).unwrap();
     let result = client
-        .send(
-            "Page.captureScreenshot",
-            None,
-            None,
-            Duration::from_secs(10),
-        )
+        .send("Runtime.evaluate", None, None, Duration::from_secs(10))
         .unwrap();
     assert_eq!(result["data"].as_str().unwrap(), expected);
     client.close();

@@ -77,7 +77,7 @@ pub trait EditorPage {
     /// 「下書きとして保存する」を押し、「保存されました」を確認する
     fn save_draft(&mut self, cancel: &CancelToken) -> Result<()>;
 
-    /// 失敗時の画面を診断用に保存する（失敗してもエラーにしない）。保存先を返す
+    /// 失敗時のページのスナップショット（テキスト）を診断用に保存する（失敗してもエラーにしない）。保存先を返す
     fn capture_diagnostics(&mut self, label: &str) -> Option<String>;
 }
 

@@ -212,9 +212,9 @@ edictora submit --item <id> --yes               # Submit one item for review
 
 > [!WARNING]
 > `--show-browser` 供人观看屏幕时使用。通过 AI 代理或脚本运行 Edictora 时请勿使用：Chrome 窗口会弹出到用户的屏幕上，而且 AI 本来也看不到它。
-> 要查明失败原因，请使用错误消息和失败时保存的截图。
+> 要查明失败原因，请使用错误消息和失败时保存的页面文本快照。
 > - 错误消息包含覆盖元素、元素的边界以及视口大小。
-> - 截图保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，错误消息会显示路径。当 `pull` 或 `diff` 读取信息中心失败时，也会保存截图。
+> - 页面快照（按行列出每个可见元素的角色、名称、值、状态和位置的文本文件）保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，错误消息会显示路径。当 `pull` 或 `diff` 读取信息中心失败时，也会保存快照。Edictora 不会截取屏幕截图。
 
 ### 4. 从 AI 代理使用（MCP）
 
@@ -291,7 +291,7 @@ args = ["mcp"]
 - 当无法确认项目状态可以安全编辑时（例如“审核中”），Edictora 不会写入。它绝不会取消审核。
 - 字段和按钮通过标签、角色和文本查找，绝不使用 CSS 类名。如果一次查找没有恰好匹配一个元素，Edictora 就会停止。
 - Chrome 不带自动化标志启动，并会被正常关闭。**配置文件绝不会被删除。**
-- 失败时截取的屏幕截图保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，绝不会保存到您的仓库中。
+- 失败时保存的页面文本快照保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，绝不会保存到您的仓库中。其中可能包含信息中心页面上字段的值（publisherId 以及 Google 账号的姓名和电子邮件地址会被遮盖）。
 - 图片更新只替换有差异的位置。不会调整顺序，更不可能提交审核（图片处理中没有调用提交的途径）。
 - “隐私”标签页的更新只改动有差异的字段，不会提交审核（代码中没有可调用的途径）；如果控制台上的权限与配置不一致，会在写入任何内容之前停止。
 
@@ -302,7 +302,7 @@ args = ["mcp"]
 | 配置文件（源文件映射） | `%APPDATA%\Edictora\config.json` |
 | Chrome 配置文件（包含您的登录状态） | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | 日志（包括更新结果） | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| 失败时的截图 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| 失败时的页面文本快照 | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | 应用本身（通过 Setup 安装时） | `%LOCALAPPDATA%\Edictora`（卸载时整体移除） |
 
 数据保存在 `Edictora.Data` 中，与应用分开，这样卸载时就不会同时删除您已登录的 Chrome 配置文件。旧位置的数据（例如 `%LOCALAPPDATA%\Edictora\chrome-profile`）不会自动迁移。
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **`sectionStart` / `sectionEnd` 中的正则表达式**：Edictora 使用 Rust 的 `regex` crate，因此不支持先行断言、后行断言（`(?=…)`、`(?!…)`、`(?<=…)`、`(?<!…)`）和反向引用（`\1`）；它们会在加载配置时导致错误。像 `^■ Description` 这样的普通模式可以照常使用。

@@ -212,9 +212,9 @@ To watch what happens, add `--show-browser`. `login` always shows a window, beca
 
 > [!WARNING]
 > `--show-browser` is for people watching the screen. Don't use it when running Edictora from an AI agent or a script: a Chrome window would pop up on the user's screen, and the AI can't see it anyway.
-> To find the cause of a failure, use the error message and the screenshot saved on failure.
+> To find the cause of a failure, use the error message and the text snapshot of the page saved on failure.
 > - The error message includes the covering element, the element's bounds and the viewport size.
-> - Screenshots are saved to `%LOCALAPPDATA%\Edictora.Data\diagnostics`, and the error message shows the path. A screenshot is also saved when `pull` or `diff` fails to read the dashboard.
+> - Page snapshots (text files listing the role, name, value, state and rectangle of each visible element) are saved to `%LOCALAPPDATA%\Edictora.Data\diagnostics`, and the error message shows the path. A snapshot is also saved when `pull` or `diff` fails to read the dashboard. Edictora takes no screenshots.
 
 ### 4. Using it from AI agents (MCP)
 
@@ -291,7 +291,7 @@ If you use an MCP gateway (such as Toolport), register the same command (stdio, 
 - Edictora doesn't write when the item's status can't be confirmed as safe to edit, such as "Pending review". It never cancels a review.
 - Fields and buttons are found by label, role and text, never by CSS class names. If a search doesn't match exactly one element, Edictora stops.
 - Chrome is started without automation flags and shut down cleanly. **The profile is never deleted.**
-- Screenshots taken on failure are saved to `%LOCALAPPDATA%\Edictora.Data\diagnostics`, never to your repository.
+- Page snapshots (text) taken on failure are saved to `%LOCALAPPDATA%\Edictora.Data\diagnostics`, never to your repository. They can contain the values of fields on the dashboard page; the publisher ID and your Google account name and email address are masked.
 - Image updates replace only the slots that differ. They never reorder images, and they can never submit for review (the image code has no way to call it).
 - Privacy practices updates change only the fields that differ, never submit for review (the code has no way to call it), and stop without writing anything if the permissions on the dashboard don't match the config.
 
@@ -302,7 +302,7 @@ If you use an MCP gateway (such as Toolport), register the same command (stdio, 
 | Config file (source file mapping) | `%APPDATA%\Edictora\config.json` |
 | Chrome profile (includes your sign-in) | `%LOCALAPPDATA%\Edictora.Data\chrome-profile` |
 | Logs (including update results) | `%LOCALAPPDATA%\Edictora.Data\logs` |
-| Screenshots on failure | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
+| Page snapshots (text) on failure | `%LOCALAPPDATA%\Edictora.Data\diagnostics` |
 | The app itself (when installed with Setup) | `%LOCALAPPDATA%\Edictora` (removed entirely on uninstall) |
 
 Data is kept in `Edictora.Data`, separate from the app, so that uninstalling doesn't also delete your signed-in Chrome profile. Data in older locations (such as `%LOCALAPPDATA%\Edictora\chrome-profile`) isn't migrated automatically.
@@ -333,6 +333,7 @@ bun install --frozen-lockfile   # install dependencies (TypeScript only)
 bun run typecheck      # type-check
 bun run build          # regenerate dist/edictora.js
 bun run check          # check that dist/edictora.js is up to date
+bun test               # run the page-script tests (fake DOM)
 ```
 
 **Regular expressions in `sectionStart` / `sectionEnd`**: Edictora uses Rust's `regex` crate, so lookahead, lookbehind (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`) and backreferences (`\1`) aren't supported; they cause an error when the config is loaded. Ordinary patterns such as `^■ Description` work as written.

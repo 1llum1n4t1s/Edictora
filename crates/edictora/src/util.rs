@@ -390,7 +390,7 @@ impl LocalTime {
     }
 }
 
-/// 失敗時の画面保存（診断用 PNG）のファイル名 `yyyyMMdd-HHmmss-<label>.png` を作る。
+/// 失敗時のページのスナップショット（診断用テキスト）のファイル名 `yyyyMMdd-HHmmss-<label>.txt` を作る。
 ///
 /// ラベルには `push-<itemId>` などが入る。ファイル名として安全にするため、
 /// ASCII の英数字・`-`・`_` 以外は 1 文字ずつ `_` に置き換える（パス区切りや日本語・空白を含めない）。
@@ -406,7 +406,7 @@ pub fn diagnostics_file_name(time: &LocalTime, label: &str) -> String {
             }
         })
         .collect();
-    format!("{}-{safe}.png", time.compact_timestamp())
+    format!("{}-{safe}.txt", time.compact_timestamp())
 }
 
 /// 年月日 → 1970-01-01 からの日数（Howard Hinnant のアルゴリズム）
@@ -432,43 +432,6 @@ pub fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     ((y + i64::from(m <= 2)) as i32, m, d)
-}
-
-// ───────── base64 ─────────
-
-/// 標準 base64 を復号する（画面保存の PNG 用。不正な文字があれば None）
-pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
-    fn val(c: u8) -> Option<u32> {
-        match c {
-            b'A'..=b'Z' => Some(u32::from(c - b'A')),
-            b'a'..=b'z' => Some(u32::from(c - b'a') + 26),
-            b'0'..=b'9' => Some(u32::from(c - b'0') + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let bytes: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    let trimmed: &[u8] = {
-        let mut end = bytes.len();
-        while end > 0 && bytes[end - 1] == b'=' {
-            end -= 1;
-        }
-        &bytes[..end]
-    };
-    let mut out = Vec::with_capacity(trimmed.len() * 3 / 4);
-    let mut acc: u32 = 0;
-    let mut bits = 0;
-    for &c in trimmed {
-        acc = (acc << 6) | val(c)?;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-            acc &= (1 << bits) - 1;
-        }
-    }
-    Some(out)
 }
 
 // ───────── Windows API（外部 crate を使わず、必要な関数だけを宣言する）─────────
@@ -570,12 +533,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn base64復号() {
-        assert_eq!(base64_decode("aGVsbG8=").unwrap(), b"hello");
-        assert_eq!(base64_decode("").unwrap(), b"");
-    }
-
     /// 書式の確認用の固定時刻（各欄が 1 桁のものと 2 桁のものを混ぜ、0 埋めを確かめる）
     fn sample_time() -> LocalTime {
         LocalTime {
@@ -619,15 +576,15 @@ mod tests {
         let t = sample_time();
         assert_eq!(
             diagnostics_file_name(&t, "push-abcdefghijklmnopabcdefghijklmnop"),
-            "20260105-090703-push-abcdefghijklmnopabcdefghijklmnop.png"
+            "20260105-090703-push-abcdefghijklmnopabcdefghijklmnop.txt"
         );
         // 英数字・-・_ 以外（パス区切り・空白・日本語・ドット・コロン）は 1 文字ずつ _ にする
         // （「:」「日」「本」の 3 文字が _ になり、元からある _ と合わせて 4 つ並ぶ）
         assert_eq!(
             diagnostics_file_name(&t, "a/b\\c d.e:日本_x-Y"),
-            "20260105-090703-a_b_c_d_e____x-Y.png"
+            "20260105-090703-a_b_c_d_e____x-Y.txt"
         );
-        assert_eq!(diagnostics_file_name(&t, ""), "20260105-090703-.png");
+        assert_eq!(diagnostics_file_name(&t, ""), "20260105-090703-.txt");
     }
 
     #[test]
