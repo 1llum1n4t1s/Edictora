@@ -4,6 +4,11 @@ Edictoraの利用者に影響する変更を記録します。1.0.5 以前は、
 
 ## Unreleased
 
+### 変更
+
+- Setup 版の MCP 自動登録で、クライアント（Claude Code・Codex）が Toolport ゲートウェイにつながっていて、Toolport が Edictora を有効に提供しているときは、新しい直接登録（`claude mcp add` / `codex mcp add`）を省くようにしました。既にある直接登録は外さず、判定できないときは従来どおり直接登録します。Windows 以外では判定せず直接登録します。省いたあとでクライアントから Toolport ゲートウェイを外した場合や、Toolport が指す実行ファイルが無くなった場合は、次の更新、または次のサインイン時（ログオン時の更新用 exe）に直接登録します。Toolport 側で Edictora を無効化・削除した場合は足しません。Setup が一度直接登録したクライアントは、利用者が外しても自動では足し直しません
+- 設定ファイル `%APPDATA%\Edictora\config.json` に、自動登録の方針を選ぶ `mcpRegistration`（`auto`（既定）/ `direct` / `off`）を追加しました。インストーラーは既定の設定パスだけを読みます
+
 ## 1.0.16 - 2026-11-21
 
 ### 変更

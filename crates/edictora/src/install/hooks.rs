@@ -17,7 +17,8 @@
 //! - obsolete: 何もしない。
 //! - Run・PATH の処理を済ませた後に、MCP サーバー（`edictora mcp`）を Claude Code・Codex へ登録・解除する
 //!   （[`super::connect`]）。install は登録の状態を忘れてから登録し、updated は状態のまま未完了の分だけ
-//!   登録する（初期版からの最初の更新では状態ファイルが無いので全クライアントが対象）。uninstall は
+//!   登録する（初期版からの最初の更新では状態ファイルが無いので全クライアントが対象）。Toolport 経由で
+//!   提供されていれば新しい直接登録を省く（`config.json` の `mcpRegistration` で選べる）。uninstall は
 //!   自分を指す登録だけを解除して状態ファイルを消す（Portable 版でも行う）。Portable 版の install / updated
 //!   では登録しない。CLI の呼び出しは時間で打ち切り、失敗はログに残すだけで終了コードは 0 のまま。
 //!
@@ -297,12 +298,14 @@ pub fn run_hook(hook: &Hook, paths: &crate::app_paths::AppPaths) -> i32 {
 fn apply_mcp_registration(kind: HookKind, root: &Path, paths: &crate::app_paths::AppPaths) {
     use super::connect::{
         Budget, HOOK_CALL_TIMEOUT, INSTALL_HOOK_TOTAL, UNINSTALL_HOOK_TOTAL, UPDATED_HOOK_TOTAL,
-        ensure_registered, forget_state, registered_executable, resolve_from_environment,
-        unregister_all,
+        detect_from_environment, ensure_registered, forget_state, mode_from_config_file,
+        registered_executable, resolve_from_environment, unregister_all,
     };
     let state_dir = paths.local_root.as_path();
     let executable = registered_executable(root);
     let label = format!("Velopack のフック {kind:?}");
+    // 動作モード（既定の設定ファイルだけを読む。解除には使わない）
+    let mode = || mode_from_config_file(&paths.default_config_path(), &label);
     match kind {
         HookKind::Install => {
             // 再インストールでは、前回の状態（済んだ CLI）を忘れて登録し直す
@@ -316,7 +319,9 @@ fn apply_mcp_registration(kind: HookKind, root: &Path, paths: &crate::app_paths:
             ensure_registered(
                 state_dir,
                 &executable,
+                mode(),
                 &resolve_from_environment,
+                &detect_from_environment,
                 &budget,
                 &label,
             );
@@ -326,7 +331,9 @@ fn apply_mcp_registration(kind: HookKind, root: &Path, paths: &crate::app_paths:
             ensure_registered(
                 state_dir,
                 &executable,
+                mode(),
                 &resolve_from_environment,
+                &detect_from_environment,
                 &budget,
                 &label,
             );

@@ -16,11 +16,22 @@
 //!   済んだ CLI は二度と呼ばない（利用者が意図して外した登録を、更新のたびに復活させないため）。
 //!   未完了の CLI（見つからない・失敗・時間切れ）は、次の更新フックやログオン時の更新用 exe で再試行する。
 //!
-//! テストから本物の CLI・本物の設定に触れないよう、CLI の場所（[`CliResolver`]）と状態フォルダーは
-//! すべて引数で受ける。実際の PATH を読むのは [`resolve_from_environment`] だけで、これを使うのは
-//! フック（`hooks::run_hook`）とログオン時の更新用 exe（`updater_main.rs`）の本番経路に限る。
+//! - Toolport ゲートウェイ経由で既に Edictora が提供されている環境（[`super::toolport`] の判定が `Served`）
+//!   では、新しい直接登録を省く（状態ファイルの `skipped`）。既にある直接登録は外さない。省いた後で
+//!   ゲートウェイがクライアントの設定から消えた、または Toolport が指す実行ファイルが無くなった
+//!   （どちらも `NotConnected`）ら、次の更新フックかログオン時の更新用 exe で直接登録を足す。前回未完了の
+//!   CLI も、auto なら CLI があるときに同じ判定をする。Windows 以外では判定せず直接登録する。
+//!   `%APPDATA%\Edictora\config.json` の `mcpRegistration`（[`Mode`]: auto / direct / off）で挙動を選べる。
+//!   `done`（直接登録済み）の意味は変えず、どのモードでも外さない。判定は正本
+//!   `install/toolport.rs`（Remnifold・Plumivox へバイト単位で同一に複製する）で行う。
+//!
+//! テストから本物の CLI・本物の設定に触れないよう、CLI の場所（[`CliResolver`]）・Toolport の判定
+//! （[`Detector`]）・動作モード・状態フォルダーはすべて引数で受ける。実際の PATH を読むのは
+//! [`resolve_from_environment`]、実際の環境で判定するのは [`detect_from_environment`]、設定を読むのは
+//! [`mode_from_config_file`] だけで、これらを使うのはフック（`hooks::run_hook`）とログオン時の更新用 exe
+//! （`updater_main.rs`）の本番経路に限る。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -30,9 +41,16 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::toolport::{self, ClientId, Detection, Env, Product};
 use crate::logging::{LogLevel, log};
 use crate::update::lock::{LockFile, is_held_by_another};
-use crate::util::kill_process_tree;
+use crate::util::{decode_text, kill_process_tree, strip_json_comments_and_trailing_commas};
+
+/// Toolport の判定で探す製品（`edictora mcp`）
+pub const TOOLPORT_PRODUCT: Product = Product {
+    binary_stem: "edictora",
+    mode_arg: "mcp",
+};
 
 /// MCP の登録名
 pub const SERVER_NAME: &str = "edictora";
@@ -109,6 +127,14 @@ impl Client {
         CLIENTS.into_iter().find(|c| c.name() == name)
     }
 
+    /// Toolport 側のクライアント ID
+    pub fn toolport_id(self) -> ClientId {
+        match self {
+            Client::Claude => ClientId::ClaudeCode,
+            Client::Codex => ClientId::Codex,
+        }
+    }
+
     /// 登録の確認（`mcp get edictora`）
     pub fn get_args(self) -> Vec<String> {
         vec!["mcp".into(), "get".into(), SERVER_NAME.into()]
@@ -141,6 +167,86 @@ impl Client {
 
 /// CLI の場所を決める関数（見つからなければ None）。テストはスタブの場所を返すものを渡す
 pub type CliResolver<'a> = &'a dyn Fn(Client) -> Option<PathBuf>;
+
+/// Toolport の判定をする関数。テストは固定の結果を返すものを渡す（本物の設定を読ませない）
+pub type Detector<'a> = &'a dyn Fn(Client) -> Detection;
+
+/// 実際の環境（クライアントの設定・Toolport の registry）で判定する。**フックと更新用 exe の本番経路だけが使う**
+pub fn detect_from_environment(client: Client) -> Detection {
+    toolport::detect(&TOOLPORT_PRODUCT, client.toolport_id(), &Env::process())
+}
+
+/// 自動登録の動作モード（`config.json` の `mcpRegistration`）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// Toolport が提供していれば直接登録を省き、そうでなければ直接登録する（既定）
+    #[default]
+    Auto,
+    /// 判定せず、常に直接登録する
+    Direct,
+    /// 自動の追加・修復をしない（アンインストール時の解除は続ける）
+    Off,
+}
+
+impl Mode {
+    /// 設定値から引く（小文字の `auto` / `direct` / `off` だけ）
+    pub fn from_name(name: &str) -> Option<Mode> {
+        match name {
+            "auto" => Some(Mode::Auto),
+            "direct" => Some(Mode::Direct),
+            "off" => Some(Mode::Off),
+            _ => None,
+        }
+    }
+}
+
+/// 設定ファイルの本文から `mcpRegistration` を寛容に読む（コメント・末尾のカンマを許す。項目が無ければ
+/// 既定の `Auto`）。本文が壊れている・オブジェクトでない・不正な値は Err（呼び出し側がログに残して
+/// `Auto` として扱う）
+pub fn parse_mode(text: &str) -> Result<Mode, String> {
+    let cleaned = strip_json_comments_and_trailing_commas(text.trim_start_matches('\u{feff}'));
+    let value = serde_json::from_str::<Value>(&cleaned)
+        .ok()
+        .filter(Value::is_object)
+        .ok_or_else(|| {
+            "設定ファイルの JSON が壊れているか、オブジェクトではありません".to_string()
+        })?;
+    match value.get("mcpRegistration") {
+        None | Some(Value::Null) => Ok(Mode::Auto),
+        Some(Value::String(name)) => Mode::from_name(name).ok_or_else(|| {
+            format!("mcpRegistration の値が不正です（auto / direct / off）: {name}")
+        }),
+        Some(_) => Err("mcpRegistration が文字列ではありません".to_string()),
+    }
+}
+
+/// 既定の設定ファイルを読んで動作モードを決める（見つからない・読めない・不正な値は `Auto`。
+/// 読めない・不正な値はログに残す）。`--config` で指定した別の設定は対象外
+pub fn mode_from_config_file(config_path: &Path, label: &str) -> Mode {
+    let bytes = match std::fs::read(config_path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Mode::Auto,
+        Err(e) => {
+            log(
+                &format!(
+                    "{label}: 設定ファイルを読めないため mcpRegistration は auto とします: {e}"
+                ),
+                LogLevel::Warning,
+            );
+            return Mode::Auto;
+        }
+    };
+    match parse_mode(&decode_text(&bytes)) {
+        Ok(mode) => mode,
+        Err(message) => {
+            log(
+                &format!("{label}: {message}。mcpRegistration は auto とします"),
+                LogLevel::Warning,
+            );
+            Mode::Auto
+        }
+    }
+}
 
 /// PATH の文字列（`;` 区切り）から、そのクライアントの `.exe` を探す。純粋関数ではないが、
 /// 環境変数は読まない（PATH は引数で受ける）
@@ -313,6 +419,8 @@ pub enum RegisterOutcome {
     TimedOut,
     /// 失敗（理由）
     Failed(String),
+    /// 直接登録を省いた（CLI は呼んでいない）
+    Skipped(SkipReason),
 }
 
 impl RegisterOutcome {
@@ -439,17 +547,46 @@ pub fn unregister_client(
     }
 }
 
+/// 直接登録を省いた理由（状態ファイルの `skipped`）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// Toolport ゲートウェイ経由で提供されている
+    Toolport,
+    /// `mcpRegistration` が `off`
+    Off,
+}
+
+impl SkipReason {
+    /// 状態ファイルでの名前
+    pub fn name(self) -> &'static str {
+        match self {
+            SkipReason::Toolport => "toolport",
+            SkipReason::Off => "off",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<SkipReason> {
+        match name {
+            "toolport" => Some(SkipReason::Toolport),
+            "off" => Some(SkipReason::Off),
+            _ => None,
+        }
+    }
+}
+
 /// 前回の登録の状態（`setup-registration.json`）
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct State {
     /// 登録した exe
     pub executable: Option<String>,
-    /// 登録まで済んだクライアント
+    /// 登録まで済んだクライアント（直接登録済み。どのモードでも外さない）
     pub done: BTreeSet<Client>,
+    /// 直接登録を省いたクライアントと理由（古い状態ファイルには無く、その場合は空）
+    pub skipped: BTreeMap<Client, SkipReason>,
 }
 
 /// JSON から状態を作る。壊れていれば既定（未登録）として扱い、決して失敗しない。
-/// 知らないクライアント名は読み捨てる
+/// 知らないクライアント名・理由は読み捨てる
 pub fn parse_state(bytes: &[u8]) -> State {
     let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
         return State::default();
@@ -463,6 +600,19 @@ pub fn parse_state(bytes: &[u8]) -> State {
                     .iter()
                     .filter_map(Value::as_str)
                     .filter_map(Client::from_name)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        skipped: value["skipped"]
+            .as_object()
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(name, reason)| {
+                        Some((
+                            Client::from_name(name)?,
+                            SkipReason::from_name(reason.as_str()?)?,
+                        ))
+                    })
                     .collect()
             })
             .unwrap_or_default(),
@@ -486,6 +636,11 @@ pub fn save_state(state_dir: &Path, state: &State) -> std::io::Result<()> {
     let value = json!({
         "executable": state.executable,
         "done": state.done.iter().map(|c| c.name()).collect::<Vec<_>>(),
+        "skipped": state
+            .skipped
+            .iter()
+            .map(|(c, reason)| (c.name().to_string(), json!(reason.name())))
+            .collect::<serde_json::Map<String, Value>>(),
     });
     let mut bytes = serde_json::to_vec_pretty(&value).map_err(std::io::Error::other)?;
     bytes.push(b'\n');
@@ -507,39 +662,110 @@ pub fn forget_state(state_dir: &Path) -> std::io::Result<bool> {
     }
 }
 
+/// クライアント 1 つに対するするべきこと
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// 直接登録する（CLI を呼ぶ）
+    Register,
+    /// 直接登録を省いて、理由を状態に残す（CLI は呼ばない）
+    Skip(SkipReason),
+}
+
 /// するべきこと
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// 状態を作り直す（exe が違う: 初回・移動・状態なし）
     pub fresh: bool,
-    /// CLI を呼ぶ対象
-    pub clients: Vec<Client>,
+    /// クライアントごとのするべきこと（処理する順）
+    pub actions: Vec<(Client, Action)>,
 }
 
-/// 前回の状態と今の exe から、するべきことを決める。何もしなくてよければ None（CLI を一切呼ばない）。
+/// Toolport が提供しているなら省く、そうでなければ直接登録する（新規扱いの判断）
+fn decide_new(client: Client, detect: &impl Fn(Client) -> Detection) -> Action {
+    match detect(client) {
+        Detection::Served { .. } => Action::Skip(SkipReason::Toolport),
+        _ => Action::Register,
+    }
+}
+
+/// 同じ exe の状態にある 1 クライアントのするべきこと（done 済みは何もしない）
+fn decide_existing(
+    client: Client,
+    state: &State,
+    mode: Mode,
+    available: &impl Fn(Client) -> bool,
+    detect: &impl Fn(Client) -> Detection,
+) -> Option<Action> {
+    if state.done.contains(&client) {
+        return None;
+    }
+    if mode == Mode::Off {
+        // 未完了のものは off として記録する（CLI は呼ばない）。済み・省いたものは何もしない
+        let untouched = !state.skipped.contains_key(&client);
+        return untouched.then_some(Action::Skip(SkipReason::Off));
+    }
+    let register = || available(client).then_some(Action::Register);
+    match (state.skipped.get(&client), mode) {
+        // 省いていたものを直接登録する
+        (Some(_), Mode::Direct) => register(),
+        // ゲートウェイが設定から消えたときだけ直接登録に戻す。ほか（提供中・無効化・不明）は何もしない
+        (Some(SkipReason::Toolport), _) => (matches!(detect(client), Detection::NotConnected))
+            .then(register)
+            .flatten(),
+        // off で省いていたものは、auto になったので新規扱いで判定する
+        (Some(SkipReason::Off), _) => match decide_new(client, detect) {
+            Action::Skip(reason) => Some(Action::Skip(reason)),
+            Action::Register => register(),
+        },
+        // 未完了（CLI が見つからない・失敗・時間切れ）は、今 CLI があるときだけ再試行する。
+        // direct は判定せず直接登録、auto は CLI があるときだけ判定する（提供中なら省く）
+        (None, Mode::Direct) => register(),
+        (None, _) => available(client).then(|| decide_new(client, detect)),
+    }
+}
+
+/// 前回の状態・今の exe・動作モードから、するべきことを決める。何もしなくてよければ None（CLI を一切呼ばない）。
 ///
-/// - exe が違う → 全クライアントを対象にし、done を空から作り直す（CLI が見つからないものも対象。
+/// - exe が違う → 全クライアントを対象にし、done・skipped を空から作り直す。off なら `Skip(Off)`、auto で
+///   Toolport が提供していれば `Skip(Toolport)`、それ以外は `Register`（CLI が見つからないものも対象。
 ///   結果は未完了になるが、exe を保存して次回から「未完了かつ見つかるもの」だけにする）。
-/// - 同じ → done に無く、かつ今 CLI が見つかるものだけ。done 済みは二度と呼ばない。
-pub fn plan(state: &State, executable: &Path, available: impl Fn(Client) -> bool) -> Option<Plan> {
+/// - 同じ → [`decide_existing`] のとおり。done 済みは二度と呼ばず、off は何もしない。
+pub fn plan(
+    state: &State,
+    executable: &Path,
+    mode: Mode,
+    available: impl Fn(Client) -> bool,
+    detect: impl Fn(Client) -> Detection,
+) -> Option<Plan> {
     let current = normalize_for_match(&executable.to_string_lossy());
     let same = state
         .executable
         .as_deref()
         .is_some_and(|previous| normalize_for_match(previous) == current);
     if !same {
+        let actions = CLIENTS
+            .into_iter()
+            .map(|c| {
+                let action = match mode {
+                    Mode::Off => Action::Skip(SkipReason::Off),
+                    Mode::Direct => Action::Register,
+                    Mode::Auto => decide_new(c, &detect),
+                };
+                (c, action)
+            })
+            .collect();
         return Some(Plan {
             fresh: true,
-            clients: CLIENTS.to_vec(),
+            actions,
         });
     }
-    let clients: Vec<Client> = CLIENTS
+    let actions: Vec<(Client, Action)> = CLIENTS
         .into_iter()
-        .filter(|c| !state.done.contains(c) && available(*c))
+        .filter_map(|c| Some((c, decide_existing(c, state, mode, &available, &detect)?)))
         .collect();
-    (!clients.is_empty()).then_some(Plan {
+    (!actions.is_empty()).then_some(Plan {
         fresh: false,
-        clients,
+        actions,
     })
 }
 
@@ -550,22 +776,55 @@ pub enum EnsureReport {
     NothingToDo,
     /// ほかのプロセスが登録中、またはロックを取れなかった（何もしていない）
     Busy,
-    /// 登録を試みた（クライアントごとの結果）
+    /// 登録を試みた・省いた（クライアントごとの結果）
     Ran(Vec<(Client, RegisterOutcome)>),
+}
+
+/// 判定したクライアントごとに、結果の種類と（`Unknown` なら）理由を 1 行ログへ残す（結果はそのまま返す。
+/// 秘密値は結果に含まれない）
+fn logged_detection<'a>(detect: Detector<'a>, label: &'a str) -> impl Fn(Client) -> Detection + 'a {
+    move |client| {
+        let detection = detect(client);
+        let message = match &detection {
+            Detection::Unknown(reason) => format!(
+                "{label}: Toolport の判定（{}）: {}。確かめられません: {reason}",
+                client.name(),
+                detection.kind()
+            ),
+            _ => format!(
+                "{label}: Toolport の判定（{}）: {}",
+                client.name(),
+                detection.kind()
+            ),
+        };
+        log(&message, LogLevel::Info);
+        detection
+    }
 }
 
 /// 必要なら登録する。失敗はすべてログに残すだけで、呼び出し側を止めない。
 ///
-/// `state_dir` はデータの根（本番は `AppPaths.local_root`）、`resolve` は CLI の場所、`label` はログの見出し。
+/// `state_dir` はデータの根（本番は `AppPaths.local_root`）、`mode` は動作モード、`resolve` は CLI の場所、
+/// `detect` は Toolport の判定（必要なときだけ呼ぶ）、`label` はログの見出し。
 pub fn ensure_registered(
     state_dir: &Path,
     executable: &Path,
+    mode: Mode,
     resolve: CliResolver,
+    detect: Detector,
     budget: &Budget,
     label: &str,
 ) -> EnsureReport {
     // 普段は状態ファイル 1 つと PATH の走査だけで終わる（ロックも取らない）
-    if plan(&load_state(state_dir), executable, |c| resolve(c).is_some()).is_none() {
+    if plan(
+        &load_state(state_dir),
+        executable,
+        mode,
+        |c| resolve(c).is_some(),
+        detect,
+    )
+    .is_none()
+    {
         return EnsureReport::NothingToDo;
     }
     let _lock = match LockFile::try_acquire(&state_dir.join(LOCK_FILE)) {
@@ -588,35 +847,60 @@ pub fn ensure_registered(
     };
     // ロックを待つ間にほかのプロセスが終えていることがある。読み直して決め直す
     let previous = load_state(state_dir);
-    let Some(plan) = plan(&previous, executable, |c| resolve(c).is_some()) else {
+    let Some(plan) = plan(
+        &previous,
+        executable,
+        mode,
+        |c| resolve(c).is_some(),
+        logged_detection(detect, label),
+    ) else {
         return EnsureReport::NothingToDo;
     };
     let mut state = if plan.fresh {
         State {
             executable: Some(executable.to_string_lossy().into_owned()),
-            done: BTreeSet::new(),
+            ..State::default()
         }
     } else {
         previous
     };
     let mut results = Vec::new();
-    for client in plan.clients {
-        let cli = resolve(client);
-        let outcome = register_client(client, cli.as_deref(), executable, budget);
-        if outcome.is_done() {
-            state.done.insert(client);
-        } else {
-            state.done.remove(&client);
-        }
-        let level = match &outcome {
-            RegisterOutcome::Registered | RegisterOutcome::Unchanged | RegisterOutcome::NoCli => {
-                LogLevel::Info
+    for (client, action) in plan.actions {
+        let outcome = match action {
+            Action::Skip(reason) => {
+                state.skipped.insert(client, reason);
+                RegisterOutcome::Skipped(reason)
             }
-            _ => LogLevel::Warning,
+            Action::Register => {
+                let cli = resolve(client);
+                let outcome = register_client(client, cli.as_deref(), executable, budget);
+                if outcome.is_done() {
+                    state.done.insert(client);
+                    state.skipped.remove(&client);
+                } else {
+                    state.done.remove(&client);
+                }
+                outcome
+            }
+        };
+        let (message, level) = match &outcome {
+            RegisterOutcome::Skipped(SkipReason::Toolport) => (
+                "への直接登録を省きました（Toolport ゲートウェイ経由で提供されています）"
+                    .to_string(),
+                LogLevel::Info,
+            ),
+            RegisterOutcome::Skipped(SkipReason::Off) => (
+                "への直接登録を省きました（mcpRegistration が off です）".to_string(),
+                LogLevel::Info,
+            ),
+            RegisterOutcome::Registered | RegisterOutcome::Unchanged | RegisterOutcome::NoCli => {
+                (format!("への登録: {outcome:?}"), LogLevel::Info)
+            }
+            _ => (format!("への登録: {outcome:?}"), LogLevel::Warning),
         };
         log(
             &format!(
-                "{label}: MCP（{SERVER_NAME}）の {} への登録: {outcome:?}",
+                "{label}: MCP（{SERVER_NAME}）の {} {message}",
                 client.name()
             ),
             level,

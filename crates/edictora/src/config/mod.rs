@@ -126,6 +126,20 @@ struct ConfigFileDto {
     chrome_path: Option<String>,
     /// 対象アイテムの一覧
     items: Option<Vec<ItemConfigDto>>,
+    /// インストーラーの MCP 直接登録の方針（任意。`auto` / `direct` / `off`、既定 `auto`）。
+    /// 値を使うのはインストーラー側（寛容な読み取り）。通常の読み込みでは検証だけを行う
+    #[serde(rename = "mcpRegistration")]
+    #[allow(dead_code)]
+    mcp_registration: Option<McpRegistrationDto>,
+}
+
+/// `mcpRegistration` の値（検証用。これ以外の値は設定ファイルの読み込みエラー）
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum McpRegistrationDto {
+    Auto,
+    Direct,
+    Off,
 }
 
 #[derive(Debug, Deserialize)]

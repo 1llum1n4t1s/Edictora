@@ -266,6 +266,13 @@ args = ["mcp"]
 
 Se você usa um gateway MCP (como o Toolport), registre o mesmo comando (stdio, argumento `mcp`) no gateway.
 
+**Toolport e o registro automático (versão Setup, Windows)**
+- Para o Claude Code e o Codex separadamente, o Setup pula `claude mcp add` / `codex mcp add` quando as duas condições a seguir são atendidas: (1) as configurações desse cliente contêm o gateway do Toolport (`mcpServers` em `~/.claude.json`, ou `~/.codex/config.toml`), e (2) o registry do Toolport (`%APPDATA%\Toolport\registry.json`; o local pode ser alterado com `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR`) tem um servidor habilitado que inicia `edictora.exe` com o argumento `mcp`, em um perfil em uso. Se isso não puder ser determinado, o Edictora registra diretamente como antes. Fora do Windows, o Edictora não faz essa verificação e registra diretamente.
+- Um registro que já existe nunca é removido. Se mais tarde você remover o gateway do Toolport desse cliente, ou o executável para o qual o Toolport aponta deixar de existir, o Edictora adiciona o registro direto na próxima atualização ou no próximo início de sessão (o executável de atualização que roda ao iniciar a sessão). Se você desabilitar ou excluir o Edictora no Toolport, o Edictora não o adiciona. Um cliente que o Setup já registrou diretamente uma vez não é adicionado de novo automaticamente, mesmo que você remova o registro; só é adicionado de volta um cliente que o Setup pulou.
+- Se você adicionar o Toolport depois e quiser remover apenas o registro direto, execute `claude mcp remove edictora --scope user` ou `codex mcp remove edictora`.
+- A quarentena de ferramentas do Toolport (as ferramentas ficam em quarentena quando uma atualização as altera) não é verificada.
+- Você pode escolher o comportamento com `mcpRegistration` em `%APPDATA%\Edictora\config.json`: `auto` (padrão; o comportamento acima), `direct` (sempre registrar diretamente) ou `off` (nunca registrar nem reparar automaticamente; a desinstalação continua removendo os registros que apontam para o Edictora). O instalador lê apenas o caminho de configuração padrão, não uma configuração indicada com `--config`. Os demais comandos relatam qualquer outro valor como erro de configuração. O instalador trata um valor inválido, ou um arquivo de configuração que não é JSON válido, como `auto` e o registra no log.
+
 | Ferramenta | O que faz |
 |---|---|
 | `edictora_list_items` | Mostra o que o arquivo de configuração abrange (itens, idiomas, arquivos de origem). Não abre um navegador. |

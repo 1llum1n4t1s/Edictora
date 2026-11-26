@@ -6,12 +6,17 @@
 //!   根のキーを引数で受けるので、テストは専用のハイブを使い、実際の Run や PATH に触れない。
 //! - [`connect`] — MCP サーバー（`edictora mcp`）の Claude Code・Codex への登録と解除（公式 CLI を
 //!   時間の上限つきで呼ぶ）。フックとログオン時の更新用 exe から呼ぶ。CLI の場所と状態フォルダーを
-//!   引数で受けるので、テストはスタブの CLI を使い、本物の CLI・設定に触れない。
+//!   引数で受けるので、テストはスタブの CLI を使い、本物の CLI・設定に触れない。Toolport 経由で既に提供されて
+//!   いる環境では直接登録を省く（`config.json` の `mcpRegistration` で選べる）。
+//! - [`toolport`] — Toolport ゲートウェイ経由で `edictora mcp` が提供されているかの判定（クライアントの設定と
+//!   Toolport の registry を読むだけ。書き込まない）。Remnifold・Plumivox の
+//!   `toolport.rs` とバイト単位で同一（正本はここ。編集はここで行い複製する）。
 
 pub mod connect;
 pub mod hooks;
 #[cfg(windows)]
 pub mod registry;
+pub mod toolport;
 
 /// Velopack が初回起動（Setup の直後）に付ける環境変数（vendored の constants.rs の `HOOK_ENV_FIRSTRUN`）
 pub const FIRSTRUN_ENV: &str = "VELOPACK_FIRSTRUN";

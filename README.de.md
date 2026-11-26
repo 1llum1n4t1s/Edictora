@@ -266,6 +266,13 @@ args = ["mcp"]
 
 Wenn Sie ein MCP-Gateway verwenden (etwa Toolport), registrieren Sie denselben Befehl (stdio, Argument `mcp`) im Gateway.
 
+**Toolport und automatische Registrierung (Setup-Version, Windows)**
+- Für Claude Code und Codex jeweils einzeln überspringt Setup `claude mcp add` / `codex mcp add`, wenn beides zutrifft: (1) Die Einstellungen des Clients enthalten das Toolport-Gateway (`mcpServers` in `~/.claude.json` bzw. `~/.codex/config.toml`), und (2) die Registry von Toolport (`%APPDATA%\Toolport\registry.json`; der Ort lässt sich mit `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` ändern) enthält einen aktivierten Server, der `edictora.exe` mit dem Argument `mcp` startet, in einem verwendeten Profil. Lässt sich das nicht feststellen, registriert Edictora wie bisher direkt. Außerhalb von Windows führt Edictora diese Prüfung nicht durch und registriert direkt.
+- Eine bereits vorhandene Registrierung wird nie entfernt. Entfernen Sie das Toolport-Gateway später aus diesem Client, oder existiert die ausführbare Datei, auf die Toolport zeigt, nicht mehr, fügt Edictora beim nächsten Update oder bei der nächsten Anmeldung (die beim Anmelden laufende Update-Exe) die direkte Registrierung hinzu. Deaktivieren oder löschen Sie Edictora in Toolport, fügt Edictora sie nicht hinzu. Einen Client, den Setup einmal direkt registriert hat, fügt Edictora nicht automatisch erneut hinzu, auch wenn Sie die Registrierung selbst entfernen; nur ein von Setup ausgelassener Client wird wieder hinzugefügt.
+- Wenn Sie Toolport später hinzufügen und nur die direkte Registrierung entfernen möchten, führen Sie `claude mcp remove edictora --scope user` bzw. `codex mcp remove edictora` aus.
+- Die Werkzeug-Quarantäne von Toolport (Werkzeuge werden in Quarantäne gestellt, wenn ein Update sie ändert) wird nicht geprüft.
+- Das Verhalten wählen Sie mit `mcpRegistration` in `%APPDATA%\Edictora\config.json`: `auto` (Standard; das obige Verhalten), `direct` (immer direkt registrieren) oder `off` (nie automatisch registrieren oder reparieren; die Deinstallation entfernt weiterhin die Registrierungen, die auf Edictora zeigen). Das Installationsprogramm liest nur den Standardpfad der Konfiguration, nicht eine mit `--config` angegebene. Andere Befehle melden jeden anderen Wert als Konfigurationsfehler. Das Installationsprogramm behandelt einen ungültigen Wert oder eine Konfigurationsdatei ohne gültiges JSON als `auto` und protokolliert ihn.
+
 | Tool | Funktion |
 |---|---|
 | `edictora_list_items` | Zeigt, was die Konfigurationsdatei abdeckt (Elemente, Locales, Quelldateien). Öffnet keinen Browser. |

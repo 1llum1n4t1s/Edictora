@@ -266,6 +266,13 @@ args = ["mcp"]
 
 Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même commande (stdio, argument `mcp`) sur la passerelle.
 
+**Toolport et enregistrement automatique (version Setup, Windows)**
+- Pour Claude Code et Codex séparément, Setup omet `claude mcp add` / `codex mcp add` lorsque les deux conditions suivantes sont remplies : (1) les paramètres de ce client contiennent la passerelle Toolport (`mcpServers` dans `~/.claude.json`, ou `~/.codex/config.toml`), et (2) le registry de Toolport (`%APPDATA%\Toolport\registry.json` ; l'emplacement peut être modifié avec `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR`) contient un serveur activé qui lance `edictora.exe` avec l'argument `mcp`, dans un profil utilisé. Si cela ne peut pas être déterminé, Edictora enregistre directement comme auparavant. Hors de Windows, Edictora ne fait pas cette vérification et enregistre directement.
+- Un enregistrement déjà présent n'est jamais supprimé. Si vous retirez plus tard la passerelle Toolport de ce client, ou si l'exécutable vers lequel pointe Toolport n'existe plus, Edictora ajoute l'enregistrement direct à la prochaine mise à jour ou à la prochaine ouverture de session (l'exécutable de mise à jour lancé à l'ouverture de session). Si vous désactivez ou supprimez Edictora dans Toolport, Edictora ne l'ajoute pas. Un client que Setup a déjà enregistré directement une fois n'est pas rajouté automatiquement, même si vous retirez l'enregistrement vous-même ; seul un client que Setup avait omis est rajouté.
+- Si vous ajoutez Toolport plus tard et souhaitez ne supprimer que l'enregistrement direct, exécutez `claude mcp remove edictora --scope user` ou `codex mcp remove edictora`.
+- La quarantaine des outils de Toolport (les outils sont mis en quarantaine lorsqu'une mise à jour les modifie) n'est pas vérifiée.
+- Vous pouvez choisir le comportement avec `mcpRegistration` dans `%APPDATA%\Edictora\config.json` : `auto` (par défaut ; le comportement ci-dessus), `direct` (toujours enregistrer directement) ou `off` (ne jamais enregistrer ni réparer automatiquement ; la désinstallation retire toujours les enregistrements qui pointent vers Edictora). Le programme d'installation ne lit que le chemin de configuration par défaut, pas une configuration indiquée avec `--config`. Les autres commandes signalent toute autre valeur comme une erreur de configuration. Le programme d'installation traite une valeur non valide, ou un fichier de configuration qui n'est pas du JSON valide, comme `auto` et la consigne dans le journal.
+
 | Outil | Ce qu'il fait |
 |---|---|
 | `edictora_list_items` | Affiche ce que couvre le fichier de configuration (éléments, locales, fichiers sources). N'ouvre pas de navigateur. |

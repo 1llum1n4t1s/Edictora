@@ -266,6 +266,13 @@ args = ["mcp"]
 
 MCP 게이트웨이(Toolport 등)를 사용한다면, 게이트웨이에도 같은 명령(stdio, 인수 `mcp`)을 등록하십시오.
 
+**Toolport와 자동 등록(Setup 버전, Windows)**
+- Claude Code와 Codex 각각에 대해, 다음 두 조건을 모두 만족하면 Setup은 `claude mcp add` / `codex mcp add`를 건너뜁니다. (1) 해당 클라이언트의 설정에 Toolport 게이트웨이가 있습니다(`~/.claude.json`의 `mcpServers` 또는 `~/.codex/config.toml`). (2) Toolport의 registry(`%APPDATA%\Toolport\registry.json`. 위치는 `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR`로 바꿀 수 있습니다)에 `edictora.exe`를 `mcp` 인수로 실행하는 활성 서버가 있고, 사용 중인 프로필에 들어 있습니다. 판단할 수 없으면 기존처럼 직접 등록합니다. Windows 이외에서는 판단하지 않고 직접 등록합니다.
+- 이미 있는 등록은 제거하지 않습니다. 건너뛴 뒤에 해당 클라이언트에서 Toolport 게이트웨이를 제거하거나 Toolport가 가리키는 실행 파일이 없어지면, 다음 업데이트 또는 다음 로그인 시(로그온 시 실행되는 업데이트용 exe) 직접 등록을 추가합니다. Toolport에서 Edictora를 비활성화하거나 삭제한 경우에는 추가하지 않습니다. Setup이 한 번 직접 등록한 클라이언트는 사용자가 제거해도 자동으로 다시 추가하지 않습니다(되돌리는 것은 Setup이 건너뛴 클라이언트뿐입니다).
+- 나중에 Toolport를 추가하고 직접 등록만 제거하려면 `claude mcp remove edictora --scope user` 또는 `codex mcp remove edictora`를 실행하십시오.
+- Toolport의 도구 격리(업데이트로 도구가 바뀌면 격리되는 기능)는 확인하지 않습니다.
+- 동작은 `%APPDATA%\Edictora\config.json`의 `mcpRegistration`으로 선택할 수 있습니다. `auto`(기본값. 위의 동작), `direct`(항상 직접 등록), `off`(자동 등록·복구를 하지 않음. 제거할 때는 Edictora를 가리키는 등록을 기존처럼 제거합니다). 설치 프로그램은 기본 설정 경로만 읽으며, `--config`로 지정한 설정은 대상이 아닙니다. 다른 명령은 이 세 값 이외의 값을 설정 오류로 처리합니다. 설치 프로그램은 잘못된 값이나 JSON으로 읽을 수 없는 설정 파일을 `auto`로 취급하고 로그에 남깁니다.
+
 | 도구 | 기능 |
 |---|---|
 | `edictora_list_items` | 설정 파일이 대상으로 하는 내용(항목, 로캘, 원본 파일)을 표시합니다. 브라우저를 열지 않습니다. |

@@ -72,10 +72,13 @@ fn run_logon_update(paths: &AppPaths) -> i32 {
     // Portable 版は登録しない（フックと同じ）
     if !hooks::is_portable(&installation.root) {
         let budget = connect::Budget::new(connect::UPDATER_CALL_TIMEOUT, connect::UPDATER_TOTAL);
+        let mode = connect::mode_from_config_file(&paths.default_config_path(), "updater");
         connect::ensure_registered(
             &paths.local_root,
             &connect::registered_executable(&installation.root),
+            mode,
             &connect::resolve_from_environment,
+            &connect::detect_from_environment,
             &budget,
             "updater",
         );

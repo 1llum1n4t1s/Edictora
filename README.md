@@ -266,6 +266,14 @@ args = ["mcp"]
 
 If you use an MCP gateway (such as Toolport), register the same command (stdio, argument `mcp`) on the gateway.
 
+**Toolport and automatic registration (Setup version, Windows)**
+- For Claude Code and Codex separately, Setup skips `claude mcp add` / `codex mcp add` when both of these hold: (1) that client's settings contain the Toolport gateway (`mcpServers` in `~/.claude.json`, or `~/.codex/config.toml`), and (2) Toolport's registry (`%APPDATA%\Toolport\registry.json`; the location can be changed with `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR`) has an enabled server that starts `edictora.exe` with the `mcp` argument, in a profile that is in use. If this can't be determined, Edictora registers directly as before. On anything other than Windows, Edictora doesn't make this check and registers directly.
+- A registration that already exists is never removed. If you later remove the Toolport gateway from that client, or the executable Toolport points to no longer exists, Edictora adds the direct registration at the next update or the next sign-in (the update executable that runs at sign-in). If you disable or delete Edictora in Toolport, Edictora doesn't add it. A client that Setup has registered directly once is not re-added automatically even if you remove the registration yourself; only a client that Setup skipped is added back.
+- If you add Toolport later and want to remove only the direct registration, run `claude mcp remove edictora --scope user` or `codex mcp remove edictora`.
+- When Setup starts over (first install, a new install location, or no saved registration state) while Toolport serves Edictora, it doesn't call the CLI, so a direct registration that points to the old executable is left as it is. Remove it with the commands above if you no longer need it.
+- Toolport's tool quarantine (tools are quarantined when an update changes them) isn't checked.
+- You can choose the behavior with `mcpRegistration` in `%APPDATA%\Edictora\config.json`: `auto` (default; the behavior above), `direct` (always register directly), or `off` (never register or repair automatically; uninstalling still removes the registrations that point to Edictora). The installer reads only the default config path, not a config given with `--config`. Other commands report any value other than these three as a config error. The installer treats an invalid value, or a config file that isn't valid JSON, as `auto` and logs it.
+
 | Tool | What it does |
 |---|---|
 | `edictora_list_items` | Shows what the config file covers (items, locales, source files). Doesn't open a browser. |

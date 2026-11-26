@@ -277,3 +277,22 @@ fn build_説明が上限を超えたら例外() {
         Err(Error::Config(_))
     ));
 }
+
+#[test]
+fn parse_mcp_registrationは3値を受け付け他の値は例外() {
+    let ctx = Ctx::new("cfg_mcp_registration");
+    for value in ["auto", "direct", "off"] {
+        let json = format!(r#"{{ "mcpRegistration": "{value}", "items": [] }}"#);
+        assert!(ctx.parse(&json).is_ok(), "{value}");
+    }
+    // 省略と null も許す
+    assert!(ctx.parse(r#"{ "mcpRegistration": null }"#).is_ok());
+    assert!(ctx.parse(r#"{ "items": [] }"#).is_ok());
+    // 3値以外・型違いは読み込みエラー
+    for json in [
+        r#"{ "mcpRegistration": "always" }"#,
+        r#"{ "mcpRegistration": true }"#,
+    ] {
+        assert!(matches!(ctx.parse(json), Err(Error::Config(_))), "{json}");
+    }
+}
