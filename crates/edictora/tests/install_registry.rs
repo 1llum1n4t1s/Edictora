@@ -9,24 +9,32 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use common::work_dir;
+use common::{Scratch, work_dir};
 use edictora::install::hooks::{RegistryReport, RunChange, register, registration_for, unregister};
 use edictora::install::registry::{
     ENVIRONMENT_SUBKEY, PATH_VALUE, REG_EXPAND_SZ, REG_SZ, RUN_SUBKEY, RegKey, path_with_entry,
     path_without_entry, read_path_value, read_run_value, write_string_value,
 };
 
-/// 実行ごとに別の専用ハイブを開く（前回の残りに影響されない。片付けは cargo clean に任せる）
-fn private_hive(name: &str) -> RegKey {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = work_dir(name).join(format!("{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    RegKey::load_app_hive(&dir.join("user.hiv")).expect("専用ハイブを開けません")
+/// 実行ごとに別の専用ハイブを開く（前回の残りに影響されない。使い終えると `Scratch` が消す）
+fn private_hive(name: &str) -> Hive {
+    let dir = Scratch::new(name);
+    let key = RegKey::load_app_hive(&dir.join("user.hiv")).expect("専用ハイブを開けません");
+    Hive { key, _dir: dir }
+}
+
+/// ハイブ（先に閉じてから、置き場のフォルダーを消す。フィールドは宣言順に手放される）
+struct Hive {
+    key: RegKey,
+    _dir: Scratch,
+}
+
+impl std::ops::Deref for Hive {
+    type Target = RegKey;
+    fn deref(&self) -> &RegKey {
+        &self.key
+    }
 }
 
 const ROOT: &str = r"C:\Users\u\AppData\Local\Edictora";

@@ -4,6 +4,8 @@
 //! 1 つでも足し引き・並べ替えがあれば落ちるので、AGENTS.md の「起動引数は最小限」の契約
 //! （変える場合は実画面で Google ログインを再検証する）を変更時に必ず意識させられる。
 
+mod common;
+
 use std::path::PathBuf;
 
 use edictora::chrome::{ChromeLaunchOptions, build_args, seed_local_state};
@@ -85,12 +87,8 @@ fn find_chromeはパニックせず見つかれば実在するファイルを返
 // ───────── Local State のシード（Windows アカウントのロック防止） ─────────
 
 /// テストごとに別の空ディレクトリを cargo のテスト用領域に作る（実プロファイルには触れない）
-fn fresh_profile(name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("seed-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn fresh_profile(name: &str) -> common::Scratch {
+    common::Scratch::new(&format!("seed-{name}"))
 }
 
 fn read_local_state(dir: &std::path::Path) -> serde_json::Value {
@@ -113,7 +111,6 @@ fn seed_local_stateは新規プロファイルへ空パスワードではない�
         !dir.join("Local State.edictora-tmp").exists(),
         "一時ファイルを残さない"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -134,7 +131,6 @@ fn seed_local_stateは既存のキーを保つ() {
         json["password_manager"]["os_password_last_changed"],
         "9223372036854775000"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -147,5 +143,4 @@ fn seed_local_stateは壊れたlocal_stateに触らない() {
         std::fs::read_to_string(dir.join("Local State")).unwrap(),
         "{ not json"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }

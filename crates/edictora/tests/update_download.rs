@@ -17,9 +17,8 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use common::work_dir;
+use common::Scratch;
 use edictora::Error;
 use edictora::cancel::CancelToken;
 use edictora::update::apply::{ApplyLauncher, apply_args};
@@ -34,15 +33,9 @@ use sha2::{Digest, Sha256};
 
 // ───────── 補助 ─────────
 
-/// 実行ごとに別の作業フォルダー（前回の残りに影響されない。片付けは cargo clean に任せる）
-fn fresh_dir(name: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = work_dir(name).join(format!("{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// 実行ごとに別の作業フォルダー（前回の残りに影響されない。使い終えると `Scratch` が消す。適用まで進んだ分は次の実行が片付ける）
+fn fresh_dir(name: &str) -> Scratch {
+    Scratch::new(name)
 }
 
 /// 偽サーバーの応答 1 つ

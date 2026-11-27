@@ -23,9 +23,9 @@ mod common;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use common::work_dir;
+use common::{Scratch, work_dir};
 use edictora::install::connect::{
     Action, Budget, CallResult, CliResolver, Client, EnsureReport, LOCK_FILE, Mode, Plan,
     RegisterOutcome, STATE_FILE, SkipReason, State, UnregisterOutcome, ensure_registered,
@@ -157,17 +157,14 @@ fn run_stub(exe: &Path, dir: &Path, name: &str) -> i32 {
 struct Stub {
     dir: PathBuf,
     bin: PathBuf,
+    /// 手放すと一式を消す
+    _scratch: Scratch,
 }
 
 impl Stub {
     fn new(name: &str) -> Stub {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = work_dir("install_connect")
-            .join(name)
-            .join(format!("{}-{nanos}", std::process::id()));
+        let scratch = Scratch::under(&work_dir("install_connect").join(name));
+        let dir = scratch.to_path_buf();
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join(STUB_MARKER), b"").unwrap();
@@ -188,7 +185,11 @@ impl Stub {
                 .expect("スタブを起動できません");
             assert!(status.success(), "スタブの空打ちが失敗しました: {status:?}");
         }
-        Stub { dir, bin }
+        Stub {
+            dir,
+            bin,
+            _scratch: scratch,
+        }
     }
 
     /// 登録する exe（実在しなくてよい。照合と登録の内容にだけ使う）

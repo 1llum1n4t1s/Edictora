@@ -21,6 +21,82 @@ pub fn work_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// 実行ごとに別の作業フォルダー。値を手放す（テストの成否・panic を問わない）と中身ごと消す。
+/// 調べるために残したいときは、環境変数 `EDICTORA_KEEP_TEST_DIRS` を何か設定してテストを流す
+/// （削除も、古い兄弟フォルダーの掃除も行わない）
+pub struct Scratch(PathBuf);
+
+impl Scratch {
+    /// 既存の親フォルダーの下に、実行ごとに別の空フォルダーを作る
+    pub fn under(parent: &Path) -> Scratch {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = parent.join(format!("{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("作業フォルダーを作れません");
+        // 適用の開始まで進むテストは、実行中の印のロックを終了まで手放さない（本番の仕様）ので、
+        // 自分では消せない。前の実行が残した古い兄弟を、次の実行がここで片付ける
+        let keep = std::env::var_os("EDICTORA_KEEP_TEST_DIRS").is_some();
+        let hour = std::time::Duration::from_secs(3600);
+        for old in std::fs::read_dir(parent)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|_| !keep)
+        {
+            let stale = old
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > hour);
+            if stale && old.path() != dir {
+                let _ = std::fs::remove_dir_all(old.path());
+            }
+        }
+        Scratch(dir)
+    }
+
+    /// `work_dir(name)` の下に作る
+    pub fn new(name: &str) -> Scratch {
+        Scratch::under(&work_dir(name))
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = PathBuf;
+    fn deref(&self) -> &PathBuf {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if std::env::var_os("EDICTORA_KEEP_TEST_DIRS").is_some() {
+            return;
+        }
+        // 起動したプロセスの終了やウイルス対策の検査で、消せるまで少しかかることがある
+        for _ in 0..10 {
+            if std::fs::remove_dir_all(&self.0).is_ok() || !self.0.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        // 空になった親（テスト名のフォルダーなど）も `edictora-tests` まで片付ける
+        let mut parent = self.0.parent();
+        while let Some(p) = parent {
+            // `edictora-tests` 自体は消さない（並行する別のテストが作成中のことがある）
+            if p.file_name().is_some_and(|n| n == "edictora-tests")
+                || std::fs::remove_dir(p).is_err()
+            {
+                break;
+            }
+            parent = p.parent();
+        }
+    }
+}
+
 /// 作業フォルダーの下を根にした保存先（実プロファイル・実設定を解決しない）
 pub fn test_paths(dir: &Path) -> AppPaths {
     AppPaths::new(dir.join("local"), dir.join("roaming"))
