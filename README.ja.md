@@ -261,7 +261,7 @@ args = ["mcp"]
 MCP のゲートウェイ（Toolport など）を使っている場合は、ゲートウェイ側に同じコマンド（stdio、引数 `mcp`）を登録します。
 
 **Toolport と自動登録（Setup 版、Windows）**
-- Claude Code と Codex それぞれについて、次の両方を満たすとき、Setup は `claude mcp add` / `codex mcp add` を省きます。(1) そのクライアントの設定に Toolport のゲートウェイがある（`~/.claude.json` の `mcpServers`、または `~/.codex/config.toml`）。(2) Toolport の registry（`%APPDATA%\Toolport\registry.json`。場所は `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` で変えられます）に、`edictora.exe` を `mcp` 引数で起動する有効なサーバーがあり、使われるプロファイルに入っている。判定できないときは、従来どおり直接登録します。Windows 以外では判定せず、直接登録します。
+- Claude Code と Codex それぞれについて、次の両方を満たすとき、Setup は `claude mcp add` / `codex mcp add` を省きます。(1) そのクライアントの設定に Toolport のゲートウェイがある（`~/.claude.json` の `mcpServers`、または `~/.codex/config.toml`）。(2) Toolport の registry（`%APPDATA%\Toolport\registry.json`。場所は `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` で変えられます）に、`edictora.exe` を `mcp` 引数で起動する有効なサーバーがあり、使われるプロファイルに入っている。判定できないときは、従来どおり直接登録します。判定は Windows・macOS・Linux で行います（registry の既定の場所は、Windows が `%APPDATA%\Toolport\registry.json`、macOS が `~/Library/Application Support/Toolport/registry.json`、Linux が `$XDG_CONFIG_HOME/Toolport/registry.json`（絶対パスのとき。無ければ `~/.config/Toolport/registry.json`））。それ以外の OS では判定せず、直接登録します。
 - すでにある登録は外しません。省いたあとで、そのクライアントから Toolport のゲートウェイを外した場合、または Toolport が指す実行ファイルが無くなった場合は、次の更新、または次のサインイン時（ログオン時の更新用 exe）に直接登録を足します。Toolport 側で Edictora を無効化・削除した場合は足しません。Setup が一度直接登録したクライアントは、利用者が外しても自動では足し直しません（戻すのは Setup が省いたクライアントだけです）。
 - Toolport を後から足して、直接登録だけを外したいときは、`claude mcp remove edictora --scope user` または `codex mcp remove edictora` を実行します。
 - Toolport のツール隔離（更新でツールが変わると隔離される機能）は判定しません。

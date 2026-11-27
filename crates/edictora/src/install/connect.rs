@@ -20,7 +20,8 @@
 //!   では、新しい直接登録を省く（状態ファイルの `skipped`）。既にある直接登録は外さない。省いた後で
 //!   ゲートウェイがクライアントの設定から消えた、または Toolport が指す実行ファイルが無くなった
 //!   （どちらも `NotConnected`）ら、次の更新フックかログオン時の更新用 exe で直接登録を足す。前回未完了の
-//!   CLI も、auto なら CLI があるときに同じ判定をする。Windows 以外では判定せず直接登録する。
+//!   CLI も、auto なら CLI があるときに同じ判定をする。判定は Windows・macOS・Linux で行い、
+//!   対応外の OS では判定せず直接登録する。
 //!   `%APPDATA%\Edictora\config.json` の `mcpRegistration`（[`Mode`]: auto / direct / off）で挙動を選べる。
 //!   `done`（直接登録済み）の意味は変えず、どのモードでも外さない。判定は正本
 //!   `install/toolport.rs`（Remnifold・Plumivox へバイト単位で同一に複製する）で行う。
