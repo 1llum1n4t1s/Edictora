@@ -16,10 +16,16 @@
 //!   済んだ CLI は二度と呼ばない（利用者が意図して外した登録を、更新のたびに復活させないため）。
 //!   未完了の CLI（見つからない・失敗・時間切れ）は、次の更新フックやログオン時の更新用 exe で再試行する。
 //!
-//! - Toolport ゲートウェイ経由で既に Edictora が提供されている環境（[`super::toolport`] の判定が `Served`）
-//!   では、新しい直接登録を省く（状態ファイルの `skipped`）。既にある直接登録は外さない。省いた後で
-//!   ゲートウェイがクライアントの設定から消えた、または Toolport が指す実行ファイルが無くなった
-//!   （どちらも `NotConnected`）ら、次の更新フックかログオン時の更新用 exe で直接登録を足す。前回未完了の
+//! - Toolport ゲートウェイ経由で既に Edictora が提供されている環境（[`super::toolport`] の判定が `Served`
+//!   = 自分と同じ実体の実行ファイル、または `ServedElsewhere` = 自分以外の実行ファイル）では、新しい直接登録を
+//!   省く（状態ファイルの `skipped`。理由は `toolport` / `toolport-foreign`）。既にある直接登録は外さない。
+//!   `ServedElsewhere` は二重に起動しないよう直接登録を省いたまま、ログ（Warning）で Toolport の command を
+//!   自分の実行ファイルへ向け直すよう促す。省いた後でゲートウェイがクライアントの設定から消えた、または
+//!   Toolport が指す実行ファイルが無くなった（どちらも `NotConnected`）ら、次の更新フックかログオン時の
+//!   更新用 exe で直接登録を足す。`toolport` / `toolport-foreign` で省いたものは、CLI の有無に関係なく
+//!   毎回判定し直し、`toolport` が別の実行ファイルでの提供に変われば `toolport-foreign` に、
+//!   `toolport-foreign` が自分と同じ実体に変われば `toolport` に記録を変える（同じ理由のままなら何もしない。
+//!   知らない理由は旧版が読み捨てるので逆シリアル化は失敗しない）。前回未完了の
 //!   CLI も、auto なら CLI があるときに同じ判定をする。判定は Windows・macOS・Linux で行い、
 //!   対応外の OS では判定せず直接登録する。
 //!   `%APPDATA%\Edictora\config.json` の `mcpRegistration`（[`Mode`]: auto / direct / off）で挙動を選べる。
@@ -173,8 +179,14 @@ pub type CliResolver<'a> = &'a dyn Fn(Client) -> Option<PathBuf>;
 pub type Detector<'a> = &'a dyn Fn(Client) -> Detection;
 
 /// 実際の環境（クライアントの設定・Toolport の registry）で判定する。**フックと更新用 exe の本番経路だけが使う**
-pub fn detect_from_environment(client: Client) -> Detection {
-    toolport::detect(&TOOLPORT_PRODUCT, client.toolport_id(), &Env::process())
+/// `executable` は直接登録に使うのと同じ絶対パス（Toolport の提供先が自分と同じ実体かの比較に使う）
+pub fn detect_from_environment(client: Client, executable: &Path) -> Detection {
+    toolport::detect(
+        &TOOLPORT_PRODUCT,
+        client.toolport_id(),
+        &Env::process(),
+        &executable.to_string_lossy(),
+    )
 }
 
 /// 自動登録の動作モード（`config.json` の `mcpRegistration`）
@@ -551,8 +563,10 @@ pub fn unregister_client(
 /// 直接登録を省いた理由（状態ファイルの `skipped`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
-    /// Toolport ゲートウェイ経由で提供されている
+    /// Toolport ゲートウェイ経由で、自分と同じ実体の実行ファイルが提供されている
     Toolport,
+    /// Toolport ゲートウェイ経由で、自分以外の実行ファイルが提供されている（直接登録は省いたまま警告する）
+    ToolportForeign,
     /// `mcpRegistration` が `off`
     Off,
 }
@@ -562,6 +576,7 @@ impl SkipReason {
     pub fn name(self) -> &'static str {
         match self {
             SkipReason::Toolport => "toolport",
+            SkipReason::ToolportForeign => "toolport-foreign",
             SkipReason::Off => "off",
         }
     }
@@ -569,6 +584,7 @@ impl SkipReason {
     fn from_name(name: &str) -> Option<SkipReason> {
         match name {
             "toolport" => Some(SkipReason::Toolport),
+            "toolport-foreign" => Some(SkipReason::ToolportForeign),
             "off" => Some(SkipReason::Off),
             _ => None,
         }
@@ -685,6 +701,7 @@ pub struct Plan {
 fn decide_new(client: Client, detect: &impl Fn(Client) -> Detection) -> Action {
     match detect(client) {
         Detection::Served { .. } => Action::Skip(SkipReason::Toolport),
+        Detection::ServedElsewhere { .. } => Action::Skip(SkipReason::ToolportForeign),
         _ => Action::Register,
     }
 }
@@ -709,10 +726,21 @@ fn decide_existing(
     match (state.skipped.get(&client), mode) {
         // 省いていたものを直接登録する
         (Some(_), Mode::Direct) => register(),
-        // ゲートウェイが設定から消えたときだけ直接登録に戻す。ほか（提供中・無効化・不明）は何もしない
-        (Some(SkipReason::Toolport), _) => (matches!(detect(client), Detection::NotConnected))
-            .then(register)
-            .flatten(),
+        // Toolport で省いていたものは、CLI の有無に関係なく毎回判定し直す。
+        // 別の実行ファイルでの提供に変わったら foreign へ、ゲートウェイが設定から消えた・実行ファイルが
+        // 無くなったら直接登録に戻す。ほか（提供中・無効化・不明）は何もしない
+        (Some(SkipReason::Toolport), _) => match detect(client) {
+            Detection::ServedElsewhere { .. } => Some(Action::Skip(SkipReason::ToolportForeign)),
+            Detection::NotConnected => register(),
+            _ => None,
+        },
+        // foreign も毎回判定し直す。自分と同じ実体の提供に変わったら toolport へ（通常の省略）、
+        // 引き続き別の実行ファイルなら何もしない（記録もログも無し）、消えたら直接登録に戻す
+        (Some(SkipReason::ToolportForeign), _) => match detect(client) {
+            Detection::Served { .. } => Some(Action::Skip(SkipReason::Toolport)),
+            Detection::NotConnected => register(),
+            _ => None,
+        },
         // off で省いていたものは、auto になったので新規扱いで判定する
         (Some(SkipReason::Off), _) => match decide_new(client, detect) {
             Action::Skip(reason) => Some(Action::Skip(reason)),
@@ -889,6 +917,13 @@ pub fn ensure_registered(
                 "への直接登録を省きました（Toolport ゲートウェイ経由で提供されています）"
                     .to_string(),
                 LogLevel::Info,
+            ),
+            RegisterOutcome::Skipped(SkipReason::ToolportForeign) => (
+                format!(
+                    "への直接登録を省きました（Toolport が別の実行ファイルで提供しています。Toolport の {SERVER_NAME} の command を {} へ向け直してください）",
+                    executable.display()
+                ),
+                LogLevel::Warning,
             ),
             RegisterOutcome::Skipped(SkipReason::Off) => (
                 "への直接登録を省きました（mcpRegistration が off です）".to_string(),

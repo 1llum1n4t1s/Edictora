@@ -260,10 +260,12 @@ args = ["mcp"]
 
 MCP のゲートウェイ（Toolport など）を使っている場合は、ゲートウェイ側に同じコマンド（stdio、引数 `mcp`）を登録します。
 
-**Toolport と自動登録（Setup 版、Windows）**
-- Claude Code と Codex それぞれについて、次の両方を満たすとき、Setup は `claude mcp add` / `codex mcp add` を省きます。(1) そのクライアントの設定に Toolport のゲートウェイがある（`~/.claude.json` の `mcpServers`、または `~/.codex/config.toml`）。(2) Toolport の registry（`%APPDATA%\Toolport\registry.json`。場所は `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` で変えられます）に、`edictora.exe` を `mcp` 引数で起動する有効なサーバーがあり、使われるプロファイルに入っている。判定できないときは、従来どおり直接登録します。判定は Windows・macOS・Linux で行います（registry の既定の場所は、Windows が `%APPDATA%\Toolport\registry.json`、macOS が `~/Library/Application Support/Toolport/registry.json`、Linux が `$XDG_CONFIG_HOME/Toolport/registry.json`（絶対パスのとき。無ければ `~/.config/Toolport/registry.json`））。それ以外の OS では判定せず、直接登録します。
+**Toolport と自動登録（Setup 版）**
+- 判定はどの OS でも行います（Windows・macOS・Linux）。Setup の配布は、今は Windows だけです。
+- Claude Code と Codex それぞれについて、次の両方を満たすとき、Setup は `claude mcp add` / `codex mcp add` を省きます。(1) そのクライアントの設定に Toolport のゲートウェイがある（`~/.claude.json` の `mcpServers`、または `~/.codex/config.toml`）。(2) Toolport の registry（`%APPDATA%\Toolport\registry.json`。場所は `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` で変えられます）に、`edictora.exe` を `mcp` 引数で起動する有効なサーバーがあり、使われるプロファイルに入っている。Setup が登録するのと同じ実体なら理由は `toolport`、別の実体なら `toolport-foreign` として記録し、どちらも直接登録を省きます。判定できないときは、従来どおり直接登録します。判定は Windows・macOS・Linux で行います（registry の既定の場所は、Windows が `%APPDATA%\Toolport\registry.json`、macOS が `~/Library/Application Support/Toolport/registry.json`、Linux が `$XDG_CONFIG_HOME/Toolport/registry.json`（絶対パスのとき。無ければ `~/.config/Toolport/registry.json`））。それ以外の OS では判定せず、直接登録します。
 - すでにある登録は外しません。省いたあとで、そのクライアントから Toolport のゲートウェイを外した場合、または Toolport が指す実行ファイルが無くなった場合は、次の更新、または次のサインイン時（ログオン時の更新用 exe）に直接登録を足します。Toolport 側で Edictora を無効化・削除した場合は足しません。Setup が一度直接登録したクライアントは、利用者が外しても自動では足し直しません（戻すのは Setup が省いたクライアントだけです）。
 - Toolport を後から足して、直接登録だけを外したいときは、`claude mcp remove edictora --scope user` または `codex mcp remove edictora` を実行します。
+- Toolport が別の実体の `edictora.exe`（Setup が登録するものではない）を提供しているときも、Setup は直接登録を省き、理由 `toolport-foreign` を記録して、`%LOCALAPPDATA%\Edictora.Data\logs\Edictora_yyyy-MM-dd.log` に警告を書きます。直すには、Toolport の `edictora` サーバーの command を Setup 版の実行ファイル（`%LOCALAPPDATA%\Edictora\current\edictora.exe`）へ向け直してください。実行ファイルを別の場所へコピーしないでください（コピーは更新されません）。判定は Setup・更新・サインインのたびにやり直し、Toolport が Setup 版を指すようになれば記録は `toolport` に変わり、Toolport が指す実行ファイルが無くなれば直接登録します。
 - Toolport のツール隔離（更新でツールが変わると隔離される機能）は判定しません。
 - 動作は `%APPDATA%\Edictora\config.json` の `mcpRegistration` で選べます。`auto`（既定。上の動作）、`direct`（常に直接登録）、`off`（自動の登録・修復をしない。アンインストール時は Edictora を指す登録を従来どおり外します）。インストーラーが読むのは既定の設定パスだけで、`--config` で指定した設定は対象外です。ほかのコマンドは、この 3 つ以外の値を設定エラーにします。インストーラーは不正な値や、JSON として壊れた設定ファイルを `auto` として扱い、ログに残します。
 

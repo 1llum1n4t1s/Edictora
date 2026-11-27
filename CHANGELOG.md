@@ -4,6 +4,10 @@ Edictoraの利用者に影響する変更を記録します。1.0.5 以前は、
 
 ## Unreleased
 
+### 変更
+
+- Setup 版の MCP 自動登録で、Toolport が「提供中」とみなされるのは、Toolport が Setup の登録先と同じ実体の `edictora.exe` で提供しているときだけにしました。Toolport が別の実体の `edictora.exe` を指しているときも直接登録は省き、そのうえで `%LOCALAPPDATA%\Edictora.Data\logs\Edictora_yyyy-MM-dd.log` に警告を書き、理由 `toolport-foreign` を記録します。この判定は起動のたびにやり直すので、Toolport の edictora の command を Setup 版の実行ファイル（`%LOCALAPPDATA%\Edictora\current\edictora.exe`）へ向け直せば、記録は `toolport` に変わります。実行ファイルを別の場所へコピーすると更新されないので、コピーせず向け直してください
+
 ## 1.0.17 - 2026-11-27
 
 ### 変更

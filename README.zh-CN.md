@@ -266,10 +266,12 @@ args = ["mcp"]
 
 如果您使用 MCP 网关（例如 Toolport），请在网关上注册相同的命令（stdio，参数为 `mcp`）。
 
-**Toolport 与自动注册（Setup 版，Windows）**
-- 对 Claude Code 和 Codex 分别判断：同时满足以下两点时，Setup 会跳过 `claude mcp add` / `codex mcp add`。(1) 该客户端的设置中有 Toolport 网关（`~/.claude.json` 的 `mcpServers`，或 `~/.codex/config.toml`）。(2) Toolport 的 registry（`%APPDATA%\Toolport\registry.json`；位置可通过 `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` 更改）中有一个已启用的服务器，以 `mcp` 参数启动 `edictora.exe`，并且位于正在使用的配置文件中。无法判断时，仍按以往方式直接注册。此判断在 Windows、macOS 和 Linux 上进行（registry 的默认位置：Windows 为 `%APPDATA%\Toolport\registry.json`，macOS 为 `~/Library/Application Support/Toolport/registry.json`，Linux 为 `$XDG_CONFIG_HOME/Toolport/registry.json`（为绝对路径时；否则为 `~/.config/Toolport/registry.json`））；在其他系统上不做此判断，直接注册。
+**Toolport 与自动注册（Setup 版）**
+- 此判断在任何操作系统上都会进行（Windows、macOS、Linux）；Setup 本身目前只提供 Windows 版。
+- 对 Claude Code 和 Codex 分别判断：同时满足以下两点时，Setup 会跳过 `claude mcp add` / `codex mcp add`。(1) 该客户端的设置中有 Toolport 网关（`~/.claude.json` 的 `mcpServers`，或 `~/.codex/config.toml`）。(2) Toolport 的 registry（`%APPDATA%\Toolport\registry.json`；位置可通过 `TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` 更改）中有一个已启用的服务器，以 `mcp` 参数启动 `edictora.exe`，并且位于正在使用的配置文件中。若与 Setup 所注册的是同一实体，则记录原因 `toolport`；若是另一个实体，则记录 `toolport-foreign`，两种情况下 Setup 都会跳过直接注册。无法判断时，仍按以往方式直接注册。此判断在 Windows、macOS 和 Linux 上进行（registry 的默认位置：Windows 为 `%APPDATA%\Toolport\registry.json`，macOS 为 `~/Library/Application Support/Toolport/registry.json`，Linux 为 `$XDG_CONFIG_HOME/Toolport/registry.json`（为绝对路径时；否则为 `~/.config/Toolport/registry.json`））；在其他系统上不做此判断，直接注册。
 - 已有的注册不会被移除。跳过之后，如果您从该客户端移除了 Toolport 网关，或 Toolport 所指向的可执行文件已不存在，Edictora 会在下次更新或下次登录时（登录时运行的更新用 exe）添加直接注册。如果您在 Toolport 中停用或删除了 Edictora，则不会添加。Setup 已直接注册过一次的客户端，即使您自行移除，也不会被自动重新添加（只会补回 Setup 跳过的客户端）。
 - 如果之后才添加 Toolport，并且只想移除直接注册，请运行 `claude mcp remove edictora --scope user` 或 `codex mcp remove edictora`。
+- 如果 Toolport 提供的是另一个实体的 `edictora.exe`（不是 Setup 所注册的那个），Setup 同样会跳过直接注册，记录原因 `toolport-foreign`，并在 `%LOCALAPPDATA%\Edictora.Data\logs\Edictora_yyyy-MM-dd.log` 中写入警告。要修复，请把 Toolport 中 `edictora` 服务器的 command 改为指向 Setup 版的可执行文件（`%LOCALAPPDATA%\Edictora\current\edictora.exe`）。请勿把可执行文件复制到其他位置（副本不会被更新）。每次 Setup、更新和登录时都会重新判断：Toolport 改为指向 Setup 版后，记录会变为 `toolport`；Toolport 所指向的可执行文件不存在时，则直接注册。
 - 不检查 Toolport 的工具隔离（更新使工具发生变化时会被隔离的功能）。
 - 可以通过 `%APPDATA%\Edictora\config.json` 中的 `mcpRegistration` 选择行为：`auto`（默认；上述行为）、`direct`（始终直接注册）、`off`（不自动注册或修复；卸载时仍会移除指向 Edictora 的注册）。安装程序只读取默认的配置路径，不读取用 `--config` 指定的配置。其他命令会把这三个值以外的值报告为配置错误。安装程序把无效值或不是有效 JSON 的配置文件当作 `auto` 处理，并记入日志。
 

@@ -304,6 +304,8 @@ fn apply_mcp_registration(kind: HookKind, root: &Path, paths: &crate::app_paths:
     let state_dir = paths.local_root.as_path();
     let executable = registered_executable(root);
     let label = format!("Velopack のフック {kind:?}");
+    // Toolport の提供先が自分と同じ実体かを、登録に使うのと同じ実行ファイルで判定する
+    let detect = |client| detect_from_environment(client, &executable);
     // 動作モード（既定の設定ファイルだけを読む。解除には使わない）
     let mode = || mode_from_config_file(&paths.default_config_path(), &label);
     match kind {
@@ -321,7 +323,7 @@ fn apply_mcp_registration(kind: HookKind, root: &Path, paths: &crate::app_paths:
                 &executable,
                 mode(),
                 &resolve_from_environment,
-                &detect_from_environment,
+                &detect,
                 &budget,
                 &label,
             );
@@ -333,7 +335,7 @@ fn apply_mcp_registration(kind: HookKind, root: &Path, paths: &crate::app_paths:
                 &executable,
                 mode(),
                 &resolve_from_environment,
-                &detect_from_environment,
+                &detect,
                 &budget,
                 &label,
             );

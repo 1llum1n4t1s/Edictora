@@ -788,6 +788,178 @@ fn plan_は未完了のクライアントをモードに応じて判定してか
     );
 }
 
+/// 自分以外の実行ファイルでの提供
+fn served_elsewhere() -> Detection {
+    Detection::ServedElsewhere {
+        server_id: "edictora".to_string(),
+        command: r"C:\Other\edictora.exe".to_string(),
+    }
+}
+
+#[test]
+fn plan_はtoolport_foreignの遷移を表のとおりに決める() {
+    let exe = Path::new(r"C:\A\Edictora\current\edictora.exe");
+    let both = |skip: SkipReason| {
+        vec![
+            (Client::Claude, Action::Skip(skip)),
+            (Client::Codex, Action::Skip(skip)),
+        ]
+    };
+    let register = vec![
+        (Client::Claude, Action::Register),
+        (Client::Codex, Action::Register),
+    ];
+    let state_of_reason = |reason| {
+        state_with_skipped(
+            exe,
+            &[],
+            &[(Client::Claude, reason), (Client::Codex, reason)],
+        )
+    };
+    let run = |state: &State, mode, detection: Detection, available: bool| {
+        plan(state, exe, mode, |_| available, move |_| detection.clone()).map(|p| p.actions)
+    };
+    // 新規（初回・CLI が無い未完了）: 別の実行ファイルでの提供は foreign、同じ実体は toolport
+    let fresh = Some(both(SkipReason::ToolportForeign));
+    assert_eq!(
+        run(&State::default(), Mode::Auto, served_elsewhere(), true),
+        fresh
+    );
+    assert_eq!(
+        run(&state_of(exe, &[]), Mode::Auto, served_elsewhere(), true),
+        fresh
+    );
+    assert_eq!(
+        run(&State::default(), Mode::Auto, served(), true),
+        Some(both(SkipReason::Toolport))
+    );
+    // direct は判定せず直接登録
+    assert_eq!(
+        run(&State::default(), Mode::Direct, served_elsewhere(), true),
+        Some(register.clone())
+    );
+
+    // toolport → 別の実行ファイルに変われば foreign（CLI の有無に関係なく判定する）
+    let toolport = state_of_reason(SkipReason::Toolport);
+    for available in [true, false] {
+        assert_eq!(
+            run(&toolport, Mode::Auto, served_elsewhere(), available),
+            fresh
+        );
+    }
+    // foreign → 同じ実体なら toolport（CLI の有無に関係なく）
+    let foreign = state_of_reason(SkipReason::ToolportForeign);
+    for available in [true, false] {
+        assert_eq!(
+            run(&foreign, Mode::Auto, served(), available),
+            Some(both(SkipReason::Toolport))
+        );
+    }
+    // foreign のまま: 何もしない
+    for detection in [
+        served_elsewhere(),
+        Detection::NotServed,
+        Detection::Unknown("x".to_string()),
+    ] {
+        assert_eq!(run(&foreign, Mode::Auto, detection, true), None);
+    }
+    // foreign → NotConnected は CLI があれば直接登録、無ければ何もしない
+    assert_eq!(
+        run(&foreign, Mode::Auto, Detection::NotConnected, true),
+        Some(register.clone())
+    );
+    assert_eq!(
+        run(&foreign, Mode::Auto, Detection::NotConnected, false),
+        None
+    );
+    // foreign: direct は直接登録、off は何もしない
+    assert_eq!(
+        run(&foreign, Mode::Direct, served_elsewhere(), true),
+        Some(register)
+    );
+    assert_eq!(run(&foreign, Mode::Off, served_elsewhere(), true), None);
+    // off で省いていたものを auto で新規扱いにするときも foreign になる
+    assert_eq!(
+        run(
+            &state_of_reason(SkipReason::Off),
+            Mode::Auto,
+            served_elsewhere(),
+            true
+        ),
+        fresh
+    );
+}
+
+#[test]
+fn toolport_foreignは状態に残り_foreignの間は記録もログも増やさない() {
+    assert_eq!(SkipReason::ToolportForeign.name(), "toolport-foreign");
+    let stub = Stub::new("toolport_foreign");
+    assert_eq!(
+        ensure_with(&stub, Mode::Auto, served_elsewhere()),
+        EnsureReport::Ran(vec![
+            (
+                Client::Claude,
+                RegisterOutcome::Skipped(SkipReason::ToolportForeign)
+            ),
+            (
+                Client::Codex,
+                RegisterOutcome::Skipped(SkipReason::ToolportForeign)
+            ),
+        ])
+    );
+    assert!(stub.calls(Client::Claude).is_empty());
+    let foreign_state = state_with_skipped(
+        &stub.executable(),
+        &[],
+        &[
+            (Client::Claude, SkipReason::ToolportForeign),
+            (Client::Codex, SkipReason::ToolportForeign),
+        ],
+    );
+    assert_eq!(load_state(&stub.state_dir()), foreign_state);
+    // 起動のたびに判定し直し、別の実行ファイルのままなら何もしない
+    assert_eq!(
+        ensure_with(&stub, Mode::Auto, served_elsewhere()),
+        EnsureReport::NothingToDo
+    );
+    assert_eq!(load_state(&stub.state_dir()), foreign_state);
+    // Toolport 側を直して自分と同じ実体になれば toolport へ
+    assert_eq!(
+        ensure_with(&stub, Mode::Auto, served()),
+        EnsureReport::Ran(vec![
+            (
+                Client::Claude,
+                RegisterOutcome::Skipped(SkipReason::Toolport)
+            ),
+            (
+                Client::Codex,
+                RegisterOutcome::Skipped(SkipReason::Toolport)
+            ),
+        ])
+    );
+    // さらに Toolport から外れたら直接登録して done に移し、skipped から外す
+    let foreign_again = state_with_skipped(
+        &stub.executable(),
+        &[],
+        &[
+            (Client::Claude, SkipReason::ToolportForeign),
+            (Client::Codex, SkipReason::ToolportForeign),
+        ],
+    );
+    save_state(&stub.state_dir(), &foreign_again).expect("save");
+    assert_eq!(
+        ensure_with(&stub, Mode::Auto, Detection::NotConnected),
+        EnsureReport::Ran(vec![
+            (Client::Claude, RegisterOutcome::Registered),
+            (Client::Codex, RegisterOutcome::Registered),
+        ])
+    );
+    assert_eq!(
+        load_state(&stub.state_dir()),
+        state_of(&stub.executable(), &[Client::Claude, Client::Codex])
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Toolport 経由の提供（スタブの CLI と固定の判定）
 // ---------------------------------------------------------------------------

@@ -73,12 +73,13 @@ fn run_logon_update(paths: &AppPaths) -> i32 {
     if !hooks::is_portable(&installation.root) {
         let budget = connect::Budget::new(connect::UPDATER_CALL_TIMEOUT, connect::UPDATER_TOTAL);
         let mode = connect::mode_from_config_file(&paths.default_config_path(), "updater");
+        let executable = connect::registered_executable(&installation.root);
         connect::ensure_registered(
             &paths.local_root,
-            &connect::registered_executable(&installation.root),
+            &executable,
             mode,
             &connect::resolve_from_environment,
-            &connect::detect_from_environment,
+            &|client| connect::detect_from_environment(client, &executable),
             &budget,
             "updater",
         );
