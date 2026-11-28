@@ -7,7 +7,7 @@ Chrome Web Store（CWS）の掲載情報（説明・URL・画像・「プライ�
 - 手順は `services.rs`、画面操作は trait 越し、要素の選択は Rust の純粋関数: [architecture](docs/agents/architecture.md)・構成は [source-layout](docs/agents/source-layout.md)
 - Chrome は最小の起動引数・前面に出さない・プロファイルは削除しない・要素はラベルで探す。AI は `--show-browser` を使わない: [browser-automation](docs/agents/browser-automation.md)
 - 書き込みは許可リスト以外を止める。審査送信は 1 件ずつ明示。誤りは Chrome 前に終了コード 2: [write-safety](docs/agents/write-safety.md)
-- 掲載画像は画素ダイジェストで比較: [listing-images](docs/agents/listing-images.md)
+- 掲載画像は画素ダイジェストで比較: [listing-images](docs/agents/listing-images.md)・画面操作は [image-slot-operations](docs/agents/image-slot-operations.md)
 - 「プライバシー」タブは設定に書いた欄だけ扱う: [privacy-tab](docs/agents/privacy-tab.md)
 - MCP は CLI の薄い皮。ツールは 5 つだけ: [mcp-server](docs/agents/mcp-server.md)
 - 自動更新（Velopack）と実行中ロック: [auto-update](docs/agents/auto-update.md)

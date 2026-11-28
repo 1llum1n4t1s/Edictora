@@ -16,15 +16,14 @@ Add `images` to an item to manage its store images. Keys you leave out are never
 ```
 
 - `dir` uses the `screenshot-*.png` files directly inside the folder, in name order (1-5 files). `files` uses the files in the order you write them (1-5).
-- Only PNG is supported: 24-bit without alpha, 1280x800 or 640x400 for screenshots, 440x280 for the small tile and 1400x560 for the marquee. Edictora checks this, and that no image repeats inside a set, before opening Chrome (exit code 2). The store icon (`icon`) must be 128x128 and may be transparent (8-bit RGB or RGBA); it is compared including alpha, ignoring the color of fully transparent pixels. It is shared by all languages, so `--image-scope global` includes it.
+- PNG only, checked before opening Chrome (exit code 2): 24-bit without alpha; screenshots 1280x800 or 640x400, small tile 440x280, marquee 1400x560; no repeated image within a set. The icon must be 128x128 and may be transparent; it is compared including alpha and is shared by all languages (`--image-scope global`).
 - An item may have `images` without `locales`.
-- **Images are compared by decoded pixels, not file bytes.** The dashboard re-encodes uploaded PNGs. Edictora downloads each image (the `=s0` original, over HTTPS from `*.googleusercontent.com` only, with no cookies) and compares pixel hashes in order. If an image can't be downloaded or decoded, the result is "cannot compare": never "match" and never "replace".
-- `push --yes` replaces a whole slot (delete all, then upload in order) only when it differs, saves a draft, reloads and checks again. Order: store icon, small tile, marquee, global screenshots, then each language's localized screenshots. It never reorders images or submits for review, and never touches an item that is pending review.
+- **Images are compared by decoded pixels**, because the dashboard re-encodes uploads. Edictora downloads each original over HTTPS (`*.googleusercontent.com` only, no cookies); if it can't download or decode one, the result is "cannot compare", never "match" or "replace".
+- `push --yes` replaces only differing slots (delete all, then upload in order), saves a draft and re-checks, in the order icon, small tile, marquee, global screenshots, then localized ones. It never reorders, submits, or touches an item pending review.
 - **Deleting an image takes effect on the dashboard immediately.** If a push stops halfway, the draft can be left with images missing: run it again to finish.
 - An item with a single language has no localized screenshots, so use `--image-scope global`. If a locale in `localizedScreenshots` isn't on the dashboard, Edictora stops before changing anything: use `--image-scope global` or `--locale`.
-- If Edictora can't confirm that switching the language changed what the page shows (for example, the description and the localized screenshots are the same as in the previous language), it stops without writing (exit code 4). If the switch can't be confirmed when it re-reads the page after saving, the saved changes stay saved, but it ends with an error (exit code 1) instead of reporting success.
+- If a language switch can't be confirmed (for example, identical description and screenshots across languages), it stops before writing (exit code 4), or after saving ends with exit code 1.
 - Writing images works only while the dashboard is shown in Japanese.
-- Narrow commands with `--only text|images|privacy` and `--image-scope all|global|localized`.
 
 ```powershell
 edictora diff --only images --item <id>                                  # Images only (read-only)

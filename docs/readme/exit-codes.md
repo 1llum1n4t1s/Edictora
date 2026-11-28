@@ -8,7 +8,7 @@
 | 1 | Runtime error (a dashboard operation failed, verification mismatch, the same Chrome profile is in use by another edictora, etc.) |
 | 2 | Invalid arguments or config (Chrome isn't opened) |
 | 3 | Differences found (`diff`, or `push` without `--yes`) |
-| 4 | Write aborted (pending review, or the state couldn't be determined) |
+| 4 | Write aborted (pending review, the state couldn't be determined, or a language switch couldn't be confirmed before writing localized screenshots) |
 | 5 | Sign-in required (the sign-in wait didn't finish, or the sign-in expired mid-work; run it again) |
 | 130 | Interrupted (Ctrl+C) |
 
