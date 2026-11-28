@@ -58,7 +58,7 @@ Edictora 的消息、差异输出和帮助文本提供九种语言：日语、�
 - Windows 10 或 Windows 11（x86_64）
 - Google Chrome。Edictora 会自动查找它，您也可以在配置文件中设置 `chromePath`，或传入 `--chrome`。
 - CWS 开发者账号
-- 如果从源代码构建，需要 Rust 1.100.0（在 `rust-toolchain.toml` 中固定）。只有在修改页面内脚本时才需要 Bun。
+- 如果从源代码构建，需要 Rust 1.100.1（在 `rust-toolchain.toml` 中固定）。只有在修改页面内脚本时才需要 Bun。
 
 ## 使用方法
 

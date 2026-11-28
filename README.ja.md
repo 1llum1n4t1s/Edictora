@@ -54,7 +54,7 @@ Edictora は、専用プロファイルの Chrome を Chrome DevTools Protocol�
 - Windows 10 / Windows 11（x86_64）
 - Google Chrome（自動検出。設定ファイルの `chromePath` か `--chrome` でも指定可能）
 - CWS デベロッパー アカウント
-- Rust 1.100.0（ソースからビルドする場合。`rust-toolchain.toml` で固定）。ページ内スクリプトを変更するときだけ Bun
+- Rust 1.100.1（ソースからビルドする場合。`rust-toolchain.toml` で固定）。ページ内スクリプトを変更するときだけ Bun
 
 ## 使い方
 

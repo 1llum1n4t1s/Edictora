@@ -58,7 +58,7 @@ Edictora의 메시지, diff 출력, 도움말은 일본어, 영어, 중국어 �
 - Windows 10 또는 Windows 11(x86_64)
 - Google Chrome. Edictora가 자동으로 찾으며, 설정 파일의 `chromePath`로 지정하거나 `--chrome`으로 전달할 수도 있습니다.
 - CWS 개발자 계정
-- 소스에서 빌드하는 경우 Rust 1.100.0(`rust-toolchain.toml`에 고정되어 있습니다). Bun은 페이지 내 스크립트를 변경할 때만 필요합니다.
+- 소스에서 빌드하는 경우 Rust 1.100.1(`rust-toolchain.toml`에 고정되어 있습니다). Bun은 페이지 내 스크립트를 변경할 때만 필요합니다.
 
 ## 사용법
 

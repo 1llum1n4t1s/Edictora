@@ -58,7 +58,7 @@ Execute `Edictora-win-Setup.exe` (um instalador Velopack). Ele instala em `%LOCA
 - Windows 10 ou Windows 11 (x86_64)
 - Google Chrome. O Edictora o encontra automaticamente, ou você pode definir `chromePath` no arquivo de configuração ou passar `--chrome`.
 - Uma conta de desenvolvedor da CWS
-- Rust 1.100.0 se você compilar a partir do código-fonte (fixado em `rust-toolchain.toml`). O Bun só é necessário quando você altera os scripts executados dentro das páginas.
+- Rust 1.100.1 se você compilar a partir do código-fonte (fixado em `rust-toolchain.toml`). O Bun só é necessário quando você altera os scripts executados dentro das páginas.
 
 ## Uso
 
