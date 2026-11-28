@@ -35,6 +35,8 @@ fn ページ内スクリプトの固定の印がrust側と一致する() {
     assert_eq!(kinds::LISTBOX_OPTION, "listboxOption");
     assert!(BUNDLE.contains("listboxOption"));
     assert!(collect(&JA, kinds::LISTBOX_OPTION).contains("collect(\"listboxOption\")"));
+    // 選択肢の値を返すキー名が Rust 側（selectors.rs の "dataValue"）と一致する
+    assert!(BUNDLE.contains("dataValue: "));
     // どの選択肢を選ぶかの判断をページ側に持たない（カテゴリの文言・キーを埋め込まない）
     assert!(!BUNDLE.contains("カテゴリ"));
     assert!(!BUNDLE.contains("CATEGORY_"));
