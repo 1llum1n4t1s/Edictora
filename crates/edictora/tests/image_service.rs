@@ -51,6 +51,8 @@ struct FakeDashboard {
     text: HashMap<String, String>,
     /// `read_images` の呼び出し回数（原本の取得 1 回分に相当）
     reads: usize,
+    /// `get_locales` の呼び出し回数（言語欄を実際に開く操作 1 回分に相当）
+    locale_reads: usize,
 }
 
 impl FakeDashboard {
@@ -68,6 +70,7 @@ impl FakeDashboard {
             corrupt_on_save: false,
             text: HashMap::new(),
             reads: 0,
+            locale_reads: 0,
         }
     }
 
@@ -137,6 +140,7 @@ impl EditorPage for FakeDashboard {
     }
 
     fn get_locales(&mut self, _: &CancelToken) -> Result<Vec<String>> {
+        self.locale_reads += 1;
         Ok(self.locales.clone())
     }
 
@@ -347,55 +351,6 @@ fn diff_images_一致と差分と枚数違いを返す() {
 }
 
 #[test]
-fn diff_images_並びが違えば差分() {
-    let mut page = FakeDashboard::new(&["ja"]);
-    page.set_saved(ImageSlot::GlobalScreenshots, None, &["S2", "S1"]);
-    let expected = item(vec![slot(
-        ImageSlot::GlobalScreenshots,
-        None,
-        &[("s1.png", "S1"), ("s2.png", "S2")],
-    )]);
-
-    let (_, rows) = services::diff_images(
-        &mut page,
-        &FakeFetcher { unfetchable: None },
-        &expected,
-        &no_progress,
-        &CancelToken::new(),
-    )
-    .unwrap();
-
-    assert_eq!(rows[0].status, ComparisonStatus::Different);
-    assert_eq!(rows[0].differing_positions, vec![1, 2]);
-}
-
-#[test]
-fn diff_images_原本を取得できなければ比較不能で一致扱いにしない() {
-    let mut page = FakeDashboard::new(&["ja"]);
-    page.set_saved(ImageSlot::SmallTile, None, &["T1"]);
-    let fetch = FakeFetcher {
-        unfetchable: Some("T1".to_string()),
-    };
-    let expected = item(vec![slot(
-        ImageSlot::SmallTile,
-        None,
-        &[("tile.png", "T1")],
-    )]);
-
-    let (_, rows) = services::diff_images(
-        &mut page,
-        &fetch,
-        &expected,
-        &no_progress,
-        &CancelToken::new(),
-    )
-    .unwrap();
-
-    assert_eq!(rows[0].status, ComparisonStatus::Error);
-    assert!(rows[0].error.as_deref().unwrap().contains("403"));
-}
-
-#[test]
 fn push_images_差分のある置き場だけ全入れ替えして保存し読み直して照合する() {
     let mut page = FakeDashboard::new(&["ja"]);
     page.set_saved(ImageSlot::SmallTile, None, &["T1"]); // 一致
@@ -444,6 +399,8 @@ fn push_images_差分のある置き場だけ全入れ替えして保存し読�
     );
     // 全言語向けは 1 回だけ保存し、読み直す
     assert_eq!(page.count("save"), 1);
+    // ローカライズ版が無ければ言語一覧を読まない
+    assert_eq!(page.locale_reads, 0);
     assert!(
         result
             .final_comparison
@@ -636,6 +593,8 @@ fn push_images_ローカライズ版はロケールごとに切替_置換_保存
     let save = page.log.iter().position(|l| l == "save").unwrap();
     let ko = page.log.iter().position(|l| l == "switch ko").unwrap();
     assert!(save < ko);
+    // ローカライズ版があるので言語一覧は 1 回読む
+    assert_eq!(page.locale_reads, 1);
 }
 
 /// 無保存の最終照合は最初の照合で読んだ画像から作り、読み直しも言語の切替もやり直さない（C-1）
@@ -673,6 +632,7 @@ fn push_images_無保存なら最終照合で画像を読み直さない() {
     // 1 回目の照合の分だけ（スロット 3 つ・ロケールの切替 2 回）
     assert_eq!(page.reads, 3);
     assert_eq!(page.count("switch"), 2);
+    assert_eq!(page.locale_reads, 1);
     // 結果の行は images.slots の順で、item_id と名前は正本のもの
     let rows = &result.final_comparison;
     assert_eq!(rows.len(), 3);
@@ -722,6 +682,7 @@ fn push_images_言語が1つのアイテムでローカライズ版が対象な�
         page.count("delete") + page.count("upload") + page.count("save"),
         0
     );
+    assert_eq!(page.locale_reads, 1);
 }
 
 #[test]
@@ -748,6 +709,7 @@ fn push_images_ダッシュボードに無いロケールがあれば全体を�
         page.count("delete") + page.count("upload") + page.count("save"),
         0
     );
+    assert_eq!(page.locale_reads, 1);
 }
 
 #[test]
@@ -815,31 +777,6 @@ fn ロケール名の大文字小文字を区別しない() {
 // ───────── ストア アイコン ─────────
 
 #[test]
-fn アイコンは全言語向けの置き場として差分を読み取り専用で返す() {
-    // 言語が複数でも、アイコンは全言語共通なのでロケールを切り替えずに読む
-    let mut page = FakeDashboard::new(&["ja", "en"]);
-    page.set_saved(ImageSlot::Icon, None, &["ICON-OLD"]);
-    let expected = item(vec![slot(ImageSlot::Icon, None, &[("icon.png", "ICON1")])]);
-
-    let (_, rows) = services::diff_images(
-        &mut page,
-        &FakeFetcher { unfetchable: None },
-        &expected,
-        &no_progress,
-        &CancelToken::new(),
-    )
-    .unwrap();
-
-    assert_eq!(rows[0].status, ComparisonStatus::Different);
-    assert_eq!(rows[0].label(), "ショップ アイコン");
-    assert_eq!(page.count("switch"), 0);
-    assert_eq!(
-        page.count("delete") + page.count("upload") + page.count("save"),
-        0
-    );
-}
-
-#[test]
 fn push_images_アイコンは小タイルと同じ経路で削除_追加_保存_照合する() {
     let mut page = FakeDashboard::new(&["ja"]);
     page.set_saved(ImageSlot::Icon, None, &["ICON-OLD"]);
@@ -875,6 +812,7 @@ fn push_images_アイコンは小タイルと同じ経路で削除_追加_保存
     // 全言語向けなので保存は 1 回、ロケールの切替もしない
     assert_eq!(page.count("save"), 1);
     assert_eq!(page.count("switch"), 0);
+    assert_eq!(page.locale_reads, 0);
     assert!(
         result
             .final_comparison

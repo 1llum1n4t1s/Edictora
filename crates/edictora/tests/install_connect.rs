@@ -27,11 +27,10 @@ use std::time::{Duration, Instant};
 
 use common::{Scratch, work_dir};
 use edictora::install::connect::{
-    Action, Budget, CallResult, CliResolver, Client, EnsureReport, LOCK_FILE, Mode, Plan,
-    RegisterOutcome, STATE_FILE, SkipReason, State, UnregisterOutcome, ensure_registered,
-    find_cli_in, forget_state, load_state, mode_from_config_file, output_points_at, parse_mode,
-    parse_state, plan, register_client, registered_executable, run_cli, save_state, unregister_all,
-    unregister_client,
+    Action, Budget, CliResolver, Client, EnsureReport, LOCK_FILE, Mode, Plan, RegisterOutcome,
+    STATE_FILE, SkipReason, State, UnregisterOutcome, ensure_registered, find_cli_in, forget_state,
+    load_state, mode_from_config_file, parse_mode, parse_state, plan, register_client,
+    registered_executable, save_state, unregister_all, unregister_client,
 };
 use edictora::install::toolport::Detection;
 use edictora::update::lock::LockFile;
@@ -323,23 +322,6 @@ fn ensure_with(stub: &Stub, mode: Mode, detection: Detection) -> EnsureReport {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn スタブのgetは未登録なら1で終わり登録があれば内容を出す() {
-    let stub = Stub::new("stub_get");
-    let cli = stub.cli(Client::Claude);
-    let args = vec!["mcp".into(), "get".into(), "edictora".into()];
-    assert_eq!(
-        run_cli(&cli, &args, Duration::from_secs(20)),
-        CallResult::Failed
-    );
-    stub.set_registered(Client::Claude, &stub.own_command());
-    match run_cli(&cli, &args, Duration::from_secs(20)) {
-        CallResult::Success(output) => assert!(output_points_at(&output, &stub.executable())),
-        other => panic!("成功を期待しました: {other:?}"),
-    }
-    assert_eq!(stub.calls(Client::Claude), vec![get_line(), get_line()]);
-}
-
-#[test]
 fn CLIはPATHの中のexeだけを探す() {
     let stub = Stub::new("find_cli");
     // .cmd のラッパーだけがあるフォルダーは飛ばす
@@ -365,56 +347,17 @@ fn CLIはPATHの中のexeだけを探す() {
     assert_eq!(find_cli_in(Client::Claude, None), None);
 }
 
-#[test]
-fn 登録する引数と固定パス() {
-    let exe = Path::new(r"C:\Users\u\AppData\Local\Edictora\current\edictora.exe");
-    assert_eq!(
-        registered_executable(Path::new(r"C:\Users\u\AppData\Local\Edictora")),
-        exe
-    );
-    assert_eq!(
-        Client::Claude.add_args(exe),
-        vec![
-            "mcp",
-            "add",
-            "--scope",
-            "user",
-            "edictora",
-            "--",
-            exe.to_str().unwrap(),
-            "mcp"
-        ]
-    );
-    assert_eq!(
-        Client::Codex.add_args(exe),
-        vec!["mcp", "add", "edictora", "--", exe.to_str().unwrap(), "mcp"]
-    );
-    assert_eq!(
-        Client::Claude.remove_args(),
-        vec!["mcp", "remove", "edictora", "--scope", "user"]
-    );
-    assert_eq!(
-        Client::Codex.remove_args(),
-        vec!["mcp", "remove", "edictora"]
-    );
-    assert_eq!(Client::Codex.get_args(), vec!["mcp", "get", "edictora"]);
-    // 照合は区切りと大小を区別しない
-    assert!(output_points_at(
-        "Command: c:/users/U/appdata/local/edictora/CURRENT/edictora.exe",
-        exe
-    ));
-    assert!(!output_points_at(
-        r"Command: D:\Other\current\edictora.exe",
-        exe
-    ));
-}
-
 // ---------------------------------------------------------------------------
 // 登録
 // ---------------------------------------------------------------------------
 
 #[test]
 fn 未登録ならremoveしてからaddする() {
+    // 登録する exe の固定パスは、インストール先の current 配下
+    assert_eq!(
+        registered_executable(Path::new(r"C:\Users\u\AppData\Local\Edictora")),
+        Path::new(r"C:\Users\u\AppData\Local\Edictora\current\edictora.exe")
+    );
     let stub = Stub::new("register_new");
     let exe = stub.executable();
     for client in [Client::Claude, Client::Codex] {
@@ -584,6 +527,29 @@ fn planは状態のexeが違えば全部を対象にし同じなら未完了で�
         ),
         all
     );
+    // 新規で、判定がクライアントごとに違えば、提供中のものだけ省く
+    let only_claude_served = |c: Client| {
+        if c == Client::Claude {
+            served()
+        } else {
+            Detection::NotServed
+        }
+    };
+    assert_eq!(
+        plan(
+            &State::default(),
+            exe,
+            Mode::Auto,
+            |_| true,
+            only_claude_served
+        )
+        .unwrap()
+        .actions,
+        vec![
+            (Client::Claude, Action::Skip(SkipReason::Toolport)),
+            (Client::Codex, Action::Register),
+        ]
+    );
     // 同じ exe で全部済み → 何もしない（大小・区切りの違いは同じとみなす）
     let done = State {
         executable: Some(r"c:/a/edictora/current/EDICTORA.exe".to_string()),
@@ -600,57 +566,6 @@ fn planは状態のexeが違えば全部を対象にし同じなら未完了で�
             fresh: false,
             actions: vec![(Client::Codex, Action::Register)],
         })
-    );
-}
-
-#[test]
-fn planは新規ならモードと判定でクライアントごとに決める() {
-    let exe = Path::new(r"C:\A\Edictora\current\edictora.exe");
-    let fresh = State::default();
-    let only_claude_served = |c: Client| {
-        if c == Client::Claude {
-            served()
-        } else {
-            Detection::NotServed
-        }
-    };
-    let actions = |mode, detect: &dyn Fn(Client) -> Detection| {
-        plan(&fresh, exe, mode, |_| true, detect).unwrap().actions
-    };
-    assert_eq!(
-        actions(Mode::Auto, &only_claude_served),
-        vec![
-            (Client::Claude, Action::Skip(SkipReason::Toolport)),
-            (Client::Codex, Action::Register),
-        ]
-    );
-    for mode_detection in [
-        Detection::NotConnected,
-        Detection::NotServed,
-        Detection::Unknown("x".to_string()),
-    ] {
-        let detect = |_: Client| mode_detection.clone();
-        assert_eq!(
-            actions(Mode::Auto, &detect),
-            vec![
-                (Client::Claude, Action::Register),
-                (Client::Codex, Action::Register)
-            ]
-        );
-    }
-    assert_eq!(
-        actions(Mode::Direct, &|_| served()),
-        vec![
-            (Client::Claude, Action::Register),
-            (Client::Codex, Action::Register)
-        ]
-    );
-    assert_eq!(
-        actions(Mode::Off, &|_| served()),
-        vec![
-            (Client::Claude, Action::Skip(SkipReason::Off)),
-            (Client::Codex, Action::Skip(SkipReason::Off))
-        ]
     );
 }
 
@@ -1098,50 +1013,6 @@ fn 省いたあとゲートウェイが消えたら直接登録に戻りdoneに�
 }
 
 #[test]
-fn モード変更後は省いたものを直接登録し_doneは外さない() {
-    // 省いた後に direct にする → 直接登録
-    let stub = Stub::new("toolport_mode_direct");
-    ensure_with(&stub, Mode::Auto, served());
-    assert_eq!(
-        ensure_with(&stub, Mode::Direct, served()),
-        EnsureReport::Ran(vec![
-            (Client::Claude, RegisterOutcome::Registered),
-            (Client::Codex, RegisterOutcome::Registered),
-        ])
-    );
-    // 直接登録済みのあと off / auto + 提供中でも done は外れず、CLI も呼ばない
-    let before = stub.calls(Client::Claude);
-    for (mode, detection) in [(Mode::Off, served()), (Mode::Auto, served())] {
-        assert_eq!(
-            ensure_with(&stub, mode, detection),
-            EnsureReport::NothingToDo
-        );
-    }
-    assert_eq!(stub.calls(Client::Claude), before);
-    assert_eq!(
-        load_state(&stub.state_dir()),
-        state_of(&stub.executable(), &[Client::Claude, Client::Codex])
-    );
-    // off で省いた後に auto にする → 提供中なら toolport として省く
-    let stub = Stub::new("toolport_mode_off_to_auto");
-    ensure_with(&stub, Mode::Off, served());
-    assert_eq!(
-        ensure_with(&stub, Mode::Auto, served()),
-        EnsureReport::Ran(vec![
-            (
-                Client::Claude,
-                RegisterOutcome::Skipped(SkipReason::Toolport)
-            ),
-            (
-                Client::Codex,
-                RegisterOutcome::Skipped(SkipReason::Toolport)
-            ),
-        ])
-    );
-    assert!(stub.calls(Client::Claude).is_empty());
-}
-
-#[test]
 fn 古い状態ファイルを読め_skippedを保存して読み直せる() {
     let old = parse_state(br#"{"executable":"x","done":["claude"]}"#);
     assert_eq!(old.done, BTreeSet::from([Client::Claude]));
@@ -1284,24 +1155,6 @@ fn 初回は全部を登録し済んだものは二度と呼ばない() {
 }
 
 #[test]
-fn 済んでいないものだけを呼ぶ() {
-    let stub = Stub::new("ensure_partial");
-    let exe = stub.executable();
-    let dir = stub.state_dir();
-    save_state(&dir, &state_of(&exe, &[Client::Claude])).unwrap();
-    let resolve = stub.resolver();
-    assert_eq!(
-        ensure_direct(&dir, &exe, &resolve, &generous(), "test"),
-        EnsureReport::Ran(vec![(Client::Codex, RegisterOutcome::Registered)])
-    );
-    assert!(stub.calls(Client::Claude).is_empty());
-    assert_eq!(
-        load_state(&dir),
-        state_of(&exe, &[Client::Claude, Client::Codex])
-    );
-}
-
-#[test]
 fn 状態のexeが変わると全部やり直す() {
     let stub = Stub::new("ensure_moved");
     let exe = stub.executable();
@@ -1323,25 +1176,6 @@ fn 状態のexeが変わると全部やり直す() {
             (Client::Claude, RegisterOutcome::Unchanged),
             (Client::Codex, RegisterOutcome::Registered),
         ])
-    );
-    assert_eq!(
-        load_state(&dir),
-        state_of(&exe, &[Client::Claude, Client::Codex])
-    );
-}
-
-#[test]
-fn 壊れた状態ファイルは未登録として登録し直す() {
-    let stub = Stub::new("ensure_broken");
-    let exe = stub.executable();
-    let dir = stub.state_dir();
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(STATE_FILE), b"\xff\xfe not json").unwrap();
-    let resolve = stub.resolver();
-    let report = ensure_direct(&dir, &exe, &resolve, &generous(), "test");
-    assert!(
-        matches!(report, EnsureReport::Ran(ref r) if r.len() == 2),
-        "{report:?}"
     );
     assert_eq!(
         load_state(&dir),

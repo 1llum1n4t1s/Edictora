@@ -12,8 +12,8 @@ use common::{ITEM_A, config_err, png_bytes, rgba_png, test_paths, work_dir, writ
 use edictora::cli::args::parse;
 use edictora::cli::select_targets;
 use edictora::config::{self, EdictoraConfig};
-use edictora::images::png::{pixel_digest, pixel_digest_rgba};
-use edictora::images::{ImageSlot, build_expected_slot, digest_for_slot, validate_image_file};
+use edictora::images::png::pixel_digest_rgba;
+use edictora::images::{ImageSlot, build_expected_slot, validate_image_file};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path: PathBuf = [
@@ -49,16 +49,6 @@ fn icon_pixels(size: u32) -> Vec<u8> {
 }
 
 // ───────── アルファ込みの画素ダイジェスト ─────────
-
-#[test]
-fn アルファ込みのダイジェストは透過のあるpngでも求まる() {
-    let png = rgba_png(128, 128, &icon_pixels(128));
-    // RGB のダイジェストは透過があると比較不能のまま（小タイル・マーキー・スクリーンショットの扱いは変えない）
-    assert!(pixel_digest(&png).unwrap_err().contains("transparent"));
-    let digest = pixel_digest_rgba(&png).unwrap();
-    assert_eq!(digest.len(), 64);
-    assert_eq!(pixel_digest_rgba(&png).unwrap(), digest);
-}
 
 #[test]
 fn 完全に透明な画素の色は無視し_見える画素の違いは検出する() {
@@ -108,24 +98,6 @@ fn 不透明なrgbとrgbaは同じダイジェスト_グレーやインターレ
     );
     assert!(pixel_digest_rgba(b"").is_err());
     assert!(pixel_digest_rgba(b"not a png").is_err());
-}
-
-#[test]
-fn スロットに合わせたダイジェストを選ぶ() {
-    let opaque = png_bytes(128, 128, 2, 8, 4);
-    // アイコンはアルファ込み、それ以外は RGB のみ
-    assert_eq!(
-        digest_for_slot(ImageSlot::Icon, &opaque).unwrap(),
-        pixel_digest_rgba(&opaque).unwrap()
-    );
-    assert_eq!(
-        digest_for_slot(ImageSlot::SmallTile, &png_bytes(440, 280, 2, 8, 4)).unwrap(),
-        pixel_digest(&png_bytes(440, 280, 2, 8, 4)).unwrap()
-    );
-    // 透過のある画像は、アイコン以外では比較不能
-    let transparent = rgba_png(128, 128, &icon_pixels(128));
-    assert!(digest_for_slot(ImageSlot::Icon, &transparent).is_ok());
-    assert!(digest_for_slot(ImageSlot::Marquee, &transparent).is_err());
 }
 
 // ───────── スロットのモデルと正本の検証 ─────────

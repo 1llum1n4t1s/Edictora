@@ -552,7 +552,9 @@ impl EditorPage for DashboardItemPage<'_> {
                 .as_str()
                 .filter(|s| !s.trim().is_empty())
                 .ok_or_else(|| {
-                    Error::Dashboard("the page snapshot was not a non-empty string".to_string())
+                    Error::Dashboard(
+                        "ページのスナップショットが空か、文字列ではありません".to_string(),
+                    )
                 })?;
             // 保存前に必ず伏せ字を通す（URL の publisherId に加え、本文・属性に現れる分と、アカウントの氏名・メールアドレスも）
             std::fs::write(&path, redact_diagnostics(body, &self.publisher_id))?;

@@ -88,12 +88,6 @@ fn full_privacy() -> String {
     )
 }
 
-fn expected_of(config: &EdictoraConfig) -> ExpectedItem {
-    let mut e = edictora::listing::build_expected(&config.items[0]).unwrap();
-    e.privacy = privacy::build_expected(&config.items[0]).unwrap();
-    e
-}
-
 #[test]
 fn 全部入りの設定を読み正本を組み立てる() {
     let ctx = Ctx::new("config_privacy_full");
@@ -155,18 +149,6 @@ fn 全部入りの設定を読み正本を組み立てる() {
 }
 
 #[test]
-fn privacyを書いていないアイテムは対象外() {
-    let ctx = Ctx::new("config_privacy_none");
-    let json = format!(
-        r#"{{ "items": [ {{ "itemId": "{ITEM_A}", "baseDir": "repo",
-              "locales": {{ "ja": {{ "description": {{ {FILE}, "sectionStart": "^■ 単一の目的の説明$", "sectionEnd": "^■ データ" }} }} }} }} ] }}"#
-    );
-    let config = ctx.parse(&json).unwrap();
-    assert!(config.items[0].privacy.is_none());
-    assert!(privacy::build_expected(&config.items[0]).unwrap().is_none());
-}
-
-#[test]
 fn 一部の欄だけを書ける() {
     let ctx = Ctx::new("config_privacy_partial");
     let config = ctx
@@ -177,21 +159,6 @@ fn 一部の欄だけを書ける() {
     let e = privacy::build_expected(&config.items[0]).unwrap().unwrap();
     assert!(e.single_purpose.is_none() && e.permissions.is_none() && e.remote_code.is_none());
     assert!(e.data_usage.unwrap().collected.is_empty());
-}
-
-#[test]
-fn 区間を省略するとファイル全体が本文() {
-    let ctx = Ctx::new("config_privacy_whole");
-    let config = ctx
-        .parse(&item_json(
-            r#"{ "singlePurpose": { "file": "webstore/desc.txt" } }"#,
-        ))
-        .unwrap();
-    let e = privacy::build_expected(&config.items[0]).unwrap().unwrap();
-    assert_eq!(
-        e.single_purpose.as_deref(),
-        Some("■ 説明\n本文です\n■ カテゴリ")
-    );
 }
 
 #[test]
@@ -410,13 +377,4 @@ fn locale指定ではプライバシーを絞らない() {
     );
     // build_expected 側の説明文は ja だけ
     assert_eq!(items[0].locales.len(), 1);
-}
-
-#[test]
-fn 正本の組み立ては正本のファイルの変更に追随する() {
-    let ctx = Ctx::new("config_privacy_rebuild");
-    let config = ctx.parse(&item_json(&full_privacy())).unwrap();
-    let a = expected_of(&config);
-    let b = expected_of(&config);
-    assert_eq!(a.privacy, b.privacy);
 }

@@ -795,21 +795,6 @@ fn Portable版の目印は根の_portable() {
 }
 
 #[test]
-fn 実行中ロックは共有同士は同時に取れ_排他とは両立しない() {
-    let dir = fresh_dir("update-running-lock");
-    let path = running(&dir);
-    let a = LockFile::try_acquire_shared(&path).unwrap();
-    let b = LockFile::try_acquire_shared(&path).unwrap();
-    let e = LockFile::try_acquire(&path).unwrap_err();
-    assert!(edictora::update::lock::is_held_by_another(&e), "{e:?}");
-    drop((a, b));
-    let x = LockFile::try_acquire(&path).unwrap();
-    let e = LockFile::try_acquire_shared(&path).unwrap_err();
-    assert!(edictora::update::lock::is_held_by_another(&e), "{e:?}");
-    drop(x);
-}
-
-#[test]
 fn 実行中のedictoraがあればダウンロードと検証まででapplyを起動しない() {
     let dir = fresh_dir("update-inuse");
     let inst = fake_install(&dir, "1.0.5");
@@ -822,7 +807,11 @@ fn 実行中のedictoraがあればダウンロードと検証まででapplyを�
     let launcher = RecordingLauncher::default();
 
     // pull などが実行中（共有で持っている）
+    // 共有同士は同時に取れ、排他とは両立しない
     let cli = LockFile::try_acquire_shared(&running(&dir)).unwrap();
+    let cli2 = LockFile::try_acquire_shared(&running(&dir)).unwrap();
+    let e = LockFile::try_acquire(&running(&dir)).unwrap_err();
+    assert!(edictora::update::lock::is_held_by_another(&e), "{e:?}");
     let outcome = run_update(
         &inst,
         &server.source(),
@@ -845,7 +834,7 @@ fn 実行中のedictoraがあればダウンロードと検証まででapplyを�
     assert!(launcher.calls.borrow().is_empty());
     // ダウンロードと検証は済んでいる
     assert_eq!(std::fs::read(inst.packages_dir.join(name)).unwrap(), body);
-    drop(cli);
+    drop((cli, cli2));
 
     // 終われば、ダウンロード済みのものを検証して使い、適用を任せる（取り直さない）
     let outcome = run_update(

@@ -40,8 +40,8 @@ struct FakePrivacy {
     writes: usize,
     /// 保存したとき、単一用途の本文を変えてしまう（保存後の照合失敗の再現）
     corrupt_on_save: bool,
-    /// 開く操作そのものが失敗する（ダッシュボード系のエラー）
-    fail_open: bool,
+    /// 開く操作そのものが返すエラー（ダッシュボード系・ログイン切れなど）
+    open_error: Option<Error>,
     save_button_enabled: bool,
 }
 
@@ -69,7 +69,7 @@ impl FakePrivacy {
             fail_write_at: None,
             writes: 0,
             corrupt_on_save: false,
-            fail_open: false,
+            open_error: None,
             save_button_enabled: true,
         }
     }
@@ -126,8 +126,8 @@ impl EditorPage for FakePrivacy {
 impl PrivacyPage for FakePrivacy {
     fn open_privacy(&mut self, item_id: &str, _: &CancelToken) -> Result<()> {
         self.log.push(format!("open {item_id}"));
-        if self.fail_open {
-            return Err(Error::Dashboard("開けませんでした".to_string()));
+        if let Some(e) = &self.open_error {
+            return Err(e.clone());
         }
         self.editing = self.saved.clone();
         Ok(())
@@ -526,7 +526,7 @@ fn 読み出しはテキストの正本に書いた欄だけを返す() {
 #[test]
 fn 読み出しに失敗したらアイテム単位のエラーとして返す() {
     let mut page = FakePrivacy::new();
-    page.fail_open = true;
+    page.open_error = Some(Error::Dashboard("開けませんでした".to_string()));
     let snapshot = services::pull_privacy(
         &mut page,
         &item(expected_privacy()),
@@ -556,51 +556,8 @@ fn 読み出しに失敗したらアイテム単位のエラーとして返す()
 
 #[test]
 fn ログイン切れはそのまま返す() {
-    struct LoggedOut(FakePrivacy);
-    impl EditorPage for LoggedOut {
-        fn open_item(&mut self, i: &str, c: &CancelToken) -> Result<()> {
-            self.0.open_item(i, c)
-        }
-        fn reload(&mut self, c: &CancelToken) -> Result<()> {
-            self.0.reload(c)
-        }
-        fn get_state(&mut self, c: &CancelToken) -> Result<ItemPageState> {
-            self.0.get_state(c)
-        }
-        fn get_locales(&mut self, c: &CancelToken) -> Result<Vec<String>> {
-            self.0.get_locales(c)
-        }
-        fn switch_locale(&mut self, code: &str, c: &CancelToken) -> Result<()> {
-            self.0.switch_locale(code, c)
-        }
-        fn save_draft(&mut self, c: &CancelToken) -> Result<()> {
-            self.0.save_draft(c)
-        }
-        fn capture_diagnostics(&mut self, l: &str) -> Option<String> {
-            self.0.capture_diagnostics(l)
-        }
-    }
-    impl PrivacyPage for LoggedOut {
-        fn open_privacy(&mut self, _: &str, _: &CancelToken) -> Result<()> {
-            Err(Error::LoginRequired)
-        }
-        fn read_privacy(&mut self, t: &ExpectedPrivacy, c: &CancelToken) -> Result<PrivacyReading> {
-            self.0.read_privacy(t, c)
-        }
-        fn write_privacy_text(&mut self, f: &PrivacyField, v: &str, c: &CancelToken) -> Result<()> {
-            self.0.write_privacy_text(f, v, c)
-        }
-        fn set_data_kinds(&mut self, w: &BTreeSet<DataKind>, c: &CancelToken) -> Result<()> {
-            self.0.set_data_kinds(w, c)
-        }
-        fn check_certifications(&mut self, c: &CancelToken) -> Result<()> {
-            self.0.check_certifications(c)
-        }
-        fn write_policy_url(&mut self, v: &str, c: &CancelToken) -> Result<()> {
-            self.0.write_policy_url(v, c)
-        }
-    }
-    let mut page = LoggedOut(FakePrivacy::new());
+    let mut page = FakePrivacy::new();
+    page.open_error = Some(Error::LoginRequired);
     let e = item(expected_privacy());
     assert_eq!(
         services::pull_privacy(&mut page, &e, &no_progress, &CancelToken::new()).unwrap_err(),
@@ -611,7 +568,7 @@ fn ログイン切れはそのまま返す() {
         Error::LoginRequired
     );
     // ログイン切れではスナップショットを保存しない
-    assert_eq!(page.0.count("capture"), 0);
+    assert_eq!(page.count("capture"), 0);
 }
 
 #[test]

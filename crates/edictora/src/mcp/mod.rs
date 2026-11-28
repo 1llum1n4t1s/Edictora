@@ -36,7 +36,7 @@ use crate::app_paths::AppPaths;
 use crate::cancel::CancelToken;
 use crate::cli::{BrowserOpener, CliApp, exit_codes};
 use crate::config;
-use crate::logging::{LogLevel, log, redact};
+use crate::logging::{LogLevel, log, log_error_detail, redact, redact_account};
 
 /// 対応するプロトコルの版（新しい順）。クライアントの要求が含まれていればそれを、無ければ先頭を返す
 pub const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -577,10 +577,22 @@ fn execute_job(
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         run_tool(paths, opener, name, cli_args, cancel)
     }))
-    .unwrap_or_else(|_| {
-        log(&format!("MCP: {name} の実行中に内部エラー"), LogLevel::Error);
+    .unwrap_or_else(|payload| {
+        // 案内先のログに原因が残るよう、panic の内容も書く（アカウント情報は伏せる。write_line が publisherId も伏せる）
+        let detail = redact_account(&panic_detail(&*payload));
+        log_error_detail(&format!("MCP: {name} の実行中に内部エラー"), &detail);
         tool_error("Could not run because of an internal error (see the logs: %LOCALAPPDATA%\\Edictora.Data\\logs)")
     })
+}
+
+/// panic のペイロードから文字列を取り出す（`&str`、次に `String`）。
+/// `Box<dyn Any + Send>` 自体を渡すと Box が Any として扱われ常に取得できなくなるため、呼び出し側は `&*payload` を渡す
+fn panic_detail(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "（panic の内容を取得できません）".to_owned())
 }
 
 /// `initialize` の応答。クライアントが求めた版に対応していればその版、なければ最新の版を返す

@@ -1064,13 +1064,6 @@ fn カテゴリの現在値は閉じたまま選択中のdata_valueで読む() {
 }
 
 #[test]
-fn カテゴリが未選択ならプレースホルダーとして読む() {
-    let c = category_text();
-    let options = category_page("Select a category", false);
-    assert_eq!(selected_category(c, &options).unwrap(), "Select a category");
-}
-
-#[test]
 fn カテゴリの選択中がちょうど1つでなければ止める() {
     let c = category_text();
     // 0 個

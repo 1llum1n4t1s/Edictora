@@ -130,7 +130,7 @@ pub fn redact_diagnostics(text: &str, publisher_id: &str) -> String {
     redact_account(&redact(&text))
 }
 
-/// アカウントの氏名とメールアドレスを伏せる（診断用スナップショット向け）。
+/// アカウントの氏名とメールアドレスを伏せる（診断用スナップショット向け。MCP の panic の内容をログへ書くときにも使う）。
 ///
 /// - 氏名: Google のアカウント ボタンの名前「Google アカウント: <氏名> (」「Google Account: <氏名> (」の氏名を `<name>` にする
 ///   （ボタンの名前の言語は画面の言語に従うため、ja と en の表記を持つ）

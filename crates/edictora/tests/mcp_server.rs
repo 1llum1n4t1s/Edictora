@@ -162,11 +162,6 @@ fn tools_list_検索で見つかる語を説明に含める() {
     for t in tool_definitions() {
         let d = t["description"].as_str().unwrap();
         assert!(d.contains("Chrome Web Store"), "{}", t["name"]);
-        assert!(
-            d.contains("store listing") || d.contains("submit for review"),
-            "{}",
-            t["name"]
-        );
         // 全ツールの説明に検索語を含める（exe 経由の確認から移した）
         assert!(d.contains("store listing"), "{}", t["name"]);
         assert!(d.contains("description"), "{}", t["name"]);

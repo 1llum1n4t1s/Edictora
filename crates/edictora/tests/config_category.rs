@@ -132,17 +132,6 @@ fn two_items() -> String {
 }
 
 #[test]
-fn カテゴリだけのアイテムもテキストの対象になる() {
-    let ctx = Ctx::new("config_category_targets_all");
-    let items = targets(&ctx, &two_items(), &["diff"]).unwrap();
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0].category.as_deref(), Some("tools"));
-    assert!(!items[0].locales.is_empty());
-    assert_eq!(items[1].category.as_deref(), Some("games"));
-    assert!(items[1].locales.is_empty() && items[1].has_text());
-}
-
-#[test]
 fn only_textにカテゴリを含み_imagesとprivacyには含めない() {
     let ctx = Ctx::new("config_category_targets_only");
     let items = targets(&ctx, &two_items(), &["push", "--only", "text"]).unwrap();

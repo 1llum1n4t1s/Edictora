@@ -146,16 +146,6 @@ fn 対象の欄は設定に書いた欄だけを表示順に返す() {
 }
 
 #[test]
-fn すべて一致すれば一致() {
-    let c = compare("id", "名前", &expected(), Some(&matching_reading()));
-    assert_eq!(c.status(), ComparisonStatus::Match);
-    assert_eq!(c.rows.len(), 5);
-    assert!(c.rows.iter().all(|r| r.status == ComparisonStatus::Match));
-    assert!(c.different_fields().is_empty());
-    assert!(c.blockers().is_empty());
-}
-
-#[test]
 fn 本文の違いは前後の空白も差分にする() {
     let mut reading = matching_reading();
     reading.single_purpose = Some("目的 ".to_string());

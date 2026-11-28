@@ -17,20 +17,19 @@
     };
     const text = (el) => (el.innerText || el.textContent || "").replace(/\r\n/g, `
 `).trim();
+    const labelledByTexts = (el) => {
+      const lb = el.getAttribute("aria-labelledby");
+      if (!lb)
+        return [];
+      return lb.split(/\s+/).map((id) => document.getElementById(id)).filter((n) => !!n).map(text);
+    };
     const FIELD = "input, textarea, select, [role=combobox]";
     const labelOf = (el) => {
       const parts = [];
       const al = el.getAttribute("aria-label");
       if (al)
         parts.push(al);
-      const lb = el.getAttribute("aria-labelledby");
-      if (lb) {
-        for (const id of lb.split(/\s+/)) {
-          const t = document.getElementById(id);
-          if (t)
-            parts.push(text(t));
-        }
-      }
+      parts.push(...labelledByTexts(el));
       const labels = el.labels;
       if (labels)
         for (const l of labels)
@@ -155,14 +154,7 @@
         const al = list.getAttribute("aria-label");
         if (al)
           parts.push(al);
-        const lb = list.getAttribute("aria-labelledby");
-        if (lb) {
-          for (const id of lb.split(/\s+/)) {
-            const t = document.getElementById(id);
-            if (t)
-              parts.push(text(t));
-          }
-        }
+        parts.push(...labelledByTexts(list));
       }
       return {
         index: i,
@@ -275,12 +267,9 @@
       const al = el.getAttribute("aria-label");
       if (al && al.trim())
         return al;
-      const lb = el.getAttribute("aria-labelledby");
-      if (lb) {
-        const t = lb.split(/\s+/).map((id) => document.getElementById(id)).filter((n) => !!n).map(text).join(" ");
-        if (t.trim())
-          return t;
-      }
+      const lt = labelledByTexts(el).join(" ");
+      if (lt.trim())
+        return lt;
       const labels = el.labels;
       if (labels && labels.length > 0) {
         const t = [...labels].map(text).join(" ");

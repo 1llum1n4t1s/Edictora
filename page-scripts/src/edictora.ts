@@ -133,6 +133,17 @@ function createApi(): EdictoraApi {
   const text = (el: Element): string =>
     ((el as HTMLElement).innerText || el.textContent || "").replace(/\r\n/g, "\n").trim();
 
+  // aria-labelledby が指す要素の文字列（属性が無い・空なら空配列。見つからない id は除く）
+  const labelledByTexts = (el: Element): string[] => {
+    const lb = el.getAttribute("aria-labelledby");
+    if (!lb) return [];
+    return lb
+      .split(/\s+/)
+      .map((id) => document.getElementById(id))
+      .filter((n): n is HTMLElement => !!n)
+      .map(text);
+  };
+
   const FIELD = "input, textarea, select, [role=combobox]";
 
   // ラベル候補を集める: aria-label / aria-labelledby / label 要素 / その欄だけを含む最大の祖先の文字列
@@ -140,13 +151,7 @@ function createApi(): EdictoraApi {
     const parts: string[] = [];
     const al = el.getAttribute("aria-label");
     if (al) parts.push(al);
-    const lb = el.getAttribute("aria-labelledby");
-    if (lb) {
-      for (const id of lb.split(/\s+/)) {
-        const t = document.getElementById(id);
-        if (t) parts.push(text(t));
-      }
-    }
+    parts.push(...labelledByTexts(el));
     const labels = (el as FormLike).labels;
     if (labels) for (const l of labels) parts.push(text(l));
     let cur: Element = el;
@@ -305,13 +310,7 @@ function createApi(): EdictoraApi {
     if (list) {
       const al = list.getAttribute("aria-label");
       if (al) parts.push(al);
-      const lb = list.getAttribute("aria-labelledby");
-      if (lb) {
-        for (const id of lb.split(/\s+/)) {
-          const t = document.getElementById(id);
-          if (t) parts.push(text(t));
-        }
-      }
+      parts.push(...labelledByTexts(list));
     }
     return {
       index: i,
@@ -391,16 +390,8 @@ function createApi(): EdictoraApi {
   const nameOf = (el: Element, role: string): string => {
     const al = el.getAttribute("aria-label");
     if (al && al.trim()) return al;
-    const lb = el.getAttribute("aria-labelledby");
-    if (lb) {
-      const t = lb
-        .split(/\s+/)
-        .map((id) => document.getElementById(id))
-        .filter((n): n is HTMLElement => !!n)
-        .map(text)
-        .join(" ");
-      if (t.trim()) return t;
-    }
+    const lt = labelledByTexts(el).join(" ");
+    if (lt.trim()) return lt;
     const labels = (el as FormLike).labels;
     if (labels && labels.length > 0) {
       const t = [...labels].map(text).join(" ");

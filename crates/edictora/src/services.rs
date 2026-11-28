@@ -81,28 +81,53 @@ pub fn pull(
         "services.opening_the_edit_page",
         display_name = expected.display_name
     ));
-    match pull_core(page, expected, progress, cancel) {
+    let result = pull_core(page, expected, progress, cancel);
+    item_read_outcome(
+        page,
+        &expected.item_id,
+        "読み出し失敗",
+        result,
+        progress,
+        |error| ItemSnapshot {
+            item_id: expected.item_id.clone(),
+            status_text: None,
+            available_locales: Vec::new(),
+            locales: Vec::new(),
+            category: None,
+            error: Some(error),
+        },
+    )
+}
+
+/// 読み出し（pull 系）の結果を、アイテム単位の結果へ整える。
+/// - 成功はそのまま返す
+/// - ログイン切れは素通しでエラーにする（先に判定する）
+/// - ダッシュボード系の失敗は、失敗時のページの記録を取り、エラー文入りの結果（`failed` が作る）を成功として返す
+/// - それ以外はそのままエラーにする
+///
+/// `log_head` はログの頭（`<log_head> <item_id>` の形になる）。
+/// エラー文は標準出力へ出るので、中のダッシュボード URL の publisherId を伏せる（ログと同じ redact。欄の値や差分本文には掛けない）。
+fn item_read_outcome<T>(
+    page: &mut dyn EditorPage,
+    item_id: &str,
+    log_head: &str,
+    result: Result<T>,
+    progress: &Progress<'_>,
+    failed: impl FnOnce(String) -> T,
+) -> Result<T> {
+    match result {
         Ok(s) => Ok(s),
         Err(Error::LoginRequired) => Err(Error::LoginRequired),
         Err(e) if e.is_dashboard() => {
-            // 結果は標準出力へ出るので、エラー文中のダッシュボード URL の publisherId を伏せる
-            // （ログと同じ redact。欄の値や差分本文には掛けない）
             let error = read_failure_text(
                 page,
-                &expected.item_id,
+                item_id,
                 None,
-                &format!("読み出し失敗 {}", expected.item_id),
+                &format!("{log_head} {item_id}"),
                 &e,
                 progress,
             );
-            Ok(ItemSnapshot {
-                item_id: expected.item_id.clone(),
-                status_text: None,
-                available_locales: Vec::new(),
-                locales: Vec::new(),
-                category: None,
-                error: Some(error),
-            })
+            Ok(failed(error))
         }
         Err(e) => Err(e),
     }
@@ -275,12 +300,23 @@ pub fn push(
     progress: &Progress<'_>,
     cancel: &CancelToken,
 ) -> Result<PushResult> {
-    match push_core(page, expected, progress, cancel) {
+    let result = push_core(page, expected, progress, cancel);
+    reported_push_failure(page, "push", &expected.item_id, result, progress)
+}
+
+/// push 系の失敗の記録。ダッシュボード系の失敗のうちログイン切れ以外で `report_failure` を呼んでから、そのエラーを返す。
+/// 書き込み不可（WriteBlocked）でも記録する。submit は WriteBlocked を除くので条件が違い、submit の条件は呼び出し側に置く。
+fn reported_push_failure<T>(
+    page: &mut dyn EditorPage,
+    operation: &str,
+    item_id: &str,
+    result: Result<T>,
+    progress: &Progress<'_>,
+) -> Result<T> {
+    match result {
         Ok(r) => Ok(r),
-        // スナップショットを保存する条件: ダッシュボード系の失敗のうちログイン切れ以外。書き込み不可（WriteBlocked）でも保存する。
-        // submit は WriteBlocked を除くので条件が違う。この差を保つため、条件は report_failure に入れず呼び出し側に置く。
         Err(e) if e.is_dashboard() && e != Error::LoginRequired => {
-            report_failure(page, "push", &expected.item_id, &e, progress);
+            report_failure(page, operation, item_id, &e, progress);
             Err(e)
         }
         Err(e) => Err(e),
@@ -612,7 +648,7 @@ pub fn submit(
     match run(page, confirm) {
         Ok(r) => Ok(r),
         // スナップショットを保存する条件: ダッシュボード系の失敗のうち、ログイン切れと書き込み不可（WriteBlocked）以外。
-        // push（WriteBlocked でも保存する）と条件が違うので、条件は report_failure に入れず呼び出し側に置く。
+        // push 系（reported_push_failure。WriteBlocked でも保存する）と条件が違うので、条件は report_failure に入れず呼び出し側に置く。
         Err(e)
             if e.is_dashboard() && !matches!(e, Error::LoginRequired | Error::WriteBlocked(_)) =>
         {
@@ -716,28 +752,21 @@ pub fn pull_images(
         "services.opening_the_edit_page",
         display_name = expected.display_name
     ));
-    match pull_images_core(page, fetcher, expected, progress, cancel) {
-        Ok(s) => Ok(s),
-        Err(Error::LoginRequired) => Err(Error::LoginRequired),
-        Err(e) if e.is_dashboard() => {
-            let error = read_failure_text(
-                page,
-                &expected.item_id,
-                None,
-                &format!("画像の読み出し失敗 {}", expected.item_id),
-                &e,
-                progress,
-            );
-            Ok(ImageSnapshot {
-                item_id: expected.item_id.clone(),
-                status_text: None,
-                available_locales: Vec::new(),
-                slots: Vec::new(),
-                error: Some(error),
-            })
-        }
-        Err(e) => Err(e),
-    }
+    let result = pull_images_core(page, fetcher, expected, progress, cancel);
+    item_read_outcome(
+        page,
+        &expected.item_id,
+        "画像の読み出し失敗",
+        result,
+        progress,
+        |error| ImageSnapshot {
+            item_id: expected.item_id.clone(),
+            status_text: None,
+            available_locales: Vec::new(),
+            slots: Vec::new(),
+            error: Some(error),
+        },
+    )
 }
 
 /// 読み出して正本と比べる（読み取りのみ）
@@ -963,14 +992,8 @@ pub fn push_images(
     progress: &Progress<'_>,
     cancel: &CancelToken,
 ) -> Result<ImagePushResult> {
-    match push_images_core(page, fetcher, expected, progress, cancel) {
-        Ok(r) => Ok(r),
-        Err(e) if e.is_dashboard() && e != Error::LoginRequired => {
-            report_failure(page, "push-images", &expected.item_id, &e, progress);
-            Err(e)
-        }
-        Err(e) => Err(e),
-    }
+    let result = push_images_core(page, fetcher, expected, progress, cancel);
+    reported_push_failure(page, "push-images", &expected.item_id, result, progress)
 }
 
 fn push_images_core(
@@ -986,7 +1009,12 @@ fn push_images_core(
     page.open_item(&expected.item_id, cancel)?;
     // 最初の削除の前に書き込み可否を確かめる（審査待ちなどでは何も触らない）
     ensure_allowed(&page.get_state(cancel)?)?;
-    let available = page.get_locales(cancel)?;
+    // 言語一覧はローカライズ版の対象があるときだけ使う。無ければ言語欄を開く画面操作を省く
+    let available = if images.localized_locales().is_empty() {
+        Vec::new()
+    } else {
+        page.get_locales(cancel)?
+    };
     ensure_image_targets(&images, &available)?;
 
     let mut saved: Vec<String> = Vec::new();
@@ -1254,27 +1282,20 @@ pub fn pull_privacy(
         "services.opening_the_privacy_tab",
         display_name = expected.display_name
     ));
-    match pull_privacy_core(page, expected, cancel) {
-        Ok(s) => Ok(s),
-        Err(Error::LoginRequired) => Err(Error::LoginRequired),
-        Err(e) if e.is_dashboard() => {
-            let error = read_failure_text(
-                page,
-                &expected.item_id,
-                None,
-                &format!("プライバシー タブの読み出し失敗 {}", expected.item_id),
-                &e,
-                progress,
-            );
-            Ok(PrivacySnapshot {
-                item_id: expected.item_id.clone(),
-                status_text: None,
-                reading: None,
-                error: Some(error),
-            })
-        }
-        Err(e) => Err(e),
-    }
+    let result = pull_privacy_core(page, expected, cancel);
+    item_read_outcome(
+        page,
+        &expected.item_id,
+        "プライバシー タブの読み出し失敗",
+        result,
+        progress,
+        |error| PrivacySnapshot {
+            item_id: expected.item_id.clone(),
+            status_text: None,
+            reading: None,
+            error: Some(error),
+        },
+    )
 }
 
 fn pull_privacy_core(
@@ -1330,14 +1351,8 @@ pub fn push_privacy(
     progress: &Progress<'_>,
     cancel: &CancelToken,
 ) -> Result<PrivacyPushResult> {
-    match push_privacy_core(page, expected, progress, cancel) {
-        Ok(r) => Ok(r),
-        Err(e) if e.is_dashboard() && e != Error::LoginRequired => {
-            report_failure(page, "push-privacy", &expected.item_id, &e, progress);
-            Err(e)
-        }
-        Err(e) => Err(e),
-    }
+    let result = push_privacy_core(page, expected, progress, cancel);
+    reported_push_failure(page, "push-privacy", &expected.item_id, result, progress)
 }
 
 fn push_privacy_core(

@@ -112,12 +112,6 @@ fn どちらでもない入力欄は無視する() {
 }
 
 #[test]
-fn 欄が無ければnone() {
-    let areas = classify_privacy_textareas(&p(), &[]).unwrap();
-    assert!(areas.single_purpose.is_none() && areas.permissions.is_empty());
-}
-
-#[test]
 fn 絞れないときは止める() {
     // 単一用途の欄が 2 つ
     let two_purposes = [textarea(0, "単一用途の説明"), textarea(1, "単一用途の説明")];

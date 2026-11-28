@@ -9,9 +9,9 @@
 //! - [`chrome`] — Chrome の検出と起動（プロファイルは削除しない）
 //! - [`dashboard`] — ダッシュボード操作（要素の特定・書き込み可否・1 操作ずつの実装）
 //! - [`redirect`] — MSIX パッケージ内から起動されたときの保存先リダイレクト（アプリ専用領域）の検出と案内
-//! - [`net`] — WinHTTP を FFI で直接使う HTTP クライアント（自動更新が使う）
+//! - [`net`] — WinHTTP を FFI で直接使う HTTP クライアント（自動更新と、掲載画像の原本の取得が使う）
 //! - [`update`] — Velopack でインストールされたときの更新の確認・ダウンロード・適用の起動（`edictora update` と `edictora-updater.exe`）
-//! - [`install`] — Velopack のフック（`--veloapp-*`）と、ログオン時の自動更新・PATH の登録
+//! - [`install`] — Velopack のフック（`--veloapp-*`）、ログオン時の自動更新・PATH の登録と、MCP サーバーの Claude Code・Codex への登録・解除（Toolport 経由の提供の判定を含む）
 //! - [`privacy`] — ダッシュボードの「プライバシー」タブ（単一用途・権限の正当性・データ使用）のモデル・正本の組み立て・比較
 //! - [`services`] — pull / diff / push / submit の手順と中止判断
 //! - [`cli`] — 引数・出力・終了コード

@@ -23,13 +23,6 @@ fn parse_引数なしは差分表示() {
 }
 
 #[test]
-fn parse_ヘルプとバージョン() {
-    assert_eq!(parse(&["--help"]).unwrap().kind, CliCommandKind::Help);
-    assert_eq!(parse(&["push", "-h"]).unwrap().kind, CliCommandKind::Help);
-    assert_eq!(parse(&["--version"]).unwrap().kind, CliCommandKind::Version);
-}
-
-#[test]
 fn parse_pushのオプションを読む() {
     let upper = ITEM.to_uppercase();
     let cmd = parse(&[
@@ -100,14 +93,6 @@ fn parse_show_browserは既定でオフで指定時だけオン_loginでは使�
     assert!(usage_error(&["diff", "--show-browser=true"]));
 }
 
-#[test]
-fn parse_loginの待ち時間() {
-    assert_eq!(
-        parse(&["login", "--wait", "5"]).unwrap().login_wait,
-        Some(Duration::from_secs(5 * 60))
-    );
-}
-
 // ───────── CliApp ─────────
 
 /// Chrome を開いてはいけないテストで渡す関数（呼ばれたら失敗させる）
@@ -135,6 +120,8 @@ fn run_ヘルプは成功で使い方を出す() {
     let (code, output, _) = run("cli-help", &["--help"]);
     assert_eq!(code, 0);
     assert!(output.contains("edictora submit  --item <id> --yes"));
+    assert!(output.contains("--only"));
+    assert!(output.contains("--image-scope"));
 }
 
 #[test]
@@ -422,14 +409,6 @@ fn run_対象が無い組み合わせはブラウザを開かず終了コード2
 }
 
 #[test]
-fn ヘルプにonlyとimage_scopeがある() {
-    let (code, output, _) = run("cli-help-images", &["--help"]);
-    assert_eq!(code, 0);
-    assert!(output.contains("--only"));
-    assert!(output.contains("--image-scope"));
-}
-
-#[test]
 fn only_privacyを受け付ける() {
     use edictora::cli::args::Only;
 
@@ -537,6 +516,8 @@ fn parse_waitの重複は許容され後勝ち_onlyの大文字小文字と空�
     assert_eq!(cmd.login_wait, Some(Duration::from_secs(300)));
     let cmd = parse(&["diff", "--only", " Images "]).unwrap();
     assert!(cmd.only.images() && !cmd.only.text());
+    // 短い形 -h もサブコマンドの後ろでヘルプになる
+    assert_eq!(parse(&["push", "-h"]).unwrap().kind, CliCommandKind::Help);
     // ヘルプ・バージョンの走査は、ほかの誤りより先
     assert_eq!(
         parse(&["bogus", "--help"]).unwrap().kind,

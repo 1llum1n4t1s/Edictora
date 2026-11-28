@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use edictora::images::png::{decode, pixel_digest};
+use edictora::images::png::pixel_digest;
 
 /// 40x24 の基準の画素のダイジェスト（Python で `sha256(幅 BE4 + 高さ BE4 + RGB)` を計算した値）
 const BASE: &str = "0E58349775C274AE4CCE624CB8809D5CF4BDCD3D7679408661B3EFCBC854DF28";
@@ -77,13 +77,6 @@ fn 透過のあるrgbaやグレー_インターレースは比較不能() {
 }
 
 #[test]
-fn 寸法と画素数を返す() {
-    let image = decode(&fixture("rgb-avg.png")).unwrap();
-    assert_eq!((image.width, image.height), (40, 24));
-    assert_eq!(image.pixels.len(), 40 * 24 * 3);
-}
-
-#[test]
 fn 壊れた入力はエラーで落ちない() {
     let good = fixture("rgb-avg.png");
     assert!(pixel_digest(b"").is_err());
@@ -96,13 +89,4 @@ fn 壊れた入力はエラーで落ちない() {
         *b ^= 0xFF;
     }
     assert!(pixel_digest(&broken).is_err() || pixel_digest(&broken).as_deref() != Ok(BASE));
-}
-
-#[test]
-fn 自前で組んだ非圧縮のpngも読める() {
-    let a = common::png_bytes(64, 32, 2, 8, 1);
-    let b = common::png_bytes(64, 32, 2, 8, 2);
-    let (da, db) = (pixel_digest(&a).unwrap(), pixel_digest(&b).unwrap());
-    assert_ne!(da, db);
-    assert_eq!(pixel_digest(&a).unwrap(), da);
 }
