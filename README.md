@@ -20,8 +20,8 @@ Commands: `pull`, `diff` (default), `push` (saves a draft), `submit`, `login`, `
 - [Installing and updating](docs/readme/installation.md): Setup, Portable, auto-update, requirements.
 - [Config file](docs/readme/configuration.md): map source files to listings, plus category.
 - [Store images](docs/readme/store-images.md) and [Privacy practices tab](docs/readme/privacy-tab.md): optional config.
-- [Signing in and commands](docs/readme/commands.md): usage, exit codes, diagnostics.
-- [MCP server](docs/readme/mcp-server.md): use Edictora from AI agents.
+- [Signing in and commands](docs/readme/commands.md): usage and diagnostics; [exit codes](docs/readme/exit-codes.md).
+- [MCP server](docs/readme/mcp-server.md): use Edictora from AI agents; [manual registration](docs/readme/mcp-registration.md), [Toolport and auto-registration](docs/readme/mcp-toolport.md).
 - [Safeguards](docs/readme/safeguards.md): what it never does.
 - [File locations](docs/readme/file-locations.md): config, profile, logs.
 - [Display language](docs/readme/display-language.md): nine languages.

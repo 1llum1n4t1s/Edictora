@@ -8,7 +8,7 @@ CWS API に掲載情報の読み書きがないため、専用プロファイル
 
 ## 構成
 
-Rust（判断）と Bun + TypeScript（ページ内の情報収集）の 2 本立て。→ [構成](docs/design/architecture.md)
+Rust（判断）と Bun + TypeScript（ページ内の情報収集）の 2 本立て。→ [構成](docs/design/architecture.md)・[設計原則](docs/design/architecture-principles.md)
 
 ### 本体の内訳（`crates/edictora/src/`）
 
@@ -46,7 +46,7 @@ Rust（判断）と Bun + TypeScript（ページ内の情報収集）の 2 本�
 
 ### カテゴリ
 
-全言語共通の欄をキーで扱う。→ [カテゴリ](docs/design/category.md)
+全言語共通の欄をキーで扱う。→ [カテゴリ](docs/design/category.md)・[DOM と読み出し](docs/design/category-dom.md)
 
 ### 画面構成と欄の探し方
 
@@ -66,11 +66,11 @@ MSIX 内の保存先の仮想化を検出して警告する。→ [リダイレ�
 
 ### 配布・インストール・自動更新（Velopack）
 
-更新の確認とダウンロードだけ自前で行う。→ [配布と自動更新](docs/design/distribution-update.md)
+更新の確認とダウンロードだけ自前で行う。→ [配布と自動更新](docs/design/distribution-update.md)・[Velopack SDK との約束](docs/design/velopack-sdk-contract.md)
 
 ### MCP サーバー（`edictora mcp`）
 
-CLI の薄い皮として提供する。→ [MCP サーバー](docs/design/mcp-server.md)
+CLI の薄い皮として提供する。→ [MCP サーバー](docs/design/mcp-server.md)・[自動登録と Toolport 判定](docs/design/mcp-registration.md)
 
 ## 実画面での確認状況
 
