@@ -1,0 +1,10 @@
+# Chrome の起動
+
+- 引数は `--user-data-dir`・`--remote-debugging-port=0`（`DevToolsActivePort` でポート取得）・`--no-first-run`・`--no-default-browser-check`、描画の間引き抑止 3 つ（`--disable-backgrounding-occluded-windows`・`--disable-renderer-backgrounding`・`--disable-background-timer-throttling`）、`--disable-features=CalculateNativeWinOcclusion`、ヘッドレス時だけ `--headless=new --window-size=1280,900`。Chrome の標準出力・標準エラーは捨てる。
+- **自動化フラグ（`--enable-automation` など）と画面外配置は付けない。** 実画面で、これらを付けない普通の Chrome なら利用者が手動で Google にログインでき、`navigator.webdriver` も `false` だった。足すとログインが弾かれる恐れがあるので、変える場合は実画面でログインを再検証する。
+- **ヘッドレスで動かす。** ウィンドウが裏に回る・画面外にあると描画が止まりクリックが応答しないが、`CalculateNativeWinOcclusion` の無効化と間引き抑止フラグがあれば前面に出さなくても動く。`--headless=new` は同じプロファイルのログイン状態をそのまま使え、実行中に前面のウィンドウが変わらなかった（画面外配置・最小化の起動は、起動時に Chrome が前面へ来た）。`HeadlessChrome` を含む UA は `Emulation.setUserAgentOverride` で `Chrome` に置き換える（置き換えない状態は未検証）。
+- トレードオフ: ヘッドレスでは利用者が動きを見られない。`--show-browser` で表示できるが、これは人が見るためのもので、**AI エージェント・自動実行では使わない**（2026-11-15、別の作業の AI が「言語の選択肢が覆われている」失敗を画面サイズのせいと推測して付け、利用者の画面にウィンドウが出た）。代わりに、覆われたときのエラー文に中心にあった要素・要素の枠・画面の大きさを含め、`pull` / `diff` の読み出しの失敗でもページのスナップショットを保存して、保存先をエラー文に出す。`login` は手動操作のため常に表示する。
+- **再ログインの自動化**（`cli/relogin.rs`、2026-11-19）: Google が再ログイン（accounts.google.com の本人確認）を求めると、ヘッドレスのままでは利用者に何も見えない。そこで pull / diff / push / submit の入口（`open_logged_in`）で `ensure_logged_in` が `LoginRequired` を返したら、①ヘッドレスのブラウザを閉じる（`wait_for_login` はタブに接続しない状態が前提なので使い回さない）→ ②標準エラーへ案内を出し、表示つきで開いて `wait_for_login`（既定 10 分）→ ③閉じる → ④元の指定（`--show-browser` の有無）で開き直して `ensure_logged_in` をもう一度、と進める。
+  - 再試行は 1 回だけ。待ちの失敗（時間切れ・利用者が Chrome を閉じた・開けない）と、2 回目もログイン画面のときは終了コード 5、Ctrl+C / MCP の cancelled は 130。
+  - 表示つきを求めて**既に開いている Chrome に attach した**場合、同じプロファイルに画面なしのまま残った Chrome（孤児・同時実行の別 edictora）だと窓が出ず 10 分待つことになる。そこで `wait_for_login` が先に `Browser.getVersion` の UA を見て、`HeadlessChrome` を含めば待たずに理由つきの `Dashboard` エラーで止める（`browser::is_headless_user_agent`。`login` も同じ経路。自分で起動した Chrome には確認しない）。
+  - 判断は `open_with_relogin`（開く・確認・ログイン手順・報告をクロージャで受ける）に切り出し、`tests/cli_relogin.rs` で偽の関数により検証する。実行中ロックは持ち続ける。作業の途中のセッション切れ（`item_page.rs`）は対象外。MCP からでも同じ動きで、利用者の画面にウィンドウが出る（説明文に明記）。**未確認**: 実機でのログイン用ウィンドウの表示・ログイン後の開き直し。

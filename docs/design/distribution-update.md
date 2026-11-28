@@ -1,0 +1,10 @@
+# 配布・インストール・自動更新（Velopack）
+
+- **配布物**: Velopack（vpk 1.2.161、packId `Edictora`、チャンネル `win`）のパッケージ。主 exe は `edictora.exe`、同じパッケージに更新用の `edictora-updater.exe` を入れる。Setup で `%LOCALAPPDATA%\Edictora`（以下「根」。`Update.exe`・`current\`・`packages\`）に入る。配信元は Cloudflare R2 の `https://edictora.kagayoi.com`。署名・パッケージ作成・配信の手順は [docs/release.md](../release.md)。
+- **役割の分け方**: インストール・アンインストール・`current` の差し替えは Velopack の Setup.exe / Update.exe に任せ、Edictora は**更新の確認とダウンロードだけ**を自前で行う（`update/`）。velopack crate は ureq / rustls を引き込むので使わない。通信は `net/winhttp.rs`。
+- **Velopack との約束とフック**: インストール判定・フィード・ダウンロード・適用・フックの引数は vendored の Velopack 1.2.161 Rust SDK に合わせ、検証の追加など意図的な違いがある。HKCU の Run と PATH の登録・MCP の自動登録もフックで行う。詳細は [Velopack SDK との約束とフック](velopack-sdk-contract.md)。
+- **初回起動の扱い**: Velopack に引数なしで起動された（`VELOPACK_FIRSTRUN` / `VELOPACK_RESTART` がある）`edictora.exe` は、既定の `diff`（Chrome を開く）を走らせずに終える。
+- **更新の入口**: ログオン時の `edictora-updater.exe`（`windows_subsystem = "windows"`、結果はログ、失敗は 30 秒・90 秒の間隔で 2 回まで試し直す）と、手動の `edictora update`（設定を読まない・Chrome を開かない・結果は標準エラー。最新と更新の開始は 0、失敗と「別の更新処理が動いている」は 1、配信元の差し替えの誤りは 2、中断は 130）。両者は `<packages>\.edictora-update.lock` で排他する。更新は `pull` / `diff` / `push` / `submit` の中では確かめない。インストールされていなければ、更新用 exe は何もせず、`edictora update` は失敗（1）にする。
+- **実行中の edictora との排他**（契約）: Update.exe の apply はインストール先配下のプロセスを止める可能性がある。そこで Chrome を開くコマンド（login / pull / diff / push / submit）はブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`）を共有で持つ（CLI 同士は同時に動ける。MCP サーバーはサーバーの生存期間中ずっと持つ）。更新側はダウンロードと検証の後、Update.exe を起動する直前にこれを排他で取り、取れなければ適用を後に回す（`AppInUse`。`update` は 1、更新用 exe は試し直す。次回はダウンロード済みのものを検証して使う）。取れたらプロセスの終了まで持つ。適用中に Chrome を開くコマンドを実行すると、Chrome を開かずに 1 で止まる。ロックファイルを開けないだけなら CLI は続行する。
+- **配信元の差し替え**: 検証用に環境変数 `EDICTORA_UPDATE_URL`（読むのは各 `main` だけ）。平文の http は 127.0.0.1 だけ。CLI のテストは偽の更新処理を差し込み、`CliApp` の既定（`refuse_update`）では本物の配信元・Update.exe に届かない。
+- **データの置き場を根と分ける**: 根はアンインストールでフォルダーごと消えるので、Chrome プロファイル・ログ・診断情報は `%LOCALAPPDATA%\Edictora.Data` に置く（旧 `%LOCALAPPDATA%\Edictora` からの自動移行はしない）。

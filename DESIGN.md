@@ -1,233 +1,77 @@
 # Edictora 設計
 
-Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームページ URL・サポート URL と、掲載画像、「プライバシー」タブ）を、各拡張機能リポジトリにある正本ファイルから一括で読み出し・比較・更新する Windows 向け CLI（`edictora.exe`）。ほかの人にも配る前提で、画面（GUI）は持たない。
-利用者向けの使い方は [README.md](README.md)、開発者・LLM 向けの規約とコマンドは [AGENTS.md](AGENTS.md)、リリース手順は [docs/release.md](docs/release.md) を参照する。
+Chrome Web Store の掲載情報（説明・URL・掲載画像・「プライバシー」タブ）を、各拡張機能リポジトリの正本から一括で読み出し・比較・更新する Windows 向け CLI。詳細は [docs/design/](docs/design/) にトピックごとに置く。使い方は [README.md](README.md)、規約は [AGENTS.md](AGENTS.md)、リリースは [docs/release.md](docs/release.md)。
 
 ## 背景と目的
 
-- CWS API v2 には掲載情報（説明・URL など）の読み書きがない。旧 v1.1 の metadata API は 2026-10-15 で廃止済み。
-- 拡張機能（Claude in Chrome など）からの操作は、Chrome が「The extensions gallery cannot be scripted.」で拒否する。
-- Chrome DevTools Protocol（CDP）での直接操作はこの制限を受けない（2026-11-13 の実画面検証で確認）。
-- そのため Edictora は、専用プロファイルの Chrome を CDP で操作し、デベロッパー ダッシュボードの画面を人と同じ入力イベントで書き換える。ダッシュボードの内部 RPC は呼ばない。
-- 分担: cws-mcp は パッケージ（ZIP）のアップロードと公開（CWS API v2）、Edictora は掲載情報の更新（API がないため画面操作）。
+CWS API に掲載情報の読み書きがないため、専用プロファイルの Chrome を CDP で操作して画面を書き換える。→ [背景と目的](docs/design/background-and-goals.md)
 
 ## 構成
 
-2 本立てで、画面操作の「判断」は Rust、ページ内での「情報収集」だけを TypeScript に分ける。
-
-- `crates/edictora`（Rust、lib + bin `edictora.exe`・`edictora-updater.exe`）: 設定・比較・Chrome 起動・CDP・ダッシュボード操作・手順・CLI・自動更新。外部の引数パーサ・CDP ライブラリ・HTTP/TLS crate は使わない（自動更新の HTTPS は WinHTTP を FFI で直接使う）。
-- `page-scripts`（Bun + TypeScript）: ページ内で評価するスクリプトだけ。生成物 `page-scripts/dist/edictora.js` をコミットし、`include_str!` で exe に埋め込む。`cargo build` と配布 exe に Bun は要らない。
+Rust（判断）と Bun + TypeScript（ページ内の情報収集）の 2 本立て。→ [構成](docs/design/architecture.md)
 
 ### 本体の内訳（`crates/edictora/src/`）
 
-| モジュール | 責務 |
-|---|---|
-| `cdp/` | CDP クライアント（localhost の WebSocket、TLS なし、`tungstenite` の同期 API）とページ単位の操作（評価・マウス・キー・遷移） |
-| `chrome/` | Chrome の検出と起動。専用プロファイルで起動するか、そのプロファイルの Chrome がデバッグポート付きで開いていれば接続する。終了は `Browser.close` |
-| `config/` | 設定ファイルの読込と検証（未知のキーはエラー）、正本の区間切り出し |
-| `listing/` | 欄の定義、正本と現在値の完全一致の比較、行単位の差分表示、画像の正本の組み立て（`build_expected_images`） |
-| `images/` | 掲載画像（全言語向けスクリーンショット・ローカライズ版スクリーンショット・小タイル・マーキー）のモデル・正本の検証（PNG・寸法・重複）・画素ダイジェストの比較。`png.rs`（zlib の展開とフィルターの復元を自前で持つ。画素のダイジェスト）/ `fetch.rs`（ダッシュボードの画像の原本を `=s0` で取得。trait `ImageFetcher` が境目） |
-| `privacy/` | 「プライバシー」タブのモデル（データの種類・正本・現在値）・正本の組み立て（本文の字下げ除去と文字数の検証）・比較（権限の一覧の照合を含む）。画面操作は持たない |
-| `dashboard/` | ダッシュボード操作。`urls.rs`（publisherId の取り出し）/ `text.rs`（画面の文言）/ `page_scripts.rs`（埋め込み JS の呼び出し）/ `selectors.rs`（要素の選択）/ `write_gate.rs`（書き込み可否）/ `item_page.rs`（1 操作ずつの実装）/ `browser.rs`（接続とログイン確認）。画面操作の境目の trait は 4 つ: `EditorPage`（共通: 開く・読み直す・状態・言語・下書き保存・診断）、`ListingPage: EditorPage`（テキスト欄と審査送信）、`ImagePage: EditorPage`（画像の読み・削除・アップロード。**審査送信を持たない**）、`PrivacyPage: EditorPage`（「プライバシー」タブの読み書き。**審査送信を持たない**） |
-| `net/` | `winhttp.rs`: WinHTTP を FFI で直接使う HTTP クライアント（GET だけ、メモリかファイルへ受ける）。自動更新と、画像の原本の取得（`images/fetch.rs`）が使う |
-| `update/` | 自動更新。`locate.rs`（インストールの判定）/ `manifest.rs`（`sq.version`）/ `feed.rs`（フィードと更新先の選択）/ `version.rs`（SemVer）/ `source.rs`（配信元）/ `download.rs`（ダウンロードと検証）/ `hash.rs`（CNG）/ `lock.rs` / `apply.rs`（Update.exe の起動。trait `ApplyLauncher` が境目） |
-| `install/` | Velopack のフック（`hooks.rs`）、HKCU の Run・PATH の読み書き（`registry.rs`）、Claude Code・Codex への MCP 自動登録・解除（`connect.rs`） |
-| `services.rs` | pull・diff・push・submit の手順と中止判断 |
-| `cli/` | 引数解析・実行と終了コード・差分表示 |
-| `mcp/` | MCP サーバー（`edictora mcp`）。標準入出力の改行区切り JSON-RPC。ツールの中身は `CliApp::run` を呼んで出力をメモリで受けるだけ |
-| `i18n.rs` | 利用者向け出力の表示言語（9 言語）の決定と、辞書（`locales/<タグ>.json`）をキーで引く `tr!` / `trs!` |
-| `redirect.rs` | MSIX パッケージ内のアプリから起動されたときの保存先リダイレクト（アプリ専用領域）の検出と案内。「パッケージ内のアプリからの保存先リダイレクト」の節を参照 |
-| `logging.rs` ほか | ログ（publisherId を伏せる）、保存先（`AppPaths`）、エラー型、Ctrl+C |
+モジュールごとの責務。→ [構成](docs/design/architecture.md)
 
 ### 役割分担の考え方
 
-- **手順は `services.rs`、CLI は呼ぶだけ。** 画面操作は trait（`ListingPage`・`ImagePage`・`PrivacyPage`）越しに行うので、手順は偽ページでブラウザなしにテストできる。画像の手順（`pull_images` / `diff_images` / `push_images`）は `&mut dyn ImagePage` だけを、「プライバシー」タブの手順（`pull_privacy` / `diff_privacy` / `push_privacy`）は `&mut dyn PrivacyPage` だけを受け取り、型の上で審査送信を呼べない。
-- **ページ内 JS は候補要素の情報（タグ・文字・ラベル候補・無効/読み取り専用・`aria-expanded`・チェック状態）を集めて返すだけ。** どれを選ぶか・書き込んでよいかは Rust の純粋関数（`selectors.rs`・`write_gate.rs`）が決め、テストで固める。利用者の入力値はページ内スクリプトに埋め込まない（書き込む文字列は `Input.insertText` で渡す）。
-- **CDP**: 入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答は id ごと、イベントは購読ごとのチャネルへ配る。応答待ちの間も `Page.loadEventFired` と beforeunload の `Page.javascriptDialogOpening` を受け取れる。切断時は応答待ちと購読をすべて失敗させる。
-- **中断**: Ctrl+C は `SetConsoleCtrlHandler` で受け、待ちの各所が合図を見て抜ける（終了コード 130）。その後の `Browser.close` と終了待ちは合図を見ないので、Chrome は正常終了する。
-- **保存先の注入**: `AppPaths` を値として持ち回し、`main` だけが環境（`EDICTORA_LOCAL_ROOT` / `EDICTORA_ROAMING_ROOT` による上書きを含む）から決める。テストは `target/tmp` 配下を根にする。
-- **環境変数は入口だけが読む**: `EDICTORA_UPDATE_URL` は `main`（と更新用 exe の入口）が読み、値で渡す。
-- **正規表現**: 設定の `sectionStart` / `sectionEnd` は Rust の `regex` で解釈する。先読み・後読み・後方参照は使えない（読み込み時にエラー）。どのパターンも線形時間で終わるので、時間による打ち切りは持たない。ログの publisherId 伏せ字も `regex` で行う。
+手順は `services.rs`、CLI は呼ぶだけ。→ [構成](docs/design/architecture.md)
 
 ## データフロー
 
-1. **入力（正本）**: `%APPDATA%\Edictora\config.json`（`--config` で変更可）。`profileDir`・`chromePath`（任意）と `items`（`itemId`・`name`・`baseDir`・`locales`・`images`・`privacy`）。ロケールごとに `description`（`file`、任意で `sectionStart` / `sectionEnd`）と `homepageUrl` / `supportUrl` / `officialUrl` を書く。書いていない欄は読み出し・比較・書き換えの対象外。URL 欄はキーなし＝対象外、`""`＝空欄が正本。`locales`・`images`・`privacy` は少なくとも 1 つが要る（画像だけ・プライバシー タブだけのアイテムも作れる）。`privacy` は「プライバシー」タブの節を参照。`images` は書いたキーだけが対象で、`icon` / `smallTile` / `marquee`（1 枚のパス）・`globalScreenshots`（`{"dir"}` か `{"files"}`、1〜5 枚）・`localizedScreenshots`（ロケール → `{"dir"}` か `{"files"}`。キーは `zh_CN` と `zh-CN` を同じに扱う）。`dir` は直下の `screenshot-*.png` を名前の昇順で並べる。`icon` は 128x128 の 1 枚で、全言語共通。任意の `mcpRegistration`（`auto` / `direct` / `off`）はインストーラーの MCP 自動登録の方針で、「MCP サーバー」の節を参照。
-2. **正本の読み取り**: 区間は、見出し行の次から終端見出しの手前までを取り、前後の空行と末尾の空白を除き、改行を `\n` に揃える。見出しが無ければエラー。
-3. **Chrome 起動**: `login` 以外はヘッドレス（ただし入口の確認で再ログインが要ると分かったときは、表示つきの Chrome を自動で開いてログインを待ち、閉じて開き直す。下記「再ログインの自動化」）。専用プロファイルの Chrome を最小の引数で起動し、ログイン状態を引き継ぐ。
-4. **ダッシュボード操作**: アイテムの編集画面を開き、言語を切り替え、欄を読む。
-5. **比較**: 正本と現在値を完全一致で比べ、差分を行単位で表示する（`diff`・`push` の確認）。画像は、ページから段ごとの `<img>`（alt と src）を集め、src を `=s0`（原寸の原本）にして取得し、**デコードした画素の SHA-256** を順序つきで正本と比べる（「掲載画像」参照）。
-6. **書き込み（`push --yes`）**: 言語ごとに「切替 → 書換 → 全欄照合 → 保存 → 再読込 → 照合」を行い、最後に全言語を読み直して照合する。画像は、その後に別の手順で行う（`--only text|images|privacy`・`--image-scope all|global|localized` で絞れる。「掲載画像」参照）。「プライバシー」タブは、画像のさらに後に別の保存として行う（「「プライバシー」タブ」参照）。
-7. **審査送信（`submit --item <id> --yes`）**: 確認ダイアログで送信する。
-
-`update` は 1〜7 を通らず、配信元のフィードを見て新しい版をダウンロードし、Update.exe に差し替えを任せる（下の「配布・インストール・自動更新」）。
-
-結果は標準出力、進捗は標準エラー。終了コードは 0（成功・差分なし）/ 1（実行時エラー）/ 2（引数・設定の誤り、Chrome は開かない）/ 3（差分あり）/ 4（書き込み中止）/ 5（ログインが必要。自動のログイン待ちが完了しなかったか、作業の途中でログインが切れた。もう一度実行すると、必要ならログイン用の窓が開く）/ 130（中断）。
-
-保存先: Chrome プロファイル（既定 `%LOCALAPPDATA%\Edictora.Data\chrome-profile`、`profileDir` / `--profile` で変更可）・ログ（`...\logs`）・失敗時のページのスナップショット（テキスト。`...\diagnostics`）は `%LOCALAPPDATA%\Edictora.Data`、設定は `%APPDATA%\Edictora`。いずれもリポジトリの外。`%LOCALAPPDATA%\Edictora` は Velopack のインストール先（アンインストールで消える）なので、データを置かない。
+設定 → 正本 → Chrome 起動 → 操作 → 比較 → 書き込み → 審査送信。→ [データフロー](docs/design/data-flow.md)
 
 ## 重要な不変条件
 
-- **プロファイルは秘密情報で、ツールは削除しない。** 削除する経路を持たない。終了は `Browser.close`、応答しないときだけプロセスを止める。ログイン待ちの間はタブに接続しない。パスワードと確認コードはツールが扱わない。
-- **publisherId はログイン後の URL から実行時に取り出し、コード・設定・ログに書かない。** ログと CLI のエラー出力は伏せ字処理を通す。
-- **既定は読み取りのみ。** 書き換えは `push --yes`、審査送信は `submit --item <id> --yes` を明示したときだけ。下書き保存と審査送信は別の操作で、審査送信は 1 件ずつ。「審査の合格後に自動的に公開する」の状態は変えずに報告する。
-- **書き込み可否は許可リスト方式**（`write_gate.rs`）。確認済みの状態（公開済み・下書き・拒否）以外、審査待ち・ロック中・判定不能なアイテムには書き込まない。審査の取り消しはしない。
-- **保存前と保存後に正本と照合する。** 一致しなければ保存しない・エラーで止める。途中で失敗したら、そのアイテムの残りは行わない。再読込・遷移で beforeunload が出たら、「留まる」を選んで未保存の変更を捨てずに中止する。
-- **「プライバシー」タブの書き込みも審査送信に届かない。** 手順は `PrivacyPage`（審査送信を持たない trait）だけを受け取る。設定にある権限の欄が画面に無い・画面にある権限の欄が設定に無いときは、何も書かずに止める。
-- **画像の書き込みは審査送信に届かない。** 画像の手順は `ImagePage`（審査送信を持たない trait）だけを受け取る。画像まわりのクリックは、aria-label が「画像を削除 <alt>」の完全一致する削除ボタンと、削除の確認ダイアログの「削除」だけに限り、並べ替えには触れない（アイコンの削除も同じ削除ボタンで、alt は「ショップ アイコン」）。審査待ちなどでは最初の削除の前（`ensure_allowed`）と各保存の直前に止める。テストは、`submit_for_review` が panic する偽ページでテキストと画像の push 全体を通す。
-- **画像の比較は画素で行い、比較不能を一致にも置換にもしない。** ダッシュボードは PNG を再エンコードして保存するので、ファイルのバイト列では比べない。原本を取得・デコードできなければ「比較不能」でそのアイテムを止める。
-- **画像の削除は即座にダッシュボードへ反映される（保存を待たない）。** 途中で止まると、下書きから画像が欠けたまま残りうる。再実行で整える。
-- **要素の特定が曖昧なら止める。** 候補がちょうど 1 つに絞れなければ、最初の 1 つを選ばず止める（別の欄を書き換える事故を防ぐ）。
-- **Chrome を前面に出さない。** `Page.bringToFront` は使わず、操作の前に毎回 `Emulation.setFocusEmulationEnabled` を行う。
-- **引数と設定の誤りは Chrome を開く前に終了コード 2 で止める。**
-- **失敗時のページのスナップショット（テキスト）の保存はリポジトリの外**（`%LOCALAPPDATA%\Edictora.Data\diagnostics`）に置く。スクリーンショット（画像）は撮らない（利用者の要望。AI が画像を見ずにテキストで原因を読めるようにするため）。中身はページ内スクリプトの `snapshot()` が作る: 先頭に URL・タイトル・`<html lang>`・ビューポート・`readyState`、続けて見えている要素を字下げのツリーで `<役割> "<名前>" value="<値>" {<状態>...} @x,y,w,h` の 1 行ずつ（役割は `role` 属性か主要タグの暗黙の役割。意味の無い入れ子の div / span は子へ畳み、`text "..."` で素の文字列を出す。非表示のうち display:none・visibility:hidden は部分木ごと省き、0x0 の要素は自分の行だけ省いて子へ降りる（閉じた一覧の `option` と `input[type=file]` は `{hidden}` 印つきで残す。textarea・select は子をたどらず値だけ出し、iframe の行にも矩形を付ける）、open な shadowRoot と同一オリジンの iframe はたどる。パスワード欄の値は文字数も出さず `(masked)` だけ。途中で例外が出ても、それまでの行に `... (snapshot error: ...)` を足して必ず文字列を返す）。1 値 2,000 文字、全体 1,000,000 文字で切る。保存前に `logging::redact_diagnostics`（`devconsole/` の直後に加え、publisherId の文字列そのものも `<publisher>` にする。さらに `logging::redact_account` で、アカウント ボタンの名前「Google アカウント: <氏名> (<メール>)」の氏名を `<name>`、メールアドレスの形を `<email>` にする。テキストでは PNG に写らなかったこの名前が出るため。実画面で確認済み）を通す。ファイル名は `yyyyMMdd-HHmmss-<ラベル>.txt`。以前の `.png` は自動では消さない。
-- **検証していないパッケージは適用しない。** サイズとハッシュがフィードと一致したものだけを Update.exe に渡す。
+書き込みは明示時のみ・許可リスト方式・照合してから保存。→ [重要な不変条件](docs/design/invariants.md)
 
 ## 採用済みの設計判断
 
 ### Chrome の起動
 
-- 引数は `--user-data-dir`・`--remote-debugging-port=0`（`DevToolsActivePort` でポート取得）・`--no-first-run`・`--no-default-browser-check`、描画の間引き抑止 3 つ（`--disable-backgrounding-occluded-windows`・`--disable-renderer-backgrounding`・`--disable-background-timer-throttling`）、`--disable-features=CalculateNativeWinOcclusion`、ヘッドレス時だけ `--headless=new --window-size=1280,900`。Chrome の標準出力・標準エラーは捨てる。
-- **自動化フラグ（`--enable-automation` など）と画面外配置は付けない。** 実画面で、これらを付けない普通の Chrome なら利用者が手動で Google にログインでき、`navigator.webdriver` も `false` だった。足すとログインが弾かれる恐れがあるので、変える場合は実画面でログインを再検証する。
-- **ヘッドレスで動かす。** ウィンドウが裏に回る・画面外にあると描画が止まりクリックが応答しないが、`CalculateNativeWinOcclusion` の無効化と間引き抑止フラグがあれば前面に出さなくても動く。`--headless=new` は同じプロファイルのログイン状態をそのまま使え、実行中に前面のウィンドウが変わらなかった（画面外配置・最小化の起動は、起動時に Chrome が前面へ来た）。`HeadlessChrome` を含む UA は `Emulation.setUserAgentOverride` で `Chrome` に置き換える（置き換えない状態は未検証）。
-- トレードオフ: ヘッドレスでは利用者が動きを見られない。`--show-browser` で表示できる。`login` は手動操作のため常に表示する。
-- **再ログインの自動化**（`cli/relogin.rs`、2026-11-19）: Google が再ログイン（accounts.google.com の本人確認）を求めると、ヘッドレスのままでは利用者に何も見えず、別に `login` を実行しないと進めなかった。そこで pull / diff / push / submit の入口（`open_logged_in`）で `ensure_logged_in` が `LoginRequired` を返したら、①ヘッドレスのブラウザを閉じる（`wait_for_login` はタブに接続しない状態が前提なので、使い回さない。表示つきを求めて**既に開いている Chrome に attach した**場合は、同じプロファイルに画面なしのまま残った Chrome（孤児・同時実行の別 edictora）だと窓が出ず 10 分待って終了コード 5 になるため、`wait_for_login` が先に `Browser.getVersion` の UA を見て、`HeadlessChrome` を含めば待たずに理由つきの `Dashboard` エラーで止める（`browser::is_headless_user_agent`。`login` コマンドも同じ経路。再ログインの経路ではこの失敗も終了コード 5）。自分で起動した Chrome には確認しない）→ ②標準エラーへ案内を出し、表示つきで開いて `wait_for_login`（既定 10 分）→ ③閉じる → ④元の指定（`--show-browser` の有無）で開き直して `ensure_logged_in` をもう一度、と進める。再試行は 1 回だけ（ループしない）。待ちの失敗（時間切れ・利用者が Chrome を閉じた・開けない）は理由を標準エラーへ出して終了コード 5、2 回目もログイン画面なら 5、Ctrl+C / MCP の cancelled は 130。判断は `open_with_relogin`（開く・確認・ログイン手順・報告をクロージャで受ける）に切り出し、`tests/cli_relogin.rs` で偽の関数により検証する。実行中ロックは持ち続ける。作業の途中のセッション切れ（`item_page.rs`）は対象外。MCP からでも同じ動きで、利用者の画面にウィンドウが出る（説明文に明記）。**未確認**: 実機でのログイン用ウィンドウの表示・ログイン後の開き直し。
-- `--show-browser` は人が見るためのもので、AI エージェント・自動実行では使わない。2026-11-15、別の作業の AI が「言語の選択肢が覆われている」失敗を画面サイズのせいと推測して付けて試し、利用者の画面にウィンドウが出た。推測に頼らなくて済むよう、覆われたときのエラー文に中心にあった要素・要素の枠・画面の大きさを含め、`pull` / `diff` の読み出しに失敗したときもページのスナップショットを `diagnostics` に保存して、保存先をエラー文（標準出力の結果）に出す。
+最小の引数のヘッドレス起動。→ [Chrome の起動](docs/design/chrome-launch.md)
 
 ### 表示言語（出力とダッシュボード画面）
 
-2 つの言語は別物で、日本語の画面を英語の出力で使うこともある。
-
-- **出力の言語**（`i18n.rs`）: CLI の進捗・結果・エラー、差分、ヘルプが対象で、日本語・英語・簡体字中国語・繁体字中国語・韓国語・スペイン語・フランス語・ドイツ語・ブラジル・ポルトガル語の 9 言語。環境変数 `EDICTORA_LANGUAGE`（旧名 `EDICTORA_LANG` も読む。優先は前者）→ `LC_ALL` → `LC_MESSAGES` → `LANG`（空・C・POSIX は除く）→ OS の表示言語（`GetUserDefaultUILanguage`）の順に決め、判定できなければ英語。タグは `zh-Hans`/`zh-CN`/`zh-SG`→zh-CN、`zh-Hant`/`zh-TW`/`zh-HK`/`zh-MO`→zh-TW、`pt*`→pt-BR、それ以外は主言語で照合する。決定はプロセスで 1 回（初回の使用時）。引数・設定に頼らないのは、フックや引数の誤り（終了コード 2）より前でも決められるようにするため。文言は言語ごとの JSON 辞書（`locales/<タグ>.json`、`include_str!`）に持ち、コードは安定したキーで `tr!` / `trs!` 参照する（プレースホルダー `{name}`、辞書に無ければ英語、英語にも無ければキー）。整合テスト（`tests/localization.rs`）が全言語のキー集合・プレースホルダーの一致と、参照キーの存在・未使用キーの無さを固める。AI が読む文言（MCP のツール説明・スキーマ・応答）は英語に統一し、`edictora mcp` はプロセスの言語を英語に固定する。ログの定型文は作者が調べるためのものなので日本語のまま（ログに埋め込むエラー文は表示言語のまま）。ページ内スクリプトのエラーは固定の印を返し、Rust 側で各言語の文にする。ダッシュボードの画面文言と設定の `locales` は UI 言語とは別。テストは `.cargo/config.toml` の `[env]` で `EDICTORA_LANGUAGE=ja` に固定する。README は英語を正本に 9 言語版を置く。
-- **ダッシュボード画面の言語**（`dashboard/text.rs`）: `<html lang>` の主サブタグでページごとに 1 回だけ判定し、文言セット（JA / EN）を 1 つ選ぶ。要素ごとに「日本語か英語のどちらかに一致」で探さない（候補が倍になり取り違えの危険が増えるため）。lang が空なら日本語（確認済みの経路を lang 属性の有無で止めない。英語画面なら見つからずに止まる）。ja / en 以外は止める。
-- **英語の文言は実画面で未確認**なので、安全側に倒す。英語の成功メッセージの判定は単語単位・大文字小文字無視で、失敗を表す語（"not" など）を含むものは成功と見なさない。英語では送信前に送信完了メッセージが出ていないかを確かめ、出ていれば審査送信を始めない。"Unpublished" / "Not published" は "Published" の部分一致で許可されてしまうので書き込みを止める。
+出力は 9 言語、画面は ja / en で別物。→ [表示言語](docs/design/display-language.md)
 
 ### 入力操作
 
-- クリックは scrollIntoView 後に矩形中心へ実際のマウス入力（`clickCount: 1`）を送り、中心が他の要素に覆われていたら押さない。
-- 説明欄の書き換えはフォーカス → 全選択 → `Input.insertText`（空にするときは Delete キー）。ページ側は通常の入力として受け付け、文字数カウンタも更新される。DOM の `value` への直接代入は、フォームに変更として認識されない可能性があるので使わない。
-- 画像のアップロードは、ページの `input[type=file]`（非表示のものがある）へ CDP の `DOM.setFileInputFiles` でファイルを渡す（`CdpPage::set_file_input_files`）。式を `returnByValue: false` で評価して objectId を得て、パスは CDP の引数で渡し（ページ内スクリプトには埋め込まない）、終わったら `Runtime.releaseObjectGroup` で解放する。
-- 画像の削除ボタンはホバーで現れる（普段は 0x0・透明）。画像の上へマウスを動かしてから、現れたボタンを実際のマウス入力で押す。
-- 待ちは固定の sleep ではなく、条件を一定間隔で確かめる（上限時間つき）。
+実マウス入力と `Input.insertText`。→ [入力操作](docs/design/input-operations.md)
 
 ### 掲載画像
 
-- **対象**: ストア アイコン（128x128、1 枚。全言語共通。ダッシュボード上の名前は「ショップ アイコン」）・小タイル（440x280）・マーキー（1400x560）・全言語向けスクリーンショット（1280x800 か 640x400、1〜5 枚）・ローカライズ版スクリーンショット（言語ごと、同じ寸法・枚数）。プロモーション動画・並べ替えは対象外。v1 は PNG だけ（8 ビット・インターレースなし。小タイル・マーキー・スクリーンショットは 24 ビット・アルファなし。**アイコンだけは透過（RGBA）も可**）。アイコンは全言語共通なので `--image-scope global` に含め、処理順は小タイルより前。
-- **正本の検証**（Chrome を開く前、終了コード 2）: 実在・PNG ヘッダー・8 ビット RGB（アイコンは RGB か RGBA）・寸法・同一セット内で画素が重複しない・枚数。画素のダイジェストもここで計算する。
-- **比較は画素で行う。** 2026-11-15 に SearchClock で、アップロードした PNG はサーバーが再エンコードして保存し（`=s0` の原本はバイト列もサイズも変わる。例: 901,028 → 1,052,742 バイト）、画素は完全に同じことを確かめた。そのためファイルの SHA-256 では比べず、`images/png.rs` でデコードした画素（行ごとにフィルターを戻した RGB）に幅・高さを前置した SHA-256 で比べる（zlib の展開は自前。依存を増やさない）。ダッシュボード側が RGBA（すべて不透明）で返しても RGB に落として比べる。透過・インターレース・8 ビット以外は「比較不能」。**アイコンだけはアルファ込みのダイジェスト**（`png::pixel_digest_rgba`。幅・高さ・RGBA の画素列。完全に透明な画素は RGBA をすべて 0 に正規化して色を無視する。RGB は A=255 として扱う）で比べる（`images::digest_for_slot` が正本とダッシュボードの原本の両方でスロットごとに選ぶ）。アイコンは角丸などで透過画素を持つのが普通のため。
-- **現在値の取得**: ページから段ごとの `<img>` の alt と src を集め、src の末尾のサイズ指定（`=w160-h100-rw` など）を `=s0` に置き換えて `net/winhttp.rs` で取得する（上限 16 MB、https の `*.googleusercontent.com` だけ、Cookie なし、リダイレクトなし）。Cookie なしで 200 が返ることを実画面で確認した。取得できなければ「比較不能」で、一致扱いにも常に置換にもしない。
-- **スロットの特定**（`selectors::pick_image_slot`）: 各 `input[type=file]` について「その入力だけを含む最大の祖先」の文字列を集め、寸法の表記（`128x128`・`1280x800`・`440×280`・`1400×560`）と見出しの行（「全言語向けアセット」「ローカライズ版アセット」）で 1 つに絞る。アイコンの入力は見出しの行を持たず（枠の文字列は「ショップ アイコン / 128x128 ピクセル / ガイドライン…」だけ）、`128x128` の表記とローカライズ版の見出しを持たないことで選ぶ。全言語向けとローカライズ版のスクリーンショットは同じ寸法なので、見出しで分ける。1 つに絞れなければ止める。言語が 1 つのアイテムにはローカライズ版のスロットが無い。
-- **空のスロット**: 画像を削除したスロットには、alt だけを持つ src が空の `<img>` が残る。実画像だけ（src が空でないもの）を数える。
-- **削除**: 画像の上へマウスを動かして削除ボタン（aria-label「画像を削除 <alt>」）を出し、クリックする。確認ダイアログ「この画像を削除してもよろしいですか？この操作は元に戻せません。」（ボタン「キャンセル」「削除」）が出るので、文面を確かめて「削除」を押す。文面が違う・複数のダイアログなら押さずに止める。
-- **アップロード**: 1 枚ずつ `DOM.setFileInputFiles`。枚数が 1 枚増え、alt が「スクリーンショット N」の並びに揃い、エラー表示（結果メッセージに失敗を表す語）が無いことを待つ（1 枚 60 秒まで）。
-- **push の順序**: テキストの push（対象なら）→ 編集画面を開く → 書き込み可否 → 全言語向け（アイコン → 小タイル → マーキー → スクリーンショット。差分のあるスロットだけ全入れ替え）→ 書き込み可否 → 下書き保存 → 読み直して照合 → ロケールごと（切替 → 置換 → 書き込み可否 → 保存 → 読み直し → 切替 → 照合）→ 保存したスロットがある場合は、最後に読み直して全対象スロットを再照合（何も保存していない場合は、最初の照合で読んだ画像から最終の照合結果を作り、画像の取得とロケールの切替を繰り返さない）。1 スロットの置換は「既存を末尾から 1 枚ずつ削除（毎回枚数が減るのを待つ）→ 正本を先頭から 1 枚ずつアップロード → 枚数を照合」。
-- **ダッシュボードにあるロケールだけ**: ローカライズ版が対象で、そのロケールがダッシュボードに無い（言語が 1 つのアイテムを含む）なら、何も触らず全体を止めて `--image-scope global` か `--locale` を案内する。ローカライズ版を設定していないロケールは、現在 0 枚として扱う。
-- **日本語の画面だけ**: 画像の書き込みは日本語の画面だけ許す（英語の文言は未確認）。読み出しは、スロットを特定できれば英語でも動く可能性があるが、未確認。
+画素ダイジェストで比較して置換する。→ [掲載画像](docs/design/listing-images.md)
 
 ### カテゴリ
 
-- **対象**: 「ストアの掲載情報」タブのカテゴリ（全言語共通の欄。祖先の文字列に「すべての言語用」が別の行で出る）。ロケール単位の `ListingField` には入れず、アイテム直下の `category`（設定）・`ExpectedItem::category`（正本のキー）・`ItemSnapshot::category`（現在値。`Ok` は選ばれている選択肢の `data-value`、`Err` はこの欄だけの読み出し失敗）として別に持つ（`listing/category.rs`）。
-- **設定**: アイテム直下の `category`。値は言語に依らない小文字のキーで、`data-value` から `CATEGORY_` と `EXTENSIONS_` を除いて小文字にしたもの（`productivity`・`communication`・`tools`・`developer_tools`・`workflow_and_planning`・`education`・`lifestyle`・`art_and_design`・`entertainment`・`games`・`shopping`・`social_networking`・`news_and_weather`・`well_being`・`household`・`travel`・`just_for_fun`・`make_chrome_yours`・`privacy_and_security`・`accessibility`・`functionality_and_ui` の 21 種類）。キーと `data-value` の対応は `listing::category::CATEGORIES` の 1 か所だけに持つ。キーなし＝対象外。未知の値（大文字・`CATEGORY_` つき・プレースホルダー `Select a category`・空文字を含む）は Chrome を開く前に終了コード 2 で、有効なキーを案内する。プレースホルダー（未選択）は正本にできず、選ぶ操作もしない。`locales` を書かず `category` だけのアイテムも許す。
-- **DOM（2026-11-19 に SearchClock の日本語画面で読み取った。開閉・選択・保存は未確認）**: コンボボックスは `div[role=combobox]`（`aria-haspopup="listbox"`、`aria-expanded="false"`、aria-label なし、`aria-labelledby` の参照先が「カテゴリ」）。innerText は「カテゴリ\nカテゴリ\nカテゴリ\n機能と UI」（ラベル 3 行 + 現在の表示値）。一覧は `ul[role=listbox][aria-label="カテゴリ"]`で、閉じている間は 0×0 だが `li[role=option]` が全部 DOM にあり、各 option は `data-value` と `aria-selected`（"true"/"false"）を持つ。同じ画面に言語（`ul[role=listbox][aria-label="言語"]`）・公式 URL（`input[role=combobox]` と空の listbox）・投稿者アカウント切替（`div[role=listbox]`）の listbox / combobox があるので、一覧はラベルで絞る。option は 22 件（未選択のプレースホルダー「カテゴリを選択してください」＝ `Select a category` と 21 カテゴリ。表示名は「仕事効率化」「デベロッパー ツール」「アート＆デザイン」「機能と UI」など）。
-- **読み出し**（一覧を開かずに閉じたまま読める）: page-scripts の新しい種類 `listboxOption`（`kinds::LISTBOX_OPTION`）が、`[role=option]` を閉じていて見えないものも含めてすべて集め、各要素について `label`（所属する一覧の aria-label / aria-labelledby の文字列）・`data_value`・`selected`（aria-selected）・`group`（ページ内の `[role=listbox]` の通し番号）・一覧の枠の大きさを返すだけにする。既存の `option` 種類（見える一覧の選択肢だけ）の挙動は変えない。Rust 側の純粋関数（`selectors`）が、`category_options`（ラベルの 1 行が「カテゴリ」の一覧の選択肢だけ。`group` が 1 種類でなければ止める＝同名の一覧が複数あっても混ぜない）→ `selected_category`（`aria-selected="true"` がちょうど 1 つでなければ止める。プレースホルダーが選ばれていればその値のまま返し、正本と不一致にする）で選ぶ。`data-value` が対応表に無い値は、生の値を表示して不一致にする。reload 直後は選択肢が揃うまで上限つき（15 秒）で待つ。
-- **書き込み**（`ListingPage::write_category`、**日本語の画面だけ**。`DashboardText::category` が英語は `None` で、英語の画面では書かずに止める）: `selectors::pick_category_combobox`（ラベルの 1 行完全一致）で選んだコンボボックスを実際のマウスで開く → 一覧の枠に大きさが出るまで上限つき（10 秒）で待つ（`category_list_visible`）→ `pick_category_option` で `data-value` が正本の選択肢をちょうど 1 つ選び（プレースホルダーは選ばない）、実クリック → コンボボックスの `aria-expanded="false"` と、その選択肢の `aria-selected="true"` を上限つき（5 秒）で確かめる。閉じなければ言語切替の前例（`get_locales`）と同じく Escape を送ってもう一度確かめ、それでも満たされなければ止める。
-- **手順**（`services::push_core`）: 全言語共通なので、ロケールのループの外で 1 回だけ読む・書く。不足ロケールの確認より後・ロケールのループより前に、独立した 1 サイクル（読む → 差分なら書く → 保存前の照合 → 書き込み可否 → 下書き保存 → 読み込み直し → 照合）で行う。不足ロケールで止まる push はカテゴリも書かない。審査待ちなど書き込み不可なら最初の `ensure_allowed` で何も書かずに止まる。ロケールの保存が終わった後の最終の読み直しでも、カテゴリが動いていないかを照合する。言語切替の影響を受けないという前提（カテゴリが全言語共通で、ロケールを切り替えても同じ値が読める）は、2026-11-19 に 9 言語アイテムの `push` で確かめた。
-- **`pull` / `diff`**: カテゴリの読み出しの失敗はこの欄だけのエラー（`ItemSnapshot::category` が `Err`。失敗時のページのスナップショットを保存）にして、ロケールの読み出しは続ける。`diff` はカテゴリの行を出し（`[カテゴリ] 一致: <キー>` / `差分あり` + `- 現在値 / + 正本`。現在値は対応表のキー、未選択は「（未選択）」、表に無い値は生の値）、差分で終了コード 3、エラー・未取得で 1。`--only text` に含み、`--locale` では絞らない（`--image-scope` とは無関係）。
+全言語共通の欄をキーで扱う。→ [カテゴリ](docs/design/category.md)
 
 ### 画面構成と欄の探し方
 
-- アイテム一覧は `https://chrome.google.com/webstore/devconsole/<publisherId>`、編集画面は `.../<publisherId>/<itemId>/edit`。文言は `dashboard/text.rs` に集め、画面の言語ごとの文言セット（日本語は実画面で確認済み、英語は未確認の暫定値）を持つ（「表示言語」参照）。
-- 「ストアの掲載情報」で編集できる欄: 説明（`textarea`、最大 16,000 文字、カウンタ「n/16,000」付き）、公式 URL・ホームページ URL・サポート URL（`input[type=text]`）、カテゴリ（全言語共通のコンボボックス。下の「カテゴリ」）。プロモーション動画は対象外（アイコンを含む掲載画像は下の「掲載画像」）。「パッケージのタイトル／概要」は manifest 由来の読み取り専用。
-- 編集中の言語は「言語」ラベルを持つ `[role=combobox]` で切り替える。選択肢は `[role=option]` で、表記は「英語 – en （デフォルト）」「日本語 – ja」の形。最初に見つかる `[role=combobox]` はパブリッシャーの選択欄なので、ラベルで絞り込む。
-- **ラベルは「1 行の完全一致」で照合する。** ラベル候補には欄の親要素の文字列（説明文を含む）も入るため、部分一致だとカテゴリ欄の説明「すべての言語用」が「言語」に当たって誤判定する。改行で区切った 1 行が、空白を無視してラベルと完全一致するものだけを選ぶ。URL 欄も同じ。
-- **選択肢の一覧は、閉じても要素が残る。** 閉じた `[role=listbox]` は枠が 0×0 になるだけで、中の `[role=option]` は表示扱いのまま残る。パブリッシャー名の選択肢は常に表示されている。そのため、選択肢は枠に大きさのある一覧の中のものだけ数え、開いたかは「言語 – code」形式の選択肢の出現で、閉じたかは言語欄の `aria-expanded` が `"false"` になったかで判断する。
-- ボタンは「下書きとして保存する」「審査のため送信」「公開」。変更がなくても無効化されない。保存後は「アイテムが保存されました。」が出る。
-- 「審査のため送信」を押すと確認ダイアログ（`[role=dialog]`）が出る。文面は「「<名前>」を審査のために送信しますか？」、チェックボックス「審査の合格後に「<名前>」を自動的に公開する」（既定 ON）、ボタン「キャンセル」「審査のため送信」。確定すると「アイテムを送信しました。」が出てステータスが「審査待ち」になる。
-- 「ガイドやヒントが必要な場合は…」という常設の通知が `[aria-live]` 領域にあるので、結果メッセージの判定では除外する。
+ラベルの 1 行完全一致で探す。→ [画面構成と欄の探し方](docs/design/dashboard-screens.md)
 
 ### 「プライバシー」タブ（Privacy practices）
 
-- **対象**: ダッシュボードの「プライバシー」タブ（URL は `<編集画面>/privacy`。2026-11-18 に実画面で、タブの名前は「プライバシー」、画面の見出しは「単一用途」「権限が必要な理由」「データ使用」「プライバシー ポリシー」と確認した）。拡張機能に権限を足すと、このタブで権限の正当性などを入力しないと審査に送信できない。**設定の `privacy` に書いた欄だけ**を、掲載文と同じく正本ファイルから読み取り・比較・下書き保存する（書いていない欄は読み出し・比較・書き換えのどれにも使わない）。リモートコードの実欄は対象外。プライバシー ポリシー URL は設定の `privacy.policyUrl` で扱う（下の「プライバシー ポリシー URL」）。
-- **設定の形**（`ItemConfig.privacy`、`config/privacy.rs`）: `singlePurpose`（本文の区間）・`permissions`（権限名 → 本文の区間。ホスト権限だけ特別なキー `host`。書いた順を保つ）・`remoteCode`（`uses`、true のときは `justification` が必須・false のときは書けない）・`dataUsage`（`collected`: 9 種類のうちチェックするもの、`certify`: **true だけを許す**。false・省略は設定エラー）。本文は説明文と同じ「ファイル + sectionStart / sectionEnd」で指し（`config/section.rs` を再利用）、固定書式を解析しない。取り出した本文は前後の空行を除き共通の字下げを取り除く（`privacy::dedent`。正本の「  activeTab:」の下は字下げされているため）。空・1,000 文字（UTF-16、画面のカウンタ「n/1,000」）超過は、Chrome を開く前に終了コード 2 で止める。
-- **欄の探し方**（`selectors::classify_privacy_textareas` など）: 単一用途と権限の正当性は textarea で、ラベルの行が「単一用途の説明」・「<権限名> が必要な理由」（ホスト権限は「ホスト権限 が必要な理由」→ キー `host`）。権限の欄は manifest の権限に応じて増減する（2026-11-18 の 15 アイテムでは 2〜7 欄で、ホスト権限の欄が無いアイテムもあった）。データの種類 9 つと宣誓 3 つは `input[type=checkbox]`（aria-label が項目の文言そのもの。value は種類が 1〜9、宣誓が "on"）で、1 行の完全一致で選ぶ。チェックボックスは不透明度 0 の 48x48 の input 自体が押される。クラス名には頼らず、文言は `text.rs` の `PrivacyText` に集める。**日本語の画面だけ**扱う（英語の文言は未確認で、`PrivacyText` は日本語だけが持つ）。textarea の書き換えは掲載文と同じ（フォーカス → 全選択 → `Input.insertText` → 完全一致の確認）、チェックボックスは実際のマウス入力で押して状態の変化を待つ。
-- **比較**: 文字列の完全一致（前後の空白も差分）。チェックボックスは設定キーを画面の並びで並べた文字列、宣誓は 3 つとも入っているかで比べる。**権限の一覧そのものも照合する**: `permissions` を書いたとき、設定にあって画面に無い権限、画面にあって設定に無い権限は、比較結果に「エラー」の行（理由つき）で出し、`diff` は終了コード 1、`push` は何も書かずに `WriteBlocked`（終了コード 4）で止める（欄の無い権限を黙って飛ばすと、正当性の入力漏れに気づけないため）。
-- **手順**（`services::pull_privacy` / `diff_privacy` / `push_privacy`）: 画面操作は `PrivacyPage`（審査送信を持たない trait）だけを受け取る。push は「タブを開く → 書き込み可否 → 現在値を読んで比較 → 不整合があれば何も書かず止める → 差分のある欄だけ書き換え → 保存前に全欄を照合 → 書き込み可否 → 下書き保存 → 読み込み直して全欄を再照合」。どの段の失敗でも保存せず、失敗時のページのスナップショットを診断用に保存する。テキスト・画像の push とは別の保存として、その後に行う。書き込み可否の「主の入力欄」は単一用途の説明の textarea（`selectors::privacy_page_state`）、保存ボタンは編集画面と同じ「下書きとして保存する」。
-- **プライバシー ポリシー URL**（`privacy.policyUrl`、`PrivacyField::PolicyUrl`、`PrivacyPage::write_policy_url`）: 2026-11-19 に実画面（SearchClock、日本語、読み取りのみ）で、`input[type=text]`（aria-label なし、`aria-labelledby` の参照先の文字列が「プライバシー ポリシーの URL」で 3 行同じ）、祖先に文字数カウンタ「39/2,048」（上限 2,048）、readOnly / disabled ではないことを確認した。設定は公式 URL などと同じ契約（キーなし＝対象外、`""`＝空欄が正本、それ以外は http(s) の絶対 URL だけ、2,048 文字以内。Chrome を開く前に終了コード 2）。`privacy` の「1 欄も無ければエラー」では policyUrl も 1 欄に数える。モデルでは短い欄（`is_long_text()` が false）として 1 行比較・`- 現在値 / + 正本` の表示に乗る。画面は `kinds::TEXT_INPUT` から `selectors::find_policy_url_input`（ラベル「プライバシー ポリシーの URL」の 1 行完全一致で 1 つに絞る。無ければ None＝欄が無い扱い、複数なら止める）で選び、書き込みは `ensure_privacy_url_writable`（input だけ。textarea 用の `ensure_privacy_text_writable` は広げない）→ `rewrite_text`（フォーカス → 全選択 → `Input.insertText` → 完全一致の確認。空文字は Delete）。保存は「プライバシー」タブの保存（テキスト・画像とは別に最後）に乗る。`--only privacy` に含まれる。文言は `PrivacyText::policy_url_label`（英語は `privacy: None` のまま）。
-- **リモートコードは未対応**: 15 アイテムのどのプライバシー タブにもリモートコードの欄が出ておらず、DOM を確かめられなかったので、設定の形と比較の枠だけを持つ。画面側は常に「読めない」扱いで、設定に書くと `diff` がエラーを報告し `push` が止まる。実画面に欄が現れるアイテムで確かめてから対応する。
-- CLI は `--only text|images|privacy`（既定はすべて。MCP の `only` も同じ）。`--locale` ではプライバシー タブを絞らない（全言語共通）。
+設定に書いた欄だけを扱う。→ [「プライバシー」タブ](docs/design/privacy-tab.md)
 
 ### 区間切り出し
 
-- 切り出し結果は検証スクリプト（push.mjs）と同じにする。`crates/edictora/tests/fixtures/ReplaceTranslator` の SHA-256・文字数（ja=1492 / en=3172）のテストで固める。
+検証スクリプトと同じ結果にする。→ [区間切り出し](docs/design/section-extraction.md)
 
 ### パッケージ内のアプリからの保存先リダイレクト（`redirect.rs`）
 
-- 背景（実害）: Claude デスクトップアプリは MSIX パッケージで、その中の Bash ツールから起動したプロセスが `%APPDATA%` / `%LOCALAPPDATA%` の下に**本物にまだ無いフォルダー**を作ると、本物ではなくパッケージ専用領域 `%LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalCache\{Roaming,Local}\...` に作られる。本物に既にあるフォルダーへの書き込みは本物に入る。両方にあるとパッケージ内のプロセスは専用領域を優先して読む。結果として `%APPDATA%\Edictora\config.json` が専用領域にだけできて、通常のターミナルからは「設定が無い」状態になった（2026-11-15）。
-- 検出: 対象を開いて `GetFinalPathNameByHandleW`（kernel32 を FFI で直接。`FILE_FLAG_BACKUP_SEMANTICS`・アクセス権 0 で、何も作らず変えない）で最終パスを得る。仮想化は最終パスに現れる（Claude の Bash から `%APPDATA%\rtk` で実測し、`...\Packages\Claude_...\LocalCache\Roaming\rtk` が返ることを確認）。判定は文字列だけの純粋関数 `detect_redirect(要求, 最終)`: 2 つが（`\\?\`・大文字小文字・区切り・末尾の `\` を除いて）異なり、かつ最終が `...\AppData\Local\Packages\<name>\LocalCache\` の下であること。利用者が最初から専用領域のパスを指定した場合と、専用領域以外への付け替え（ジャンクションなど）は対象にしない。
-- 読めたとき: 既定の設定ファイル（`--config` 未指定）と Chrome プロファイル（`profile_directory`）がリダイレクトされていれば、標準エラーへ警告を種類ごとに 1 プロセス 1 回出す（実際の保存先・通常のターミナルから見えないこと・本物の場所へ移す対処）。設定は `CliApp::run` の検証後（Chrome を開く前）、プロファイルはブラウザを開いた直後（login は作成直後に当たる）。MCP では標準エラーは結果の「Progress and errors」に入り、`edictora_list_items` は結果の本文に入る（標準出力の JSON-RPC は壊さない）。文言は 9 言語の辞書（`redirect.*`）で、MCP では英語。
-- 見つからないとき: 既定の設定ファイルが無いとき、`AppPaths::packages_root`（既定 `%LOCALAPPDATA%\Packages`、環境変数 `EDICTORA_PACKAGES_ROOT` で差し替え。`EDICTORA_LOCAL_ROOT` / `EDICTORA_ROAMING_ROOT` を使う実行・テストでは `None` で探さない）の下の `*\LocalCache\Roaming\Edictora\config.json` を読み取りだけで探し、あればエラー文に候補のパスと移す先を添える。自動で読み込まない・移さない（利用者のデータで、どちらが正かは利用者が決める）。
-- 起きにくくする（判断）: パッケージ内のプロセスから「本物へ確実に」フォルダーを作る手段は無い（子プロセスもパッケージの仮想化を受ける）ので、作成を回避する実装はしない。代わりに、**パッケージの外で動く経路**だけで本物の場所を先に用意する: Velopack の install / updated フックと、ログオン時の `edictora-updater.exe` が `ensure_data_folders` で `%APPDATA%\Edictora` と `%LOCALAPPDATA%\Edictora.Data` を作る（ベストエフォート。既にあれば何もしない。以後パッケージ内のアプリが書いても本物に入る）。パッケージ内から呼ばれて仮想化先へ作られた場合は、作成後に検出してログへ警告を残す。Edictora が新規作成する箇所（login のプロファイル作成・ログ）は、作成後の検出と警告にとどめる。config の雛形作成は無い。
-- 未確認: 実際に Setup・ログオン時の更新用 exe で本物の場所にフォルダーができることの実機確認、パッケージ内から login して警告が出る実機の流れ（Chrome を起動する確認は行っていない）。
+MSIX 内の保存先の仮想化を検出して警告する。→ [リダイレクト](docs/design/storage-redirect.md)
 
 ### 配布・インストール・自動更新（Velopack）
 
-- **配布物**: Velopack（vpk 1.2.161、packId `Edictora`、チャンネル `win`）のパッケージ。主 exe は `edictora.exe`、同じパッケージに更新用の `edictora-updater.exe` を入れる。Setup で `%LOCALAPPDATA%\Edictora`（以下「根」）に入る（`Update.exe`・`current\`・`packages\`）。配信元は Cloudflare R2 の `https://edictora.kagayoi.com`。署名・パッケージ作成・配信の手順は [docs/release.md](docs/release.md)。
-- **役割の分け方**: インストール・アンインストール・`current` の差し替えは Velopack の Setup.exe / Update.exe に任せる。Edictora は**更新の確認とダウンロードだけ**を自前で行う（`update/`）。velopack crate は ureq / rustls を引き込むので使わない。通信は `net/winhttp.rs`。
-- **約束は vendored の Velopack 1.2.161 Rust SDK に合わせる**（Petarin の `desktop/src-tauri/vendor/velopack-1.2.161`）:
-  - インストールの判定（`locator.rs`）: exe の親か、パスの最後の `\current\` より前に `Update.exe` があればそこが根。`<根>\Update.exe` と `<根>\current\sq.version` が無ければ「インストールされていない」。現在の版・id・チャンネル・mainExe は `sq.version`（nuspec XML）から読む。チャンネルが空なら `win`。
-  - フィード（`sources/http.rs`・`manager.rs`）: `<配信元>/releases.{channel}.json`。`{"Assets":[{PackageId, Version, Type, FileName, SHA1, SHA256, Size, …}]}` でキーは大文字小文字を区別しない。Type が `Full` の最大の版が現在より新しければ更新（ダウングレードしない・差分パッケージは使わない）。問い合わせ文字列は `localVersion` と `id` だけ（SDK が付ける端末固有の `stagingId` は送らない）。
-  - ダウンロード（`manager.rs` の `download_updates`）: `<packages>\.velopack_lock` を持ち、`<FileName の拡張子を .partial にしたもの>` に保存 → サイズと SHA256（無ければ SHA1）を検証 → `<packages>\<FileName>` へ改名 → 前からあった `*.nupkg`・`*.partial`・`*-delta.nupkg` を消す。検証に失敗したら適用しない。ハッシュは CNG（bcrypt.dll）で計算する。
-  - 適用（`manager.rs` の `unsafe_apply_updates`）: `Update.exe apply --package <nupkg> --waitPid <自分> --silent --norestart --root <根> --packageDir <packages>` を `CREATE_NO_WINDOW` で起動し、起動した側はすぐに終了する。Update.exe が終了を待って差し替える。
-  - フック（`app.rs`・`constants.rs`）: 引数が 2 つ以上で 1 つ目（小文字にして）が `--veloapp-install` / `--veloapp-updated` / `--veloapp-obsolete` / `--veloapp-uninstall` ならフック。処理後は必ず終了コード 0。install / uninstall は 30 秒、updated / obsolete は 15 秒で止められる。
-- **SDK と違う点（意図的）**: ダウンロード済みのパッケージも検証し直す（SDK は検証せずに使う）。宣言の Size を上限にダウンロードを打ち切る。nupkg から `Squirrel.exe` を取り出して `Update.exe` を差し替える処理は持たない（zip を展開しないため。Update.exe はインストール時の版のまま）。起動時の自動適用（SDK の `VelopackApp::run` がする、ダウンロード済みの新しい版の適用）はしない（ダウンロードしたその場で適用を任せるため）。
-- **フックで行うこと**（`install/hooks.rs`。`edictora.exe` と `edictora-updater.exe` の両方が引数の解釈より前に処理する）: install / updated で HKCU の `Run` に `"<根>\current\edictora-updater.exe"` を登録し、ユーザー環境変数 `Path` に `<根>\current` を足して `WM_SETTINGCHANGE` を通知する。uninstall で両方を取り除く（Run は現在の値が自分の値と一致するときだけ消す）。obsolete は何もしない。Portable 版（根に `.portable`）では install / updated でも登録しない（利用者が置いた場所をログオン時に起動させない。手動の `edictora update` は使える）。Run の同じ名前の値が別の場所の更新用 exe を指していれば上書きせず、警告をログへ残す（根のフォルダー名が同じ別のインストールを壊さない）。Run の値の名前（`<根のフォルダー名> Updater`）と PATH の要素は根から決めるので、packId を変えた検証用インストールと衝突しない。PATH は既存の型（REG_SZ / REG_EXPAND_SZ）を保ち、他の要素は変えない（比較のときだけ `%VAR%` を展開）。インストール先から起動されていなければレジストリに触れない。
-- **初回起動の扱い**: Velopack に引数なしで起動された（`VELOPACK_FIRSTRUN` / `VELOPACK_RESTART` がある）`edictora.exe` は、既定の `diff`（Chrome を開く）を走らせずに終える。
-- **更新の入口**: ログオン時の `edictora-updater.exe`（`windows_subsystem = "windows"`、結果はログ、失敗は 30 秒・90 秒の間隔で 2 回まで試し直す）と、手動の `edictora update`（設定を読まない・Chrome を開かない・結果は標準エラー、最新と更新の開始は 0、失敗と「別の更新処理が動いている」は 1、配信元の差し替えの誤りは 2、中断は 130）。両者は `<packages>\.edictora-update.lock` で排他する。
-- **実行中の edictora との排他**: Update.exe の apply はインストール先配下のプロセスを止める可能性があるので、Chrome を開くコマンド（login / pull / diff / push / submit）はブラウザ操作の間だけ `<データの根>\edictora-running.lock` を共有で持つ（CLI 同士は同時に動ける）。更新側はダウンロードと検証の後、Update.exe を起動する直前にこれを排他で取り、取れなければ適用を後に回す（`AppInUse`。`update` は 1、更新用 exe は試し直す。次回はダウンロード済みのものを検証して使う）。取れたらプロセスの終了まで持つ。適用中に Chrome を開くコマンドを実行すると、Chrome を開かずに 1 で止まる。ロックファイルを開けないだけなら CLI は続行する（インストールされていない実行でも無害）。`pull` / `diff` / `push` / `submit` の中では更新を確かめない。インストールされていなければ、更新用 exe は何もせず、`edictora update` は失敗（1）にする。
-- **配信元の差し替え**: 検証用に環境変数 `EDICTORA_UPDATE_URL`（読むのは各 `main` だけ）。平文の http は 127.0.0.1 だけ。CLI のテストは偽の更新処理を差し込み、`CliApp` の既定（`refuse_update`）では本物の配信元・Update.exe に届かない。
-- **データの置き場を根と分ける**: 根はアンインストールでフォルダーごと消えるので、Chrome プロファイル・ログ・診断情報は `%LOCALAPPDATA%\Edictora.Data` に置く（旧 `%LOCALAPPDATA%\Edictora` からの自動移行はしない）。
+更新の確認とダウンロードだけ自前で行う。→ [配布と自動更新](docs/design/distribution-update.md)
 
 ### MCP サーバー（`edictora mcp`）
 
-- 背景: 2026-11-15、別の作業の AI が掲載情報を直そうとして Edictora に気付かず、Toolport で見つかった期限切れの CWS メタデータ API（`cws_mcp__update_metadata`、v1.1、2026-10-15 で終了）を探していた。CLI を教えると今度は `--show-browser` を付けた。AI が見つけられ、画面を出さない形でしか呼べない入口が要る。
-- 形: 同じ exe のサブコマンドにし、別の exe・crate は足さない。プロトコルは 2025-06-18（2025-03-26・2024-11-05 を要求されればその版で応える）。`initialize` / `ping` / `tools/list` / `tools/call` に応え、通知には応えない。一括送信（配列）は -32600。
-- ツール: `edictora_list_items`（設定の対象を表示、ブラウザなし）、`edictora_diff` / `edictora_pull`（読み取り専用）、`edictora_push`（`confirm: true` で `--yes`）、`edictora_submit`（`item` と `confirm: true` が必須）。中身は CLI の引数の配列を作って `CliApp::run` を呼ぶ。CLI と同じ設定の検証・終了コード・伏せ字・書き込みの安全策・実行中ロック・失敗時のページのスナップショット保存を通すため。
-- 選ばせないもの: 画面表示（`--show-browser`）・`login`・`update`・`--profile` / `--chrome` / `--config`。スキーマは `additionalProperties: false` で、無い引数は黙って無視せずエラーにする。ログイン切れは CLI が表示つきの Chrome を自動で開いて待ち、ログインが完了しなかったとき（終了コード 5）だけ「利用者が端末で `edictora login`」と案内する。
-- 結果: 先頭に終了コードとその意味、続けて標準出力（結果）と標準エラー（進捗・エラー）。0 と 3（差分あり）は `isError: false`、ほかは `true`。
-- 並行: 作業スレッド 1 本で 1 件ずつ（同じプロファイルの Chrome を同時に開かない）。受信は続け、`notifications/cancelled` で実行中の呼び出しを中断する（CLI の Ctrl+C と同じ経路で Chrome を正常終了させる）。入力が閉じても、受け付け済みの呼び出しは最後まで実行してから終わる（書き込みを半端にしない・1 件送ってすぐ閉じる使い方でも結果を返す）。
-- 更新との関係: サーバーはインストール先の exe で常駐する。Velopack の `Update.exe apply` はインストール先から動いている他のプロセスを強制終了してから差し替える（`force_stop_package`、Velopack のソースで確認済み。共通仕様 `APP-DISTRIBUTION.md`）。待機中でも止められるとクライアントのセッションから Edictora が消えるので、**`main` がサーバーの生存期間中ずっと実行中ロックを共有で持つ**（複数セッションの MCP 同士、呼び出しの中の `CliApp::run` とも共有で両立する）。サーバーが動いている間に更新が来たら、ダウンロードと検証だけ済ませて適用を見送る（`AppInUse`）。ログオン時の更新用 exe は 30 秒・90 秒の間隔で試し直し、それでも動いていれば次のログオンに回す（ダウンロード済みのものを検証して使う）。手動の `edictora update` は 1 で終わり、クライアントを閉じてから実行し直すよう案内する。更新の適用中（排他で持たれている）に起動されたサーバーは、標準出力に何も書かず終了コード 1 で終わる（起動しても Update.exe に止められるため）。残る隙: 更新プロセスが終わってから Update.exe が差し替え終えるまでの数秒に起動したサーバーは守れない（CLI と同じ）。ログオン直後にクライアントが自動で起動する環境では、適用が延び続けることがある。
-- 登録: Setup 版はインストール・更新・アンインストールのフックで、Claude Code（`claude mcp add --scope user edictora -- <根>\current\edictora.exe mcp`）と Codex（`codex mcp add edictora -- …`）へ自動で登録・解除する（共通仕様に揃える。手動の登録はアンインストール後に壊れたパスの登録が残るため）。公式 CLI（PATH の `claude.exe` / `codex.exe`。`.cmd` のラッパーは使わない）を呼び、設定ファイルは直接書かない。CLI 1 回は 3 秒、フック全体にも締め切りを置く（install / uninstall は 30 秒、updated は 15 秒で Velopack に止められるため）。Run・PATH の登録を先に済ませる。既に自分を指す登録は触らない。登録済みの CLI は `Edictora.Data\setup-registration.json` に覚え、二度と呼ばない（利用者が外した登録を復活させない）。時間切れなどで終わらなかった CLI は、ログオン時の更新用 exe が更新の確認より前にやり直す（1 回 30 秒）。アンインストールでは、自分の exe を指す登録だけを外し、状態ファイルを消す。Portable 版は登録しない。Claude Desktop などの JSON 設定のクライアントと、Toolport のゲートウェイへの登録は README の手順で手動で行う。
-- Toolport 判定（正本はこのリポジトリの `crates/edictora/src/install/toolport.rs`。Remnifold・Plumivox はバイト単位で同一の複製を置く）: クライアントごとに、そのクライアントの設定（Claude Code は `~/.claude.json` の `mcpServers`、Codex は `~/.codex/config.toml`）に Toolport ゲートウェイがあり、かつ Toolport の registry（Windows の `%APPDATA%\Toolport\registry.json`。`TOOLPORT_REGISTRY` / `TOOLPORT_DATA_DIR` で変更可）に、自分（直接登録に使うのと同じ絶対パス）と同じ実体の `edictora.exe` を `mcp` 引数で起動する有効なサーバーが使われるプロファイルに入っているとき（`Served`。比較は `canonicalize` した結果どうしで、失敗した側は字面のまま比べ、`Unknown` にはしない。`detect` は `own_executable` を受け取り、`Files::canonical` が実体の解決を担う）、新しい直接登録を省く（状態ファイルの `skipped`）。判定できない（`Unknown`）場合は従来どおり直接登録する。判定は Windows・macOS・Linux で行い（registry と各クライアント設定のホームの決め方は OS ごと。`toolport.rs` の `Os`）、それ以外の OS は何も読まず `Unknown("unsupported-os")` にして直接登録する。既にある直接登録は外さない。省いた後でクライアントの設定からゲートウェイが消えた、または Toolport 側のサーバーが一致しても `command` の実行ファイルが無い（どちらも `NotConnected`）場合は、次の更新、または次のサインイン時（ログオン時の更新用 exe）に直接登録する。前回未完了（`done` にも `skipped` にも無い）のクライアントも、ログオン時に同じ判定をする（CLI があるときだけ判定し、`Served` なら省く）。Toolport 側で Edictora を無効化・削除した（`NotServed`）場合は足さない。`done` や、Setup が一度直接登録したクライアントは、利用者が外しても自動では足し直さない（戻すのは Setup が省いたクライアントだけ）。`done`（直接登録済み）の意味は変えない。状態を作り直すとき（初回・exe の場所の変更・状態ファイルなし）に `Served` なら CLI を呼ばないため、移動前の exe を指す既存の直接登録は付け替えられずに残る（既存の直接登録は外さない方針のため。必要なら `claude mcp remove edictora --scope user` などで外す）。サーバーの `env` は読まず、Toolport 側のツール隔離は判定しない（制約として README に書く）。
-- Toolport が別の実体の `edictora.exe` で提供している場合（`ServedElsewhere`。有効な候補のうち自分と同じ実体が 1 つでもあれば `Served` を優先し、無ければ最初の別の実体を覚える。`env` は持たない）も、直接登録は省く。理由の値は `SkipReason::ToolportForeign`（状態ファイルの `skipped` の `"toolport-foreign"`）で、利用者には Toolport の edictora の command を Setup 版の実行ファイル（`%LOCALAPPDATA%\Edictora\current\edictora.exe`）へ向け直すよう、Warning のログで案内する（Toolport 側の command はログに書かず、自分の実行ファイルのパスだけを書く）。理由が `toolport` か `toolport-foreign` で `auto` のときは、CLI の有無に関係なく起動のたびに判定し直す。遷移は次のとおり。新規＋`ServedElsewhere` は foreign を記録して警告、新規＋`Served` は toolport を記録、toolport＋`ServedElsewhere` は foreign に変えて警告、foreign＋`Served` は toolport に変えて通常の省略をログに残す、foreign＋`ServedElsewhere` は何もしない（記録もログも無し）、foreign＋`NotConnected` は CLI があれば直接登録して成功したら `done` に移し `skipped` から外す（CLI が無ければ何もしない）、foreign＋`NotServed`・`Unknown` は何もしない、`direct` は直接登録、`off` は何もしない。同じ理由のままなら記録し直さない（既存の重複除けを使う）。知らない理由を旧版が読んでも逆シリアル化は失敗しない。
-- 動作の選択: `%APPDATA%\Edictora\config.json` の `mcpRegistration`（`auto` 既定 / `direct` 常に直接登録 / `off` 自動の登録・修復をしない。アンインストールの解除は行う）。インストーラー（フックと更新用 exe）は既定の設定パスだけを寛容に読み（`--config` は対象外）、不正な値は `auto` としてログに残す。通常の読み込み（`ConfigFileDto`、`deny_unknown_fields`）は 3 値以外を設定エラーにする。
-- 見つけやすさ: ツールの説明に英語の検索語（Chrome Web Store・store listing・description）を入れ、日本語は混ぜない（ASCII だけ。テストで固定する）。
+CLI の薄い皮として提供する。→ [MCP サーバー](docs/design/mcp-server.md)
 
 ## 実画面での確認状況
 
-- 確認済み（2026-11-21、ja・「ストアの掲載情報」の編集画面）: 失敗時のページのスナップショット（`snapshot()`）を Edictora と同じ式で評価し、約 130 ms・229 行・約 1.2 万文字になった。説明（2,000 文字で切る）・言語・カテゴリ・URL 欄の値、保存 / 審査ボタン、画像ごとの削除ボタンが位置つきで出る。投稿者メニューの `data-value` に publisherId が出るが伏せ字で消える。アカウント ボタンの名前に Google アカウントの氏名・メールアドレスが出るため、`redact_account` で伏せる。複数のラベルが重なる欄では名前が繰り返される（例: 「説明 説明 説明」）。未確認: 失敗の瞬間（ダイアログ表示中など）の出力、0x0 の option の残り方、「プライバシー」タブ。
-- 確認済み: ログインとプロファイル、`pull` / `diff`（ヘッドレス、Chrome が前面に出ないこと）、言語切替、説明欄の書き換えと保存・読み込み直し後の照合（フェーズ 0 の検証）、審査送信ダイアログの文面。
-- 2026-11-15 に Rust 版で確認: 9 言語（ja / en と pt-BR など 7 言語）を持つアイテムで、`push`（説明欄だけ）による全言語の書き換え・保存・読み直しての照合と、`submit` での審査送信（API でも PENDING_REVIEW を確認）。ステータス「拒否」（審査で却下）のアイテムは説明欄が編集でき「下書きとして保存する」も押せたので、許可リストに足した。言語が多い一覧では、開くアニメーションの途中で下の方の選択肢（ja・pt-BR）の中心に別の要素が重なることがあり、クリックは覆われている間だけ測り直す（最大 8 回、合計約 2 秒。上限を過ぎて覆われていれば従来どおり止める）。
-- 2026-11-16 にストア アイコンを実画面（Clean Reload、審査待ち。8 アイテムの `diff` は読み取りのみ）で確認: アイコン欄は `input[type=file]`（accept `.png,.jpg,.jpeg`）で、枠の文字列は「ショップ アイコン / 128x128 ピクセル / アイコンが画像に関するガイドラインに沿っているか確認してください」、画像の alt は「ショップ アイコン」（`=s128-rw` の URL を `=s0` にして取得でき、RGBA の PNG）、ボタンは aria-label「画像を削除 ショップ アイコン」と「画像アップロードのステータスを閉じる」（ホバーしても 0x0 のまま。審査待ちでは小タイルの削除ボタンも同じ）。`diff` は「差分あり」（現在のアイコンは旧デザイン。アルファが 14,007 画素違う）と、現在のアイコン自体を正本にしたときの「一致」を確認した。**`push`（削除 → アップロード → 保存 → 読み直し）は実行していない**: 確認した 8 アイテムがすべて「審査待ち」で、書き込み可否が（設計どおり）終了コード 4 で止めた。サーバーの再エンコード後に、アルファ込みの画素（半透明の色・完全に透明な画素の扱い）が一致するかは未確認。
-- 2026-11-15 に掲載画像を実画面で確認（読み出しは SearchClock と、審査待ちの Vuora の読み取りのみ）:
-  - 読み出し: 単一言語のアイテム（SearchClock）で 3 つのスロット（小タイル・マーキー・全言語向けスクリーンショット）を特定し、`=s0` の原本を Cookie なしの WinHTTP で取得できた（200）。複数言語のアイテム（Vuora、9 言語）で、全言語向けと言語ごとのローカライズ版（9 言語、言語切替つき）を特定して読めた。取得した原本はバックアップの原本とバイト列まで一致した。
-  - 書き込み（SearchClock の 1 件、全言語向けのみ。審査送信はしていない）。**最終のコードで「置換 → 保存 → 読み直し → 照合 OK」を一度に通した実行は無い**（記録は事実どおりに残す）:
-    - `--yes` なしの差分確認（ドライラン）の手順は省略し、差分の確認は `diff` で行った。
-    - 1 回目の `push --yes`: 削除後の確認ダイアログを知らず、押さずに止まった（何も削除されていない）。
-    - 2 回目: 確認ダイアログの「削除」を押して小タイルが削除されたが、削除後のスロットに src が空の `<img>` が残り、枚数が減ったと判定できず止まった。**この時点で公開済みアイテムの下書きから小タイルが欠けた**（削除は即時反映）。
-    - 3 回目: 小タイル・マーキー・スクリーンショット 3 枚の削除 → アップロード → 下書き保存 → 読み直しまで通ったが、その時点の比較がバイト列の SHA-256 だったため保存後の照合が不一致で終了コード 1（5 枚とも再エンコードで別のバイト列）。画素の比較へ変えた後は `diff` が 3 スロットとも一致で、続けて実行した `push --yes` は「変更なし」（終了コード 0）で終わった。置換を伴う実行を、画素の比較のコードでやり直してはいない。
-  - **削除は保存を待たず即座にサーバーへ反映される**（削除の確認だけ押して止めた後に読み直すと、スロットが空だった）。
-  - **アップロードした PNG はサーバーが再エンコードする**（バイト列・サイズは変わり、画素は同じ）。そのため画素で比べる。
-  - 規格外の画像をアップロードしたときのエラー表示（`selectors::image_error_messages` の語「失敗・エラー・無効・できません」は推測値）、アップロード中の画面の状態（`blob:` の仮表示があるか）、beforeunload の有無（画像の操作が即時反映のため、未保存の変更として扱われるかも未確認）は確かめていない。
-  - **ローカライズ版スクリーンショットの書き込みは実画面で一度も実行していない**（読み出しだけ確認）。ロケールの切替完了は、説明欄の値が 2 回続けて同じになるまで待って判定する（`switch_locale`）が、Vuora のように 7 言語が同じ英語の説明を持つアイテムでは、説明欄が切替前後で変わらないため、画像の切替完了の合図にならない（置換や照合を、切替前の言語の画像に対して行う恐れがある。ローカライズ版の書き込みを実画面で試す前に、スロットの画像の変化など別の合図を足すか確かめる）。
-  - 画素の比較で扱えない形式（JPEG・パレット・透過あり・16 ビット・インターレース）は「比較不能」で、そのスロットは置換されない。2026-11-15 のバックアップ（15 件・icon を除く 188 枚）を調べたところ、すべて PNG で、181 枚が 8 ビット RGB、7 枚（DarkBlueThemeX の 6 枚と ScreenGuard の 1 枚）は 8 ビット RGBA だが全画素が不透明で、RGB に落として比べられる。
-- 2026-11-18 に「プライバシー」タブを実画面で確認（いろいろMDコピー＝ReviewForMD、公開済み・下書きあり）: 15 アイテムの読み取りで、textarea のラベル・チェックボックスの aria-label・権限に応じた欄の増減（4〜8 欄）を確かめた（リモートコードの欄はどのアイテムにも無かった）。`diff` は storage の正当性（画面は空）だけが「差分あり」、`push --yes` で書き換え → 下書き保存 → 読み込み直し → 照合 OK、再 `diff` は全欄「一致」。データの種類のチェック（「健康に関する情報」を足して保存 → 照合 OK、元に戻して保存 → 照合 OK）も確かめた。設定にあって画面に無い権限（tabs）と、画面にあって設定に無い権限（scripting）を含む設定では、`diff` が終了コード 1、`push --yes` が何も書かずに終了コード 4。未確認: 宣誓チェックを外した状態からの付け直し（確認時はすべて入っていた）・リモートコードの欄・審査待ちのアイテムでの書き込み拒否（`write_gate` は共通で、全アイテムの `diff` は読み取りのみ）・英語の画面（対応しない）。
-- 2026-11-19 にカテゴリ欄とプライバシー ポリシー URL 欄の DOM を実画面（SearchClock、日本語、ログイン済み）で**読み取りだけ**確認した（上の「カテゴリ」「プライバシー ポリシー URL」に記録）。同日、実装後の `diff`（ヘッドレス、SearchClock の 9 言語アイテム）でカテゴリ（`functionality_and_ui`）と policyUrl の読み出しが画面と一致することを確かめた。続けて同アイテム（公開済み）で `push --yes` を実行し、カテゴリを `tools` へ、policyUrl を末尾 `/` 付きへ書き換え → 下書き保存 → 読み直して照合 → 別プロセスの `diff` で保持を確認 → 元の値へ戻す、までを両欄とも確かめた（どちらも終了コード 0、審査には送信していない）。カテゴリの書き込み後に全 9 言語を切り替えて照合しても値は変わらなかった。その時点では一覧を開く・選ぶ・保存する操作と `push` は未確認だった（下の実装後の確認で解消）。残る未確認: 選択後に一覧が閉じないときの Escape の効き、英語の画面。
-- 未確認（`write_gate.rs` の許可リストはこれらを確かめて更新する）:
-  - Ctrl+C での中断、beforeunload の扱い。
-  - 審査待ちのアイテムの編集画面（編集がロックされるか）。
-  - **「拒否」のアイテムを再提出した後のステータス表記。** 2026-11-15 の再提出では、送信直後に読んだ表記が「拒否」のままだった（別のアイテムは送信直後に「審査待ち」になった）。審査中でも「拒否」と出続けるなら、`LOCKED_STATUS_KEYWORDS` に当たらず許可リストを通ってしまう（残る歯止めは説明欄・保存ボタンの判定だけ）。再提出したアイテムを読み直して表記を確かめ、必要なら「拒否」の許可に条件を足す。
-  - MCP（`edictora mcp`）経由の実画面操作、`notifications/cancelled` での中断、サーバーの待機中に自動更新が来たときの動き。
-  - 言語が 1 つだけのアイテム。
-  - URL 欄（公式・ホームページ・サポート）の書き換えと保存。
-  - 15 件の全アイテムでの読み出し。
-- 単体テストは 127.0.0.1 の偽配信元・専用ハイブ・偽の Update.exe 起動で行う。自動更新の結合は、検証用 packId `EdictoraTest` で実機確認済み: Install フックで Run（`EdictoraTest Updater`）と PATH（REG_EXPAND_SZ のまま）を登録、`edictora update` で 1.0.5 → 1.0.6（Obsolete / Updated フック）、`edictora-updater.exe` で 1.0.6 → 1.0.7、`Update.exe uninstall` で Uninstall フックが Run と PATH から自分の分だけを消し `Edictora.Data` は残る。未確認: 実署名での一連、R2 への実配信、本番の HTTPS（edictora.kagayoi.com）、本番 packId `Edictora` での Setup、Portable 版の一連、Setup 直後の初回起動の見え方（`--silent` の Setup は主 exe を起動しないらしい）、実行中ロックで適用を後に回す動作の実機確認。
-- 英語表示のダッシュボード: 文言セット（`text.rs` の EN）・成功メッセージの判定・ステータスの語はすべて実画面で未確認の暫定値。確かめるまで英語の画面での `push` / `submit` は利用者の確認のうえで行う。
+確認済み・未確認の一覧。→ [実画面での確認状況](docs/design/verification-status.md)

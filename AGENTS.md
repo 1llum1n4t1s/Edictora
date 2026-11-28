@@ -1,128 +1,18 @@
-# AGENTS.md — Edictora 開発ガイド（LLM / 開発者向け）
+# AGENTS.md — Edictora 開発ガイド
 
-Chrome Web Store（CWS）の掲載情報（説明・公式 URL・ホームページ URL・サポート URL と、掲載画像、「プライバシー」タブ）を、各拡張機能リポジトリの正本ファイルから一括で読み出し・比較・更新する Windows 向け CLI（`edictora.exe`）。ほかの人にも配る前提。
-CWS API v2 に掲載情報の読み書きがなく、拡張機能からの CWS 操作は Chrome が拒否するため、専用プロファイルの Chrome を CDP で操作してデベロッパー ダッシュボードの画面を書き換える。
-全体設計・実画面で確かめた画面構成と操作方法は [DESIGN.md](DESIGN.md) を正本とする。
+Chrome Web Store（CWS）の掲載情報（説明・URL・画像・「プライバシー」タブ）を、各拡張機能リポジトリの正本ファイルから一括で読み出し・比較・更新する Windows 向け CLI（`edictora.exe`）。CWS API に掲載情報の読み書きが無いため、専用プロファイルの Chrome を CDP で操作してダッシュボードを書き換える。実装は Rust と、ページ内 JS 用の Bun + TypeScript。GUI は無い。全体設計は [DESIGN.md](DESIGN.md) が正本。
 
-実装は **Rust**（本体・CDP・Chrome 起動・設定・比較・CLI）と、ページ内で評価する JavaScript だけを書く **Bun + TypeScript** の 2 本立て。画面（GUI）は持たない（C# + Avalonia 版は廃止。履歴の `b1adbc4` から参照できる）。
+## 守る前提（要約。詳細は各ファイル）
 
-## アーキテクチャ
-
-```
-Cargo.toml / rust-toolchain.toml … ワークスペース（edition 2024・Rust 1.100.0・resolver 3）。版は [workspace.package] の version
-crates/edictora/
-├─ src/
-│  ├─ main.rs / lib.rs
-│  ├─ cdp/            … client.rs（CDP JSON-RPC・flatten sessionId・入出力スレッド）/ page.rs（評価・マウス・キー・遷移）
-│  ├─ chrome/         … locator.rs（chrome.exe 検出）/ launcher.rs（専用プロファイルで起動 or 既存へ接続、Browser.close で終了）
-│  ├─ config/         … mod.rs（config.json の読込・検証）/ section.rs（正本の区間切り出し）/ images.rs（`images` の読込）/ privacy.rs（`privacy` の読込）
-│  ├─ images/         … mod.rs（モデル・正本の検証・画素ダイジェストの比較）/ png.rs（PNG のデコードと画素ダイジェスト。zlib 展開は自前）/ fetch.rs（原本の取得。trait `ImageFetcher`）
-│  ├─ privacy/        … 「プライバシー」タブのモデル・本文の検証・比較（権限の一覧の照合を含む）。画面操作は持たない
-│  ├─ listing/        … 欄・正本と現在値のモデル・完全一致の比較 / text_diff.rs（行差分）/ category.rs（カテゴリのキーと data-value の対応表・比較）
-│  ├─ dashboard/      … urls.rs / text.rs（画面の文言）/ page_scripts.rs（埋め込み JS の呼び出し）/ selectors.rs（要素の選択）
-│  │                    write_gate.rs（書き込み可否）/ item_page.rs（1 操作ずつの実装）/ browser.rs（接続とログイン確認）
-│                    mod.rs の trait `EditorPage`（共通）/ `ListingPage`（テキストと審査送信）/ `ImagePage`（画像。審査送信なし）/ `PrivacyPage`（「プライバシー」タブ。審査送信なし）が手順と画面操作の境目
-│  ├─ net/winhttp.rs  … WinHTTP の FFI（GET だけ、メモリかファイルへ受ける）。自動更新と、画像の原本の取得が使う
-│  ├─ update/         … 自動更新: locate.rs / manifest.rs（sq.version）/ feed.rs / version.rs（SemVer）/ source.rs（配信元）
-│  │                    download.rs（ダウンロードと検証）/ hash.rs（CNG）/ lock.rs / apply.rs（Update.exe の起動）
-│  ├─ install/        … Velopack のフック（hooks.rs）と HKCU の Run・PATH（registry.rs）/ Claude Code・Codex への MCP 自動登録・解除（connect.rs）
-│  ├─ updater_main.rs … 更新用 exe（edictora-updater.exe、windows_subsystem = "windows"）の入口
-│  ├─ services.rs     … pull・diff・push・submit の手順と中止判断
-│  ├─ cli/            … args.rs（引数解析）/ mod.rs（実行と終了コード）/ diff_formatter.rs
-│  ├─ mcp/mod.rs      … MCP サーバー（`edictora mcp`、標準入出力の JSON-RPC）。ツールの中身は CliApp::run を呼ぶだけ
-│  ├─ i18n.rs         … 利用者向け出力の表示言語（9 言語）と辞書の引き方（`tr!` / `trs!`、辞書は `locales/<タグ>.json`）
-│  ├─ logging.rs      … %LOCALAPPDATA%\Edictora.Data\logs。publisherId を伏せる
-│  ├─ redirect.rs     … MSIX 内からの起動時の保存先リダイレクトの検出・警告・専用領域の候補探し
-│  ├─ app_paths.rs / error.rs / cancel.rs（Ctrl+C）/ util.rs
-└─ tests/             … 結合テスト（ブラウザ不要。CDP は 127.0.0.1 の偽サーバー）とフィクスチャ
-page-scripts/         … ページ内で評価する TypeScript（src/edictora.ts）→ Bun で dist/edictora.js を生成してコミット
-scripts/              … リリース用 PowerShell（release-local.ps1 / Sigilune.Common.ps1 / R2 配信）
-tests/R2Transfer/     … R2 転送スクリプトの検証（CI の ci.yml が Run.ps1 を実行）
-.github/workflows/    … ci.yml（検査・テスト）/ codeql.yml / release.yml（署名付きリリース）
-```
-
-## 設計上の重要な前提（このとおりに実装する）
-
-- **手順は `services.rs` に置き、CLI は呼ぶだけにする。** 画面操作は trait（`ListingPage`・`ImagePage`・`PrivacyPage`）越しに行い、手順はテスト用の偽ページでブラウザなしに検証する。
-- **ページ内の JS は候補要素の情報を集めて返すだけ。** どれを選ぶかは Rust の純粋関数（`dashboard/selectors.rs`）で判断し、テストで固める。dist は直接編集せず `bun run build` で作り、`bun run check` で最新か確かめる。exe と `cargo build` に Bun を要らせない（`include_str!` で埋め込む）。
-- **Chrome の起動引数は最小限**（`--user-data-dir`・`--remote-debugging-port=0`・`--no-first-run`・`--no-default-browser-check` と描画の間引き抑止 3 つ・`--disable-features=CalculateNativeWinOcclusion`、ヘッドレス時だけ `--headless=new --window-size=1280,900`）。`--enable-automation` などの自動化フラグや画面外配置は付けない（Google ログインを弾かれる恐れ）。変える場合は実画面でログインを再検証する。
-- **プロファイルは秘密情報で、ツールは絶対に削除しない。** 終了は `Browser.close`、応答しないときだけプロセスを止める。ログイン待ちの間はタブに接続しない。
-- **publisherId はログイン後の URL から実行時に取り出し、コード・設定・ログに書かない。** ログと CLI のエラー出力は伏せ字処理を通す。
-- **要素はラベル・役割・文言で探し、クラス名に頼らない。** 文言は `dashboard/text.rs` に集める。ラベルは 1 行単位の完全一致、言語一覧の開閉は `aria-expanded`、0×0 の一覧は数えない。候補がちょうど 1 つに絞れなければ止める（最初の 1 つを選ばない）。画面言語は `<html lang>` で 1 回だけ判定して文言セット（`text.rs` の JA / EN）を選ぶ（空なら日本語、ja / en 以外は止める）。英語の文言は実画面で未確認の暫定値で、英語で足す判定は「止める」側だけにし、「書いてよい」側へ推測で足さない（`write_gate.rs` の `UNCONFIRMED_LOOKALIKE_KEYWORDS` など）。
-- **Chrome を前面に出さない。** `login` 以外はヘッドレス（`--show-browser` で表示。**唯一の例外**: pull / diff / push / submit の入口で再ログインが要る（`Error::LoginRequired`）と分かったときだけ、`cli/relogin.rs` の `open_with_relogin` が、ヘッドレスを閉じ → 表示つきで開いて `wait_for_login`（既定 10 分）→ 閉じ → 開き直して確認し直す。再試行は 1 回だけで、失敗・時間切れ・2 回目もログイン画面は終了コード 5。作業の途中のセッション切れは対象外）、UA の HeadlessChrome は Chrome に置き換え、操作の前に毎回 `Emulation.setFocusEmulationEnabled`。`Page.bringToFront` は使わない。クリックは scrollIntoView 後に矩形中心へ実マウス入力、覆われていたら押さない。書き換えはフォーカス → 全選択 → `Input.insertText`（DOM の `value` 直接代入はしない）。待ちは固定 sleep でなく上限つきの条件確認。
-- **ページ内スクリプトに利用者の入力値を埋め込まない。** 書き込む文字列は CDP の `Input.insertText` で渡す。
-- **書き込みの安全策**: `write_gate.rs` は確認済みの状態（許可リスト）以外を止める。審査の取り消しはしない。言語ごとに「切替 → 書換 → 全欄照合 → 保存 → 再読込 → 照合」、最後に全言語を読み直す。途中で失敗したら、そのアイテムの残りは行わない。beforeunload は「留まる」を選んで中止する。
-- **審査送信は 1 件ずつ明示**（`submit --item <id> --yes`）。「自動的に公開する」チェックは変えずに報告する。
-- **掲載画像**（`images`・`services::push_images`）: 手順は `&mut dyn ImagePage` だけを受け取る（審査送信は無い）。**比較はファイルのバイト列ではなくデコードした画素の SHA-256**（ダッシュボードは PNG を再エンコードする。`images/png.rs`）。原本は `=s0` を Cookie なしの `net/winhttp.rs` で取得し、取得・デコードできなければ「比較不能」で止める（一致扱いにも常に置換にもしない）。スロットは `selectors::pick_image_slot` が絞る（絞れなければ止める）。クリックは削除ボタンと削除確認だけで、並べ替えには触れない。**ストア アイコン（`images.icon`、128x128）も同じ仕組みで、全言語共通なので `--image-scope global` に含める。アイコンだけは透過（RGBA）を許し、`png::pixel_digest_rgba` で比べる。**書き込みは日本語の画面だけ。**画像の削除はサーバーへ即座に反映される**ので、途中で止まると下書きから画像が欠ける（再実行で整える）。ローカライズ版が対象でロケールがダッシュボードに無ければ、何も触らず止めて `--image-scope global` か `--locale` を案内する。CLI は `--only text|images|privacy`・`--image-scope all|global|localized`（MCP は `only`・`imageScope`）。詳細は DESIGN.md「掲載画像」
-- **「プライバシー」タブ**（`privacy`・`services::push_privacy`）: 権限を足すと、タブ（`<編集画面>/privacy`）に正当性などを入れないと審査に送信できない。**設定の `privacy` に書いた欄だけ**（`singlePurpose`・`permissions`・`remoteCode`・`dataUsage`・`policyUrl`）を、説明文と同じ区間の正本（`config/section.rs`）から読み取り・比較・下書き保存する。本文は共通の字下げを取り（`privacy::dedent`）、空・1,000 文字超過は Chrome を開く前に終了コード 2 で止める。`dataUsage.certify` は true だけ許す。手順は `&mut dyn PrivacyPage` だけを受け取る（審査送信は無い。`EditorPage` ← `ListingPage` / `ImagePage` / `PrivacyPage` の分離を崩さない）。**`permissions` を書いたときは権限の一覧そのものも照合し**、食い違えば `diff` は終了コード 1、`push` は何も書かず `WriteBlocked` で止める。欄は `selectors::classify_privacy_textareas` などで 1 つに絞る（絞れなければ止める）。保存はテキスト・画像とは別に最後に行う。**日本語の画面だけ**扱う。**リモートコードは未対応**（設定に書くと `diff` がエラー、`push` が止まる）。`--only privacy` で絞れ、`--locale` では絞らない。詳細は DESIGN.md「「プライバシー」タブ」
-- **区間切り出しは検証スクリプト（push.mjs）と同じ結果にする。** 見出しが無ければエラー。`sectionStart` / `sectionEnd` は Rust の `regex` で解釈するため、先読み・後読み・後方参照は使えない（設定の契約）。`crates/edictora/tests/fixtures/ReplaceTranslator` の SHA-256・文字数（ja=1492 / en=3172）のテストを壊さない。
-- **設定に書いていない欄は、読み出し・比較・書き換えの対象外。** 未知のキーはエラー。URL 欄はキーなし＝対象外、`""`＝空欄が正本。
-- **カテゴリ**（`category`・`listing/category.rs`・`ListingPage::read_category` / `write_category`）: 全言語共通のアイテム単位の欄なので `ListingField`（ロケール単位）には入れず、`ExpectedItem::category`（キー）で持つ。値は言語に依らない小文字のキーで、`data-value` との対応表は `listing/category.rs` の 1 か所（未知のキーは Chrome を開く前に終了コード 2。未選択のプレースホルダーは正本にできない）。画面は `ul[role=listbox][aria-label="カテゴリ"]` の `aria-selected="true"` の `data-value` を**閉じたまま**読み（判断は `selectors::category_options` / `selected_category` / `pick_category_option`）、書き込みはコンボボックスを実マウスで開く → 一覧が見えるまで待つ → 一致する選択肢をちょうど 1 つ実クリック → 閉じて選択を確かめる。**日本語の画面だけ**（`DashboardText::category` が EN は None）。手順（`services::push_core`）はロケールのループの前に独立した 1 サイクルで、不足ロケールの確認より後。読み出しの失敗はこの欄だけのエラー（`ItemSnapshot::category` が `Err`）にしてロケールの読み出しは続ける。`--only text` に含み、`--locale` では絞らない
-- **プライバシー ポリシー URL**（`privacy.policyUrl`・`PrivacyField::PolicyUrl`・`PrivacyPage::write_policy_url`）: 短い 1 行の欄（`input[type=text]`、検査は textarea 用を広げず `selectors::ensure_privacy_url_writable` を別に持つ）。ラベル「プライバシー ポリシーの URL」の 1 行完全一致で 1 つに絞る（`find_policy_url_input`）。契約は公式 URL などと同じ（http(s) の絶対 URL、2,048 文字以内）。`privacy` の「1 欄も無ければエラー」では policyUrl も 1 欄に数える
-- **引数と設定の誤りは Chrome を開く前に終了コード 2 で止める。** 終了コードは 0 / 1 / 2 / 3（差分あり）/ 4（書き込み中止）/ 5（ログインが必要）/ 130（中断）。進捗は標準エラー、結果は標準出力。
-- 失敗時の診断は**画像ではなくページのテキスト スナップショット**（`yyyyMMdd-HHmmss-<ラベル>.txt`）を `%LOCALAPPDATA%\Edictora.Data\diagnostics` に置き、リポジトリには置かない（`Page.captureScreenshot` は使わない）。中身はページ内スクリプトの `snapshot()` が作る（見えている要素の 役割・名前・値・状態・矩形 の字下げツリー。1 値 2,000 文字・全体 1,000,000 文字で切る）。保存前に必ず `logging::redact_diagnostics` を通し、publisherId を `<publisher>`、Google アカウントの氏名を `<name>`、メールアドレスを `<email>` にする。push / submit の失敗と、pull / diff の読み出し失敗（ログイン切れ以外）で保存し、保存先を結果のエラー文に含める。
-- **MCP（`edictora mcp`）は CLI の薄い皮にする**: ツールは `edictora_list_items` / `edictora_diff` / `edictora_pull` / `edictora_push` / `edictora_submit` だけで、中身は `CliApp::run` を呼び出力をメモリで受ける（手順・安全策・終了コード・伏せ字を二重に持たない）。**画面表示・login・update・プロファイル・chrome.exe の指定はツールに持たせない**（再ログイン時に CLI 側が表示つきの Chrome を自動で開く動きだけは例外で、説明文・INSTRUCTIONS に英語で書く。スキーマは `additionalProperties: false`）。push / submit は `confirm: true` が無ければ書かず、`destructiveHint` を付ける。終了コード 3 は `isError: false`。呼び出しは作業スレッド 1 本で順に実行し、`notifications/cancelled` で中断する。標準出力には JSON-RPC 以外を書かない。**実行中ロックはサーバーの生存期間中ずっと共有で持つ**（`main.rs`）。説明文には英語の検索語（Chrome Web Store・store listing・description）を入れ、ASCII だけにする（テストで固定）。**Setup 版はフックで Claude Code・Codex へ自動登録・解除する**（`install/connect.rs`。公式 CLI の `.exe` だけを時間制限つきで呼ぶ、既に自分を指す登録は触らない、解除は自分の exe を指す登録だけ、Portable 版は登録しない。テストはスタブ）。詳細は DESIGN.md「MCP サーバー」
-- **AI エージェントは edictora を `--show-browser` 付きで実行しない**（利用者の画面にウィンドウが出る）。原因調査はエラー文と diagnostics のスナップショット（テキスト）で行う。「覆われていて押せません」のエラー文には、中心にあった要素・要素の枠・画面の大きさを含める（`selectors::covered_error_message`）。
-- **自動更新（Velopack）**: インストール・差し替え・アンインストールは Velopack の Setup.exe / Update.exe に任せ、Edictora は更新の確認とダウンロードだけを自前で行う（velopack crate は使わない）。約束（フック引数・`sq.version`・`releases.{channel}.json`・`.partial` → 検証 → 改名・`apply` の引数）は vendored の Velopack 1.2.161 Rust SDK に合わせ、推測で変えない。SDK との違いは DESIGN.md「配布・インストール・自動更新」。
-- **フックは引数の解釈より前に処理して必ず 0 で終える**（`edictora.exe`・`edictora-updater.exe` の両方）。install / updated で HKCU の Run に更新用 exe、ユーザー PATH に `<根>\current` を登録し、uninstall で取り除く。名前と要素は根から決める。PATH は型と他の要素を壊さない。インストール先から起動されていなければレジストリに触れない。テストは RegLoadAppKeyW の専用ハイブを使い、実際の Run・PATH に触れない。
-- **Chrome を開くコマンドの実行中は更新を適用しない**（契約）。apply がインストール先配下のプロセスを止め、push の途中で落ちると書き込みの安全策が崩れるため。login / pull / diff / push / submit は、設定の検証の後・ブラウザ操作の間だけ `<データの根>\edictora-running.lock`（`AppPaths::running_lock_path`）を共有で持つ（開けないだけなら続行）。更新側は Update.exe の直前にこれを排他で取り、取れなければ適用せず `AppInUse`（`update` は終了コード 1）。適用中に Chrome を開くコマンドを実行したら、開かずに終了コード 1。Run の同名の値が「別の場所に実在する」更新用 exe を指すときだけ上書きしない
-- **Portable 版（根に `.portable`）では install / updated フックで Run・PATH を登録しない**（手動の `edictora update` は使える）。Run の値の削除は現在の値が自分の値と一致するときだけ
-- **更新は `edictora update` とログオン時の `edictora-updater.exe` だけ**。pull / diff / push / submit の中では確かめない。`update` は設定を読まず Chrome を開かない。検証（サイズと SHA256、無ければ SHA1）に通らないパッケージは適用しない。配信元は定数 `https://edictora.kagayoi.com`、検証用に `EDICTORA_UPDATE_URL`（平文は 127.0.0.1 だけ）。テストは 127.0.0.1 の偽配信元と偽の `ApplyLauncher` を使う。
-
-## 保存先
-
-- **MSIX パッケージ内のアプリ（Claude デスクトップの Bash など）から実行すると、`%APPDATA%` / `%LOCALAPPDATA%` に新規作成したフォルダーはパッケージ専用領域（`%LOCALAPPDATA%\Packages\<名前>\LocalCache\...`）へ入り、通常のターミナルから見えなくなる**。Edictora は既定の設定とプロファイルがそこから読まれていれば標準エラーへ警告し（`redirect.rs`）、既定の設定が無ければ専用領域の候補をエラー文に添える。AI エージェントは設定・データのフォルダーを新規に作らず、設定を作るときは本物の場所にあるか確かめる。詳細は DESIGN.md「パッケージ内のアプリからの保存先リダイレクト」
-
-- 設定（正本の対応づけ）: `%APPDATA%\Edictora\config.json`（`--config` で変更可）
-- Chrome プロファイル: `%LOCALAPPDATA%\Edictora.Data\chrome-profile`（設定の `profileDir` / `--profile` で変更可）
-- ログ: `%LOCALAPPDATA%\Edictora.Data\logs`、失敗時のページのスナップショット（テキスト）: `%LOCALAPPDATA%\Edictora.Data\diagnostics`
-- アプリ本体（Velopack のインストール先）: `%LOCALAPPDATA%\Edictora`。アンインストールで消えるので、データはここに置かない
-- 検証用に環境変数 `EDICTORA_LOCAL_ROOT` / `EDICTORA_ROAMING_ROOT` で保存先の根を、`EDICTORA_UPDATE_URL` で更新の配信元を差し替えられる
-
-## コーディング規約
-
-- コメント・コミットメッセージは **日本語**。コメントは目的・設計意図・制約を多めに書く
-- 人が読む文言（CLI の進捗・結果・エラー、差分、ヘルプ）は 9 言語（ja・en・zh-CN・zh-TW・ko・es・fr・de・pt-BR）で、`crates/edictora/src/locales/<タグ>.json` の辞書に持ち、`tr!("キー", 名前 = 値)` / `trs!("キー")`（`i18n.rs`）で参照する。プレースホルダーは `{name}` で全言語同じ集合、辞書に無いキーは英語。表示言語は `EDICTORA_LANGUAGE` → `LC_ALL` → `LC_MESSAGES` → `LANG` → OS の表示言語 → 英語。**人が読む文言を足したら、9 言語の辞書を同時に更新し、整合テスト（`tests/localization.rs`）を通す**。`cargo test` は `.cargo/config.toml` で `EDICTORA_LANGUAGE=ja` に固定される。AI が読む文言（MCP のツール名・説明・スキーマ・応答とエラー）は英語に統一し辞書を通さない。利用者のデータ・識別子・コマンド・設定キー・外部のエラー原文は訳さない。ログの定型文は日本語のまま。**README は英語の `README.md` を正本とし、`README.<タグ>.md`（ja・zh-CN・zh-TW・ko・es・fr・de・pt-BR）を置く。README を変えたら全言語版を同時に直す**。リリースのパッケージに同梱するのは英語の `README.md` だけ
-- 依存は最小限（`serde` / `serde_json` / `regex` / `tungstenite`（同期・TLS なし・`handshake` のみ）、テスト専用に `sha2`）。HTTP/TLS crate は使わない（DevTools の確認は localhost への素の HTTP/1.1）。**外部への HTTPS（自動更新、画像の原本）は、crate を足さず WinHTTP を FFI で直接使い、`net/winhttp.rs` に集める**（リダイレクト無効・タイムアウトと全体の期限・Ctrl+C で抜ける・応答の上限・平文は 127.0.0.1 のテストだけ）。Ctrl+C・レジストリ・ハッシュ（CNG）などは Windows API を直接宣言して使う
-- CDP は入出力スレッド 1 本が非ブロッキングのソケットを持ち、応答待ちの間もイベントを配る
-- `AppPaths` は値として注入する。テストは `target/tmp` 配下を根にし、実プロファイル・実設定を解決しない。CLI のテストはブラウザを開く関数に「呼ばれたら panic」を渡す
-- Bun 側のパッケージ管理は Bun（`packageManager: bun@1.4.5`、`bunfig.toml` の `minimumReleaseAge`）。依存は `typescript` だけ
-- バージョンは `Cargo.toml` の `[workspace.package] version` に一元化。**更新は /vava 指示時のみ**
-
-## ビルド / テスト
-
-```powershell
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo build --release          # target\release\edictora.exe と edictora-updater.exe
-cd page-scripts; bun install --frozen-lockfile; bun run typecheck; bun run build; bun run check; bun test
-```
-
-- 実ダッシュボードに接続するテストは書かない。**テスト・動作確認で Chrome を起動しない**（実画面の確認は手動で行う）
-- **テストで Velopack の Setup / Update.exe を実行せず、実際の HKCU の Run・PATH を書き換えない**（結合確認は packId を変えた検証用パッケージで手動で行う）
-
-- **Chrome を起動する経路は `seed_local_state` を通す**: `chrome::launcher::launch_or_attach` は新規起動の直前に user-data-dir の `Local State` へ `password_manager.os_password_blank=false` と `os_password_last_changed="9223372036854775000"` を書く（既存キーは保つ。`tests/chrome_launcher.rs` で固定）。新規プロファイルの連続起動で Windows アカウントがロックされるのを防ぐため。別経路を足すときも同じシードを先に行う。
-
-## 既知の制約 / 今後の課題
-
-- 実画面での確認状況は DESIGN.md「実画面での確認状況」を正本とする（英語の画面は未確認）。未確認の画面状態: 審査待ちアイテムの編集画面、URL 欄の書き換えと保存、言語が 1 つだけのアイテム、ローカライズ版の書き込み、Ctrl+C・beforeunload。`write_gate.rs` の許可リストは実画面の表記で確かめて更新する
-- **「拒否」を許可したことの未確認のリスク**: 拒否のアイテムを再提出した直後も表記は「拒否」のままだった。審査中でも「拒否」と出続けるなら、審査中のアイテムに書き込めてしまう。再提出後の表記を実画面で確かめるまで、拒否のアイテムへの push は利用者の確認のうえで行う
-- MCP・自動更新の未確認（実画面での MCP 操作、自動登録・解除、実署名・R2 への実配信など）は DESIGN.md を参照
-- exe にアイコンとバージョン情報のリソースがまだ無い
-
-## リリース
-
-詳細は [docs/release.md](docs/release.md)。通常の公開は、`/vava` が版を上げた main へ軽量タグ `v<version>` を付けて push すると、そのタグの push で CI の `release.yml`（Environment `release`、承認待ちなし）が自動で起動して行い、手元から重ねて配信しない。`workflow_dispatch` は同じタグを指定した再実行にだけ使う（`guard` ジョブと Environment の tag ポリシーが不正な指定を拒否する。GitHub Release は作らない）。`vpk pack`（Velopack 1.2.161、packId `Edictora`、チャンネル `win`）の中で Sigilune が 1 ファイルずつ署名し、nupkg・Setup・Portable とフィード `releases.win.json` を R2（`edictora-updates`、`https://edictora.kagayoi.com`）へ配信する。CI は `SIGILUNE_EMAIL` / `SIGILUNE_TOTP_URI` / `CLOUDFLARE_API_TOKEN` を Environment の Secrets から受け取る。
-
-```powershell
-gh workflow run release.yml --repo 1llum1n4t1s/Edictora --ref v<version>
-```
-
-ローカル実行は検証（`-SkipUpload`）に使う。事前に Sigilune のクラウドログインを確認し、失敗時は `sigilune status` で登録を確認するよう案内し、ログインを自動再試行しない。
-
-```powershell
-$sigilune = if ($env:SIGILUNE_EXE) { $env:SIGILUNE_EXE } else { Join-Path $env:USERPROFILE '.local\Sigilune\bin\sigilune.exe' }
-& $sigilune login
-if ($LASTEXITCODE -eq 0) { pwsh -NoProfile -File scripts/release-local.ps1 -SkipUpload } else { throw 'Sigilune でクラウドにログインできなかったよ。sigilune status で登録を確認してね' }
-```
+- 手順は `services.rs`、画面操作は trait 越し、要素の選択は Rust の純粋関数: [architecture](docs/agents/architecture.md)・構成は [source-layout](docs/agents/source-layout.md)
+- Chrome は最小の起動引数・前面に出さない・プロファイルは削除しない・要素はラベルで探す。AI は `--show-browser` を使わない: [browser-automation](docs/agents/browser-automation.md)
+- 書き込みは許可リスト以外を止める。審査送信は 1 件ずつ明示。誤りは Chrome 前に終了コード 2: [write-safety](docs/agents/write-safety.md)
+- 掲載画像は画素ダイジェストで比較: [listing-images](docs/agents/listing-images.md)
+- 「プライバシー」タブは設定に書いた欄だけ扱う: [privacy-tab](docs/agents/privacy-tab.md)
+- MCP は CLI の薄い皮。ツールは 5 つだけ: [mcp-server](docs/agents/mcp-server.md)
+- 自動更新（Velopack）と実行中ロック: [auto-update](docs/agents/auto-update.md)
+- コメント・コミットは日本語、人向け文言は 9 言語、依存は最小限: [coding-conventions](docs/agents/coding-conventions.md)
+- 設定・プロファイル・ログの保存先と MSIX リダイレクト: [storage-paths](docs/agents/storage-paths.md)
+- fmt・clippy・test。テストで Chrome を起動しない: [build-and-test](docs/agents/build-and-test.md)
+- 未確認の画面状態と既知のリスク: [known-issues](docs/agents/known-issues.md)
+- リリースは `/vava` とタグ push の CI: [release-process](docs/agents/release-process.md)（[docs/release.md](docs/release.md)）
