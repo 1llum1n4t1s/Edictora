@@ -9,5 +9,6 @@
 - Edictora doesn't write when the item's status can't be confirmed as safe to edit, such as "Pending review". It never cancels a review.
 - Fields and buttons are found by label, role and text, never by CSS class names. If a search doesn't match exactly one element, Edictora stops.
 - Chrome is started without automation flags and shut down cleanly. **The profile is never deleted.**
+- Only one edictora (CLI or MCP tool) uses a Chrome profile at a time. If another edictora is already using it, the command you ran later exits with code 1 without opening Chrome. Right before saving, deleting or uploading images, or submitting for review, Edictora checks again that the tab is still on the item's page.
 - Page snapshots (text) taken on failure go to `%LOCALAPPDATA%\Edictora.Data\diagnostics`, never to your repository. They can contain dashboard field values; the publisher ID and your Google account name and email address are masked.
 - Image and Privacy practices updates change only what differs and can never submit for review. Privacy updates also stop without writing if the dashboard's permissions don't match the config.

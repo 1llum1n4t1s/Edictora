@@ -22,6 +22,7 @@ Add `images` to an item to manage its store images. Keys you leave out are never
 - `push --yes` replaces a whole slot (delete all, then upload in order) only when it differs, saves a draft, reloads and checks again. Order: store icon, small tile, marquee, global screenshots, then each language's localized screenshots. It never reorders images or submits for review, and never touches an item that is pending review.
 - **Deleting an image takes effect on the dashboard immediately.** If a push stops halfway, the draft can be left with images missing: run it again to finish.
 - An item with a single language has no localized screenshots, so use `--image-scope global`. If a locale in `localizedScreenshots` isn't on the dashboard, Edictora stops before changing anything: use `--image-scope global` or `--locale`.
+- If Edictora can't confirm that switching the language changed what the page shows (for example, the description and the localized screenshots are the same as in the previous language), it stops without writing (exit code 4). If the switch can't be confirmed when it re-reads the page after saving, the saved changes stay saved, but it ends with an error (exit code 1) instead of reporting success.
 - Writing images works only while the dashboard is shown in Japanese.
 - Narrow commands with `--only text|images|privacy` and `--image-scope all|global|localized`.
 

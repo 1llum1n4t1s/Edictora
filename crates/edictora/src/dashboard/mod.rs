@@ -120,6 +120,17 @@ pub struct PageImage {
     pub src: String,
 }
 
+/// 画像の手順のための言語の切替の結果（[`ImagePage::switch_locale_for_images`]）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocaleSwitch {
+    /// 切り替える前から目的の言語だった（画面の中身はその言語のもの）
+    AlreadySelected,
+    /// 切り替え、画面の中身（説明欄とローカライズ版スクリーンショット）が切替前と変わったことを確かめた
+    ContentChanged,
+    /// 切り替えたが、上限時間までに画面の中身が切替前と変わらなかった（中身が新しい言語のものか確かめられない）
+    ContentUnchanged,
+}
+
 /// 掲載画像の読み書き。スロットは画面の寸法の表記と見出しで Rust 側が 1 つに絞る（絞れなければ止める）。
 ///
 /// ローカライズ版スクリーンショットは、編集中の言語（[`EditorPage::switch_locale`]）のものを操作する。
@@ -138,6 +149,14 @@ pub trait ImagePage: EditorPage {
 
     /// ファイルを 1 枚追加する。枚数が 1 枚増え、alt の番号が揃い、エラー表示が無いことを確かめるまで待つ
     fn upload_image(&mut self, slot: ImageSlot, path: &Path, cancel: &CancelToken) -> Result<()>;
+
+    /// 編集中の言語を切り替え（[`EditorPage::switch_locale`]）、画面の中身が入れ替わったかを返す。
+    /// 説明が言語間で同じでも取り違えないよう、ローカライズ版スクリーンショットの並びも合わせて見る
+    fn switch_locale_for_images(
+        &mut self,
+        code: &str,
+        cancel: &CancelToken,
+    ) -> Result<LocaleSwitch>;
 }
 
 /// 「プライバシー」タブ（単一用途の説明・権限の正当性・データ使用の開示）の読み書き。

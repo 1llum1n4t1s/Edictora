@@ -7,7 +7,7 @@
 - **push**: rewrites only the differing fields, **saves them as a draft**, then reloads and checks the saved values.
 - **submit**: submits one item for review. It doesn't change the "publish automatically after review" setting.
 - **login**: opens Chrome with the dedicated profile so you can sign in to Google yourself.
-- **update**: installs a newer version if there is one (Setup installs only).
+- **update**: installs a newer version if there is one. The Portable version can update by hand with `current\edictora.exe update`; the automatic update at sign-in runs only for Setup installs.
 
 ## Sign in
 

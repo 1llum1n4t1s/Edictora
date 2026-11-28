@@ -26,7 +26,7 @@ Es läuft als einzelnes Befehlszeilenwerkzeug (`edictora.exe`), ist in Rust gesc
 - **Registerkarte „Datenschutz“**: Hat ein Eintrag in der Konfiguration `privacy`, behandeln `pull`, `diff` und `push` auch die Registerkarte „Datenschutz“ des Dashboards (Privacy practices: Beschreibung des einzigen Zwecks, Begründung jeder Berechtigung und Angaben zur Datennutzung). Mit `--only privacy` lässt sich das eingrenzen. Es wird nur als Entwurf gespeichert und nie zur Prüfung eingereicht.
 - **submit**: reicht ein Element zur Prüfung ein. Die Einstellung „Nach der Prüfung automatisch veröffentlichen“ wird dabei nicht geändert.
 - **login**: öffnet Chrome mit dem eigenen Profil, damit Sie sich selbst bei Google anmelden können.
-- **update**: lädt eine neuere Version herunter und installiert sie, falls es eine gibt. Das funktioniert nur, wenn Sie Edictora mit Setup installiert haben, und läuft außerdem automatisch bei Ihrer Windows-Anmeldung.
+- **update**: lädt eine neuere Version herunter und installiert sie, falls es eine gibt. Bei einer Installation mit Setup läuft das außerdem automatisch bei Ihrer Windows-Anmeldung; die Portable-Version aktualisieren Sie manuell mit `current\edictora.exe update`.
 
 ## Anzeigesprache
 
@@ -50,7 +50,7 @@ Führen Sie `Edictora-win-Setup.exe` (ein Velopack-Installer) aus. Er installier
 - Die Portable-Version (`Edictora-win-Portable.zip`) aktualisiert sich bei der Anmeldung nicht automatisch und trägt sich nicht in den `Path` ein. Zum Aktualisieren führen Sie `current\edictora.exe update` in dem Ordner aus, in den Sie sie entpackt haben. Aus dem Quellcode gebaute Programmdateien aktualisieren sich nicht selbst.
 - Aktualisierungen werden nie angewendet, während `login`, `pull`, `diff`, `push` oder `submit` läuft. Edictora schließt den Download ab und wendet die Aktualisierung später an.
   - Führen Sie einen dieser Befehle aus, während eine Aktualisierung angewendet wird, endet er mit Exitcode 1, ohne Chrome zu öffnen. Warten Sie einen Moment und führen Sie ihn erneut aus.
-  - Nachdem der Aktualisierungsprozess beendet ist, braucht Update.exe noch einige Sekunden, um die Dateien zu ersetzen, und Edictora kann diese Lücke nicht absichern. Warten Sie direkt nach einer Aktualisierung einen Moment, bevor Sie einen Befehl ausführen.
+  - Das gilt auch, nachdem der Aktualisierungsprozess beendet ist, bis Update.exe die Dateien vollständig ersetzt hat.
 - Beim Deinstallieren werden `%LOCALAPPDATA%\Edictora` sowie die Einträge unter `Run` und `Path` entfernt. Ihre Daten (`%LOCALAPPDATA%\Edictora.Data`) und Einstellungen (`%APPDATA%\Edictora`) bleiben erhalten; löschen Sie sie selbst, wenn Sie sie nicht mehr brauchen.
 
 ## Voraussetzungen
@@ -134,6 +134,7 @@ Fügen Sie einem Eintrag `images` hinzu, um seine Store-Bilder zu verwalten. Wie
 - `push --yes` ersetzt einen Platz komplett (alles löschen, dann der Reihe nach hochladen) nur bei Abweichung, speichert einen Entwurf, lädt neu und prüft erneut. Reihenfolge: Shop-Symbol, kleine Kachel, Marquee, globale Screenshots, dann die lokalisierten Screenshots je Sprache.
 - **Das Löschen eines Bildes wirkt im Dashboard sofort** (es fragt „Das kann nicht rückgängig gemacht werden“, und nach dem Neuladen ohne Speichern blieb der Platz leer). Bricht ein Push mittendrin ab, kann der Entwurf ohne einzelne Bilder zurückbleiben: Führen Sie ihn erneut aus, um ihn abzuschließen. Edictora fasst nie einen Eintrag an, der in Prüfung ist.
 - Ein Eintrag mit nur einer Sprache hat keine lokalisierten Screenshots; verwenden Sie `--image-scope global`. Ist eine Sprache aus `localizedScreenshots` nicht im Dashboard, hält Edictora an, bevor etwas geändert wird: Verwenden Sie `--image-scope global` oder `--locale`.
+- Kann Edictora nicht bestätigen, dass sich der Seiteninhalt beim Wechsel der Sprache geändert hat (zum Beispiel, wenn die Beschreibung und die lokalisierten Screenshots dieselben sind wie in der vorherigen Sprache), hält es an, ohne zu schreiben (Exitcode 4). Kann der Wechsel beim erneuten Lesen nach dem Speichern nicht bestätigt werden, bleiben die gespeicherten Änderungen erhalten, aber Edictora meldet keinen Erfolg, sondern endet mit einem Fehler (Exitcode 1).
 - Bilder lassen sich nur schreiben, solange das Dashboard auf Japanisch angezeigt wird (die englischen Bezeichnungen sind nicht verifiziert).
 
 ```powershell
@@ -198,7 +199,7 @@ edictora submit --item <id> --yes               # Submit one item for review
 | Exitcode | Bedeutung |
 |---|---|
 | 0 | Erfolg (keine Unterschiede) |
-| 1 | Laufzeitfehler (eine Dashboard-Operation ist fehlgeschlagen, Abweichung bei der Prüfung usw.) |
+| 1 | Laufzeitfehler (eine Dashboard-Operation ist fehlgeschlagen, Abweichung bei der Prüfung, dasselbe Chrome-Profil wird von einem anderen edictora verwendet usw.) |
 | 2 | Ungültige Argumente oder Konfiguration (Chrome wird nicht geöffnet) |
 | 3 | Unterschiede gefunden (`diff` oder `push` ohne `--yes`) |
 | 4 | Schreibvorgang abgebrochen (Prüfung ausstehend oder der Status konnte nicht ermittelt werden) |
@@ -220,7 +221,7 @@ Um zu beobachten, was passiert, fügen Sie `--show-browser` hinzu. `login` zeigt
 
 `edictora mcp` ist ein MCP-Server, der über Standardeingabe und Standardausgabe läuft. Ist er bei Claude Code, Codex oder einem anderen Client registriert, kann die KI Edictora finden und verwenden, wenn sie Ihre Store-Einträge bearbeitet.
 
-**Setup registriert Edictora automatisch bei Claude Code und Codex**, sofern deren offizielle CLIs (`claude` und `codex`) im `PATH` liegen. Beim Deinstallieren werden nur die Registrierungen entfernt, die auf Edictora zeigen.
+**Setup registriert Edictora automatisch bei Claude Code und Codex**, sofern deren offizielle CLIs (`claude` und `codex`) im `PATH` liegen. Gesucht werden nur `claude.exe` und `codex.exe`, keine `.cmd`-Wrapper (wie bei einer Installation über npm); gibt es nur eine `.cmd`, registrieren Sie Edictora wie unten beschrieben manuell. Beim Deinstallieren werden nur die Registrierungen entfernt, die auf Edictora zeigen.
 - Fehlte eine CLI bei der Installation oder wurde die Registrierung nicht rechtzeitig abgeschlossen, versucht Edictora es bei Ihrer nächsten Anmeldung erneut. Dasselbe gilt, wenn Sie eine CLI später installieren.
 - Wenn Sie eine Registrierung nach dem Hinzufügen selbst entfernen, fügt Edictora sie nicht erneut hinzu.
 
@@ -300,6 +301,7 @@ Wenn Sie ein MCP-Gateway verwenden (etwa Toolport), registrieren Sie denselben B
 - Edictora schreibt nicht, wenn sich nicht bestätigen lässt, dass der Status des Elements eine Bearbeitung sicher zulässt, etwa bei „Prüfung ausstehend“. Eine Prüfung wird nie abgebrochen.
 - Felder und Schaltflächen werden über Beschriftung, Rolle und Text gefunden, nie über CSS-Klassennamen. Trifft eine Suche nicht genau ein Element, bricht Edictora ab.
 - Chrome wird ohne Automatisierungs-Flags gestartet und sauber beendet. **Das Profil wird nie gelöscht.**
+- Ein Chrome-Profil wird jeweils nur von einem edictora (CLI oder MCP-Tool) verwendet. Wenn bereits ein anderes edictora es verwendet, endet der später ausgeführte Befehl mit Exitcode 1, ohne Chrome zu öffnen. Unmittelbar vor dem Speichern, dem Löschen oder Hochladen von Bildern und dem Einreichen zur Überprüfung prüft Edictora erneut, dass der Tab noch die Seite des Eintrags zeigt.
 - Bei einem Fehler gespeicherte Text-Snapshots der Seite werden unter `%LOCALAPPDATA%\Edictora.Data\diagnostics` gespeichert, nie in Ihrem Repository. Sie können Feldwerte der Dashboard-Seite enthalten (die publisherId sowie Name und E-Mail-Adresse Ihres Google-Kontos werden maskiert).
 - Bild-Updates ersetzen nur die Plätze, die abweichen. Sie ordnen keine Bilder um, und sie können nie zur Prüfung einreichen (der Bildcode hat keinen Weg, das aufzurufen).
 - Aktualisierungen der Registerkarte „Datenschutz“ ändern nur die abweichenden Felder, reichen nie zur Prüfung ein (der Code hat keine Möglichkeit, das aufzurufen) und halten an, ohne etwas zu schreiben, wenn die Berechtigungen im Dashboard nicht zur Konfiguration passen.

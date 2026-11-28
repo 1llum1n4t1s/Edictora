@@ -14,6 +14,11 @@
 //!   適用しない（Update.exe がインストール先配下のプロセスを止めて push の途中で落とすのを防ぐ）。
 //!   排他で取れたら、プロセスが終わるまで持ち続ける（終わった後に Update.exe が差し替える）。
 //!   インストール先に依存しない場所に置くので、インストールされていない実行（cargo run など）でも無害
+//!   更新側は Update.exe へこのハンドルを継承させ（[`LockFile::make_inheritable`]）、自分が終わった後も
+//!   Update.exe が終わるまで排他を保つ
+//! - `<プロファイル>\edictora-profile.lock`（[`PROFILE_LOCK_FILE`]）… Chrome を開くコマンドが実行中だけ排他で持つ。
+//!   同じプロファイルで 2 つの edictora が同じ Chrome・作業タブを操作するのを防ぐ（後発はすぐ止める）。
+//!   取得順は「実行中のロック（共有）→ プロファイルのロック（排他）」の 1 通りだけ
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -26,6 +31,14 @@ pub const UPDATE_LOCK_FILE: &str = ".edictora-update.lock";
 
 /// 実行中の edictora を知らせるロックのファイル名（データの根 `Edictora.Data` に置く）
 pub const RUNNING_LOCK_FILE: &str = "edictora-running.lock";
+
+/// 同じ Chrome プロファイルの同時使用を防ぐロックのファイル名（Chrome 自身の lockfile とは別名）
+pub const PROFILE_LOCK_FILE: &str = "edictora-profile.lock";
+
+/// プロファイルのロックの場所（`<profileDir>\edictora-profile.lock`）
+pub fn profile_lock_path(profile_dir: &Path) -> PathBuf {
+    profile_dir.join(PROFILE_LOCK_FILE)
+}
 
 /// ロックを取れなかった理由が「他のプロセスが開いたまま」か（共有違反 32・ロック違反 33）
 pub fn is_held_by_another(error: &std::io::Error) -> bool {
@@ -76,5 +89,35 @@ impl LockFile {
     /// ロックファイルの場所
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// このハンドルを子プロセスへ継承させる（std の File は既定で非継承）。
+    /// 更新側が Update.exe を起動する前に呼び、自分の終了後も Update.exe が終わるまで排他を保つ
+    #[cfg(windows)]
+    pub fn make_inheritable(&self) -> std::io::Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        const HANDLE_FLAG_INHERIT: u32 = 0x1;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn SetHandleInformation(object: *mut std::ffi::c_void, mask: u32, flags: u32) -> i32;
+        }
+        // SAFETY: 自分が開いたままのファイルのハンドルを渡す（self が生きている間は有効）
+        let ok = unsafe {
+            SetHandleInformation(
+                self._file.as_raw_handle(),
+                HANDLE_FLAG_INHERIT,
+                HANDLE_FLAG_INHERIT,
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Windows 以外では何もしない
+    #[cfg(not(windows))]
+    pub fn make_inheritable(&self) -> std::io::Result<()> {
+        Ok(())
     }
 }

@@ -30,7 +30,7 @@ use crate::privacy::{self, PrivacySnapshot};
 use crate::redirect;
 use crate::services::{self, ImageSnapshot, LocalePushOutcome};
 use crate::update::UpdateOutcome;
-use crate::update::lock::{LockFile, is_held_by_another};
+use crate::update::lock::{LockFile, is_held_by_another, profile_lock_path};
 use crate::update::source::UpdateSource;
 use crate::util::{eq_ic, format_n0, utf16_len};
 use crate::{tr, trs};
@@ -237,6 +237,29 @@ impl<'a> CliApp<'a> {
             }
         };
 
+        // ── プロファイルのロック（同じプロファイルで 2 つの edictora が同じ Chrome・作業タブを操作しないように）──
+        // 実行中の印（共有）の後に排他で取り、run の終わりまで持つ（drop で解放）。後発は待たずに止める。
+        // 開けないときは実行中の印と違い続行しない（排他を確かめられないまま Chrome を開かない）
+        let profile_lock_path = profile_lock_path(&config.profile_directory);
+        let _profile = match LockFile::try_acquire(&profile_lock_path) {
+            Ok(lock) => lock,
+            Err(e) if is_held_by_another(&e) => {
+                self.errln(&tr!(
+                    "cli.error_the_chrome_profile_is_in_use",
+                    profile_directory = config.profile_directory.display()
+                ));
+                return exit_codes::FAILURE;
+            }
+            Err(e) => {
+                self.errln(&tr!(
+                    "cli.error_cannot_open_the_profile_lock_file",
+                    lock_path = profile_lock_path.display(),
+                    error = e
+                ));
+                return exit_codes::FAILURE;
+            }
+        };
+
         // ── ブラウザ操作 ──
         self.show_browser = command.show_browser;
         let result = match command.kind {
@@ -334,7 +357,8 @@ impl<'a> CliApp<'a> {
         command: &CliCommand,
         cancel: &CancelToken,
     ) -> Result<i32> {
-        self.outln(&tr!(
+        // 予告は進捗なので標準エラーへ出す（標準出力は結果だけ）
+        self.errln(&tr!(
             "cli.opening_chrome_profile",
             profile_directory = config.profile_directory.display()
         ));

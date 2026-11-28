@@ -10,7 +10,7 @@
 ## 表示言語（9 言語）
 
 - 人が読む文言（CLI の進捗・結果・エラー、差分、ヘルプ）は 9 言語（ja・en・zh-CN・zh-TW・ko・es・fr・de・pt-BR）で、`crates/edictora/src/locales/<タグ>.json` の辞書に持ち、`tr!("キー", 名前 = 値)` / `trs!("キー")`（`i18n.rs`）で参照する。プレースホルダーは `{name}` で全言語同じ集合、辞書に無いキーは英語。
-- 表示言語は `EDICTORA_LANGUAGE` → `LC_ALL` → `LC_MESSAGES` → `LANG` → OS の表示言語 → 英語。`cargo test` は `.cargo/config.toml` で `EDICTORA_LANGUAGE=ja` に固定される。
+- 表示言語は `EDICTORA_LANGUAGE` → `EDICTORA_LANG`（旧名） → `LC_ALL` → `LC_MESSAGES` → `LANG` → OS の表示言語 → 英語。`cargo test` は `.cargo/config.toml` で `EDICTORA_LANGUAGE=ja` に固定される。
 - **人が読む文言を足したら、9 言語の辞書を同時に更新し、整合テスト（`tests/localization.rs`）を通す**。
 - AI が読む文言（MCP のツール名・説明・スキーマ・応答とエラー）は英語に統一し辞書を通さない。利用者のデータ・識別子・コマンド・設定キー・外部のエラー原文は訳さない。ログの定型文は日本語のまま。
 - **README は英語の `README.md` を正本とし、`README.<タグ>.md`（ja・zh-CN・zh-TW・ko・es・fr・de・pt-BR）を置く。README を変えたら全言語版を同時に直す**。リリースのパッケージに同梱するのは英語の `README.md` だけ。

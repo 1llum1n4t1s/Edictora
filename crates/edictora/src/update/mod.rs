@@ -254,6 +254,14 @@ pub fn run_update(
     };
 
     let args = apply_args(installation, &package, wait_pid);
+    // Update.exe へ排他のハンドルを継承させ、自分が終わってから Update.exe が .velopack_lock を取るまでの
+    // 隙間にも実行中ロックを空けない。継承できなければ適用を任せない
+    app_lock.make_inheritable().map_err(|e| {
+        update_err(crate::tr!(
+            "update.could_not_pass_the_running_lock_to_update_exe",
+            error = e
+        ))
+    })?;
     launcher.launch(&installation.update_exe, &args)?;
     // プロセスの終了まで排他で持ち続ける（ハンドルは終了時に OS が閉じる）。
     // ここで閉じると、Update.exe が差し替えを始める前に新しい CLI が Chrome を開き始めうる

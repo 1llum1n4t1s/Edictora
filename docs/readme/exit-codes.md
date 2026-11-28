@@ -5,7 +5,7 @@
 | Exit code | Meaning |
 |---|---|
 | 0 | Success (no differences) |
-| 1 | Runtime error (a dashboard operation failed, verification mismatch, etc.) |
+| 1 | Runtime error (a dashboard operation failed, verification mismatch, the same Chrome profile is in use by another edictora, etc.) |
 | 2 | Invalid arguments or config (Chrome isn't opened) |
 | 3 | Differences found (`diff`, or `push` without `--yes`) |
 | 4 | Write aborted (pending review, or the state couldn't be determined) |

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use edictora::cancel::CancelToken;
 use edictora::dashboard::write_gate::ItemPageState;
 use edictora::dashboard::{
-    EditorPage, ImagePage, ListingPage, PageImage, SubmitConfirm, SubmitResult,
+    EditorPage, ImagePage, ListingPage, LocaleSwitch, PageImage, SubmitConfirm, SubmitResult,
 };
 use edictora::images::fetch::ImageFetcher;
 use edictora::images::{ExpectedImageFile, ExpectedImages, ExpectedSlot, ImageSlot};
@@ -53,6 +53,8 @@ struct FakeDashboard {
     reads: usize,
     /// `get_locales` の呼び出し回数（言語欄を実際に開く操作 1 回分に相当）
     locale_reads: usize,
+    /// 言語ごとの `switch_locale_for_images` の結果（呼ぶたびに先頭から使う。尽きたら `ContentChanged`）
+    switch_results: HashMap<String, Vec<LocaleSwitch>>,
 }
 
 impl FakeDashboard {
@@ -71,6 +73,7 @@ impl FakeDashboard {
             text: HashMap::new(),
             reads: 0,
             locale_reads: 0,
+            switch_results: HashMap::new(),
         }
     }
 
@@ -210,6 +213,16 @@ impl ListingPage for FakeDashboard {
 }
 
 impl ImagePage for FakeDashboard {
+    fn switch_locale_for_images(
+        &mut self,
+        code: &str,
+        cancel: &CancelToken,
+    ) -> Result<LocaleSwitch> {
+        self.switch_locale(code, cancel)?;
+        let queued = self.switch_results.get_mut(code).filter(|q| !q.is_empty());
+        Ok(queued.map_or(LocaleSwitch::ContentChanged, |q| q.remove(0)))
+    }
+
     fn read_images(&mut self, slot: ImageSlot, _: &CancelToken) -> Result<Vec<PageImage>> {
         self.reads += 1;
         let key = self.key(slot);
@@ -595,6 +608,93 @@ fn push_images_ローカライズ版はロケールごとに切替_置換_保存
     assert!(save < ko);
     // ローカライズ版があるので言語一覧は 1 回読む
     assert_eq!(page.locale_reads, 1);
+}
+
+/// ja のスロットだけを対象にした正本（ja1.png = J1）と、その画面（en が既定の言語）
+fn localized_ja_case(saved_ja: &[&str], switch: &[LocaleSwitch]) -> (FakeDashboard, ExpectedItem) {
+    let mut page = FakeDashboard::new(&["en", "ja"]);
+    page.set_saved(ImageSlot::LocalizedScreenshots, Some("ja"), saved_ja);
+    page.switch_results
+        .insert("ja".to_string(), switch.to_vec());
+    let expected = item(vec![slot(
+        ImageSlot::LocalizedScreenshots,
+        Some("ja"),
+        &[("ja1.png", "J1")],
+    )]);
+    register(&mut page, &expected);
+    (page, expected)
+}
+
+fn push(page: &mut FakeDashboard, expected: &ExpectedItem) -> Result<services::ImagePushResult> {
+    services::push_images(
+        page,
+        &FakeFetcher { unfetchable: None },
+        expected,
+        &no_progress,
+        &CancelToken::new(),
+    )
+}
+
+/// 言語の切替で画面の中身が入れ替わったと確かめられなければ、差分があっても最初の削除の前に止める（R12）
+#[test]
+fn push_images_ローカライズ版は中身の切替を確かめられなければ削除の前に止める() {
+    let (mut page, expected) = localized_ja_case(&["J-OLD"], &[LocaleSwitch::ContentUnchanged]);
+
+    let err = push(&mut page, &expected).unwrap_err();
+
+    assert!(matches!(&err, Error::WriteBlocked(m) if m.contains("ja")));
+    assert_eq!(
+        page.count("delete") + page.count("upload") + page.count("save"),
+        0
+    );
+}
+
+/// 差分が無く書き込まないなら、中身の切替を確かめられなくても止めない
+#[test]
+fn push_images_ローカライズ版が一致なら中身の切替を確かめられなくても止めない() {
+    let (mut page, expected) = localized_ja_case(&["J1"], &[LocaleSwitch::ContentUnchanged]);
+
+    let result = push(&mut page, &expected).unwrap();
+
+    assert!(result.saved.is_empty());
+    assert_eq!(
+        page.count("delete") + page.count("upload") + page.count("save"),
+        0
+    );
+}
+
+/// 切り替える前から目的の言語なら、差分のある置き場を書き換える
+#[test]
+fn push_images_ローカライズ版が選択済みの言語なら書き込みを進める() {
+    let (mut page, expected) = localized_ja_case(
+        &["J-OLD"],
+        &[LocaleSwitch::AlreadySelected, LocaleSwitch::AlreadySelected],
+    );
+
+    let result = push(&mut page, &expected).unwrap();
+
+    assert_eq!(
+        result.saved,
+        vec!["[ja] ローカライズ版スクリーンショット".to_string()]
+    );
+    assert_eq!(
+        page.saved_digests(ImageSlot::LocalizedScreenshots, Some("ja")),
+        vec!["J1"]
+    );
+}
+
+/// 保存後の切替で中身の入れ替わりを確かめられなければ、照合せず成功と報告しない
+#[test]
+fn push_images_保存後の言語の切替を確かめられなければ成功と報告しない() {
+    let (mut page, expected) = localized_ja_case(
+        &["J-OLD"],
+        &[LocaleSwitch::ContentChanged, LocaleSwitch::ContentUnchanged],
+    );
+
+    let err = push(&mut page, &expected).unwrap_err();
+
+    assert!(matches!(&err, Error::Dashboard(m) if m.contains("ja")));
+    assert_eq!(page.count("save"), 1);
 }
 
 /// 無保存の最終照合は最初の照合で読んだ画像から作り、読み直しも言語の切替もやり直さない（C-1）

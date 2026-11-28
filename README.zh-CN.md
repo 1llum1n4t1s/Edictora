@@ -26,7 +26,7 @@
 - **“隐私”标签页**：如果配置中的项目写了 `privacy`，`pull`、`diff`、`push` 也会处理控制台的“隐私”标签页（Privacy practices：单一用途说明、各权限的理由、数据使用披露）。可用 `--only privacy` 缩小范围。只保存为草稿，不会提交审核。
 - **submit**：将一个项目提交审核。不会更改“审核后自动发布”设置。
 - **login**：使用专用配置文件打开 Chrome，让您自行登录 Google。
-- **update**：如有新版本，则下载并安装。仅在您通过 Setup 安装 Edictora 时有效，并且会在您登录 Windows 时自动运行。
+- **update**：如有新版本，则下载并安装。通过 Setup 安装 Edictora 时，还会在您登录 Windows 时自动运行；Portable 版可以用 `current\edictora.exe update` 手动更新。
 
 ## 显示语言
 
@@ -50,7 +50,7 @@ Edictora 的消息、差异输出和帮助文本提供九种语言：日语、�
 - Portable 版（`Edictora-win-Portable.zip`）不会在登录时自动更新，也不会把自己添加到 `Path`。要更新它，请在您解压的文件夹中运行 `current\edictora.exe update`。从源代码构建的可执行文件不会自行更新。
 - 当 `login`、`pull`、`diff`、`push` 或 `submit` 正在运行时，绝不会应用更新。Edictora 会先完成下载，稍后再应用更新。
   - 如果在应用更新期间运行这些命令之一，它会在不打开 Chrome 的情况下以退出码 1 退出。请稍候，然后重新运行。
-  - 更新进程退出后，Update.exe 还需要几秒钟来替换文件，Edictora 无法保护这段间隙。更新之后，请稍等片刻再运行命令。
+  - 更新进程退出后，在 Update.exe 完成文件替换之前，这些命令同样会停止。
 - 卸载会移除 `%LOCALAPPDATA%\Edictora` 以及 `Run` 和 `Path` 条目。您的数据（`%LOCALAPPDATA%\Edictora.Data`）和设置（`%APPDATA%\Edictora`）会被保留，如果不再需要，请自行删除。
 
 ## 系统要求
@@ -134,6 +134,7 @@ Edictora 的消息、差异输出和帮助文本提供九种语言：日语、�
 - `push --yes` 只在有差异时整体替换一个位置（先全部删除，再按顺序上传），然后保存草稿、重新载入并再次核对。处理顺序为：商店图标 → 小型图块 → 横幅 → 全语言截图 → 各语言的本地化截图。
 - **删除图片会立即在控制台生效**（会提示“此操作无法撤销”，且未保存就重新载入后该位置仍为空）。如果 push 中途停止，草稿中可能缺少图片：再次运行即可补全。待审核的项目不会被触碰。
 - 只有一种语言的项目没有本地化截图，请使用 `--image-scope global`。如果 `localizedScreenshots` 中的语言不在控制台上，Edictora 会在更改任何内容之前停止：请使用 `--image-scope global` 或 `--locale`。
+- 如果 Edictora 无法确认切换语言后页面内容已随之切换（例如说明文字和本地化截图都与上一种语言相同），它会不写入任何内容并停止（退出代码 4）。如果在保存后重新读取页面时无法确认切换，已保存的内容会保留，但不会报告成功，而是以错误结束（退出代码 1）。
 - 仅当控制台以日语显示时才能写入图片（英文文案尚未确认）。
 
 ```powershell
@@ -198,7 +199,7 @@ edictora submit --item <id> --yes               # Submit one item for review
 | 退出码 | 含义 |
 |---|---|
 | 0 | 成功（无差异） |
-| 1 | 运行时错误（信息中心操作失败、验证不一致等） |
+| 1 | 运行时错误（信息中心操作失败、验证不一致、同一 Chrome 配置文件正被另一个 edictora 使用等） |
 | 2 | 参数或配置无效（不会打开 Chrome） |
 | 3 | 发现差异（`diff`，或未带 `--yes` 的 `push`） |
 | 4 | 写入已中止（审核中，或无法确定状态） |
@@ -220,7 +221,7 @@ edictora submit --item <id> --yes               # Submit one item for review
 
 `edictora mcp` 是通过标准输入输出运行的 MCP 服务器。把它注册到 Claude Code、Codex 或其他客户端后，AI 在编辑您的商品详情时就能找到并使用 Edictora。
 
-**如果 Claude Code 和 Codex 的官方 CLI（`claude` 和 `codex`）在 `PATH` 中，Setup 会自动把 Edictora 注册到这两者。** 卸载时只会移除指向 Edictora 的注册。
+**如果 Claude Code 和 Codex 的官方 CLI（`claude` 和 `codex`）在 `PATH` 中，Setup 会自动把 Edictora 注册到这两者。** 它只查找 `claude.exe` 和 `codex.exe`，不使用 `.cmd` 包装器（例如通过 npm 安装时）；如果只有 `.cmd`，请按下面的步骤手动注册。卸载时只会移除指向 Edictora 的注册。
 - 如果安装时缺少某个 CLI，或注册没有及时完成，Edictora 会在您下次登录时重试。之后才安装 CLI 的情况也一样。
 - 如果您在注册添加之后自行移除了它，Edictora 不会再次添加。
 
@@ -300,6 +301,7 @@ args = ["mcp"]
 - 当无法确认项目状态可以安全编辑时（例如“审核中”），Edictora 不会写入。它绝不会取消审核。
 - 字段和按钮通过标签、角色和文本查找，绝不使用 CSS 类名。如果一次查找没有恰好匹配一个元素，Edictora 就会停止。
 - Chrome 不带自动化标志启动，并会被正常关闭。**配置文件绝不会被删除。**
+- 同一个 Chrome 配置文件一次只供一个 edictora（CLI 或 MCP 工具）使用。如果另一个 edictora 正在使用它，后运行的命令会在不打开 Chrome 的情况下以退出代码 1 停止。在保存、删除或上传图片以及提交审核之前，Edictora 会再次确认标签页仍停留在该项目的页面上。
 - 失败时保存的页面文本快照保存到 `%LOCALAPPDATA%\Edictora.Data\diagnostics`，绝不会保存到您的仓库中。其中可能包含信息中心页面上字段的值（publisherId 以及 Google 账号的姓名和电子邮件地址会被遮盖）。
 - 图片更新只替换有差异的位置。不会调整顺序，更不可能提交审核（图片处理中没有调用提交的途径）。
 - “隐私”标签页的更新只改动有差异的字段，不会提交审核（代码中没有可调用的途径）；如果控制台上的权限与配置不一致，会在写入任何内容之前停止。

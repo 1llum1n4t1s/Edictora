@@ -23,8 +23,8 @@ use crate::dashboard::text::{CategoryText, DashboardLang, DashboardText, Privacy
 use crate::dashboard::urls;
 use crate::dashboard::write_gate::ItemPageState;
 use crate::dashboard::{
-    EditorPage, ImagePage, ListingPage, PageImage, PrivacyPage, SubmitConfirm, SubmitDialogInfo,
-    SubmitResult,
+    EditorPage, ImagePage, ListingPage, LocaleSwitch, PageImage, PrivacyPage, SubmitConfirm,
+    SubmitDialogInfo, SubmitResult,
 };
 use crate::error::{Error, Result};
 use crate::images::ImageSlot;
@@ -268,11 +268,73 @@ impl<'a> DashboardItemPage<'a> {
         }
     }
 
+    /// 書き込みの操作（保存・削除・アップロード・審査送信）の直前に、タブがまだ開いたアイテムのページにいるか確かめる。
+    /// ログイン画面へ移されていれば `LoginRequired`、別のページなら `Dashboard` エラー（押さずに止める）
+    fn ensure_still_on_item(&self, cancel: &CancelToken) -> Result<()> {
+        let url = self.page.get_url(cancel)?;
+        if urls::is_login_page(url.as_deref()) {
+            return Err(Error::LoginRequired);
+        }
+        let item_id = self.item_label();
+        let on_item = !item_id.is_empty()
+            && match self.tab {
+                Tab::Listing => urls::is_edit_page_of(url.as_deref(), &item_id),
+                Tab::Privacy => urls::is_privacy_page_of(url.as_deref(), &item_id),
+            };
+        if !on_item {
+            return Err(Error::Dashboard(tr!(
+                "dashboard.the_tab_left_the_page_of_item",
+                item_id = item_id
+            )));
+        }
+        Ok(())
+    }
+
+    /// 言語の切替で入れ替わる画面の中身の指紋（説明欄の値と、ローカライズ版スクリーンショットの画像 src の並び）。
+    /// 待たずに 1 回だけ読む。説明欄が無ければ `switch_locale` と同じくすぐエラーにする。
+    /// ローカライズ版のスロットが無い言語（既定の言語など）もあるので、スロットが無ければ画像 0 枚として扱う
+    fn locale_fingerprint(&self, cancel: &CancelToken) -> Result<LocaleFingerprint> {
+        let t = self.t()?;
+        let textareas = self.collect(kinds::TEXTAREA, cancel)?;
+        let textarea = sel::pick_description(&textareas)?;
+        let description = self.value(kinds::TEXTAREA, textarea.index, cancel)?;
+        let inputs = self.collect(kinds::FILE_INPUT, cancel)?;
+        let images = sel::pick_image_slot(t, &inputs, ImageSlot::LocalizedScreenshots)
+            .map(|slot| {
+                slot.images
+                    .iter()
+                    .map(|i| i.src.clone())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(LocaleFingerprint {
+            description,
+            images,
+        })
+    }
+
     /// ページ側の例外はダッシュボード操作の失敗として扱う。
     /// ページ内スクリプトが固定の印で投げた例外（要素が消えた）は、ここで利用者向けの文に直す
     fn evaluate(&self, expression: &str, cancel: &CancelToken) -> Result<Value> {
         self.page.evaluate(expression, cancel).map_err(page_error)
     }
+}
+
+/// 言語の切替で入れ替わる画面の中身の指紋（[`DashboardItemPage::locale_fingerprint`]）
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocaleFingerprint {
+    description: String,
+    images: Vec<String>,
+}
+
+/// 切替後の指紋が、切替前（`before`）と違い、直前の読み（`previous`）と同じなら、中身が入れ替わって落ち着いたとみなす
+fn locale_content_settled(
+    before: &LocaleFingerprint,
+    previous: Option<&LocaleFingerprint>,
+    now: &LocaleFingerprint,
+) -> bool {
+    now != before && previous == Some(now)
 }
 
 /// ページ内スクリプトの例外（`JavaScript`）をダッシュボード操作の失敗（利用者向けの文）へ直す。他のエラーはそのまま
@@ -494,6 +556,7 @@ impl EditorPage for DashboardItemPage<'_> {
                 save = save
             )));
         }
+        self.ensure_still_on_item(cancel)?;
         self.click(
             kinds::BUTTON,
             button.index,
@@ -715,6 +778,7 @@ impl ListingPage for DashboardItemPage<'_> {
                 submit = submit
             )));
         }
+        self.ensure_still_on_item(cancel)?;
         self.click(
             kinds::BUTTON,
             button.index,
@@ -776,6 +840,7 @@ impl ListingPage for DashboardItemPage<'_> {
                 "dashboard.the_submit_button_in_the_confirmation_dialog"
             )));
         }
+        self.ensure_still_on_item(cancel)?;
         self.click(
             kinds::DIALOG_BUTTON,
             ok.index,
@@ -1157,6 +1222,45 @@ impl PrivacyPage for DashboardItemPage<'_> {
 }
 
 impl ImagePage for DashboardItemPage<'_> {
+    fn switch_locale_for_images(
+        &mut self,
+        code: &str,
+        cancel: &CancelToken,
+    ) -> Result<LocaleSwitch> {
+        let t = self.t()?;
+        self.page.prepare_for_input(cancel)?;
+        let combos = self.collect(kinds::COMBOBOX, cancel)?;
+        let combo = sel::pick_language_combobox(t, &combos)?;
+        let already = sel::current_locale_code(t, combo)
+            .or_else(|| sel::single_locale_code(t, combo))
+            .is_some_and(|c| eq_ic(&c, code));
+        if already {
+            return Ok(LocaleSwitch::AlreadySelected);
+        }
+
+        // 切替前の中身を待たずに 1 回だけ読む
+        let before = self.locale_fingerprint(cancel)?;
+        self.switch_locale(code, cancel)?;
+
+        // 中身が切替前と変わり、2 回続けて同じになるまで待つ。変わらなければ確かめられなかったとして返す
+        let mut previous: Option<LocaleFingerprint> = None;
+        let changed = try_poll(
+            || {
+                let now = self.locale_fingerprint(cancel)?;
+                let settled = locale_content_settled(&before, previous.as_ref(), &now);
+                previous = Some(now);
+                Ok(settled.then_some(()))
+            },
+            Duration::from_secs(15),
+            cancel,
+        )?;
+        Ok(if changed {
+            LocaleSwitch::ContentChanged
+        } else {
+            LocaleSwitch::ContentUnchanged
+        })
+    }
+
     fn read_images(&mut self, slot: ImageSlot, cancel: &CancelToken) -> Result<Vec<PageImage>> {
         Ok(self.locate_slot(slot, cancel)?.images)
     }
@@ -1232,6 +1336,7 @@ impl ImagePage for DashboardItemPage<'_> {
         }
         // 押してよいのは削除ボタンだけ（並べ替えなどは押さない）
         sel::ensure_image_click_allowed(t, &button.label)?;
+        self.ensure_still_on_item(cancel)?;
         self.click(kinds::IMAGE_BUTTON, button.index, &what, cancel)?;
 
         // 削除の確認ダイアログ（「この画像を削除してもよろしいですか？」）が出たら、文面を確かめて確定ボタンだけを押す。
@@ -1257,6 +1362,7 @@ impl ImagePage for DashboardItemPage<'_> {
                                 what = t.delete_image_confirm_button
                             )));
                         }
+                        self.ensure_still_on_item(cancel)?;
                         self.click(
                             kinds::DIALOG_BUTTON,
                             ok.index,
@@ -1312,6 +1418,7 @@ impl ImagePage for DashboardItemPage<'_> {
         }
         // パスは CDP の引数で渡す（ページ内スクリプトには埋め込まない）
         let expression = scripts::element(t, kinds::FILE_INPUT, info.index);
+        self.ensure_still_on_item(cancel)?;
         self.page
             .set_file_input_files(&expression, &[path.to_path_buf()], cancel)
             .map_err(page_error)?;

@@ -2,7 +2,7 @@
 
 `edictora mcp` is an MCP server that runs over standard input and output. Once it's registered with Claude Code, Codex or another client, the AI can use Edictora when it edits your store listings.
 
-**Setup registers Edictora with Claude Code and Codex automatically**, if their official CLIs (`claude` and `codex`) are on `PATH`. Uninstalling removes only registrations that point to Edictora.
+**Setup registers Edictora with Claude Code and Codex automatically**, if their official CLIs (`claude` and `codex`) are on `PATH`. It looks only for `claude.exe` and `codex.exe`, not `.cmd` wrappers (as installed by npm, for example); if you only have a `.cmd`, register by hand: see [Registering by hand](mcp-registration.md). Uninstalling removes only registrations that point to Edictora.
 - If a CLI was missing at install time, or registration didn't finish in time, Edictora retries at your next sign-in (also if you install a CLI later).
 - If you remove a registration yourself after it was added, Edictora doesn't add it again.
 - If Toolport already serves Edictora, direct registration is skipped: see [Toolport and automatic registration](mcp-toolport.md).

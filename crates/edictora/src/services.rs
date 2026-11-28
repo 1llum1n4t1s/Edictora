@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use crate::cancel::CancelToken;
 use crate::dashboard::write_gate::ensure_allowed;
 use crate::dashboard::{
-    EditorPage, ImagePage, ListingPage, PrivacyPage, SubmitConfirm, SubmitResult,
+    EditorPage, ImagePage, ListingPage, LocaleSwitch, PrivacyPage, SubmitConfirm, SubmitResult,
 };
 use crate::error::{Error, Result};
 use crate::images::fetch::ImageFetcher;
@@ -1027,7 +1027,7 @@ fn push_images_core(
     let mut replaced: Vec<&ExpectedSlot> = Vec::new();
     for slot in &global {
         cancel.check()?;
-        match replace_if_different(page, fetcher, slot, name, progress, cancel)? {
+        match replace_if_different(page, fetcher, slot, name, &|| Ok(()), progress, cancel)? {
             None => replaced.push(slot),
             Some(current) => {
                 unchanged.push(slot.label());
@@ -1059,10 +1059,21 @@ fn push_images_core(
     // ── ローカライズ版（ロケールごと）──
     for code in images.localized_locales() {
         cancel.check()?;
-        page.switch_locale(code, cancel)?;
+        let switched = page.switch_locale_for_images(code, cancel)?;
+        // 画面の中身が新しい言語のものに入れ替わったと確かめられないときは、最初の削除の前に止める。
+        // 差分が無く書き込まないなら止めない（読むだけなので取り違えても画面は変わらない）
+        let before_write = || {
+            if switched == LocaleSwitch::ContentUnchanged {
+                return Err(Error::WriteBlocked(tr!(
+                    "services.cannot_confirm_the_localized_content_switched",
+                    code = code
+                )));
+            }
+            Ok(())
+        };
         for slot in images.localized_slots(code) {
             if let Some(current) =
-                replace_if_different(page, fetcher, slot, name, progress, cancel)?
+                replace_if_different(page, fetcher, slot, name, &before_write, progress, cancel)?
             {
                 unchanged.push(slot.label());
                 matched.insert(slot_index(&images, slot), current);
@@ -1072,7 +1083,13 @@ fn push_images_core(
             progress(&tr!("services.saving_images_as_draft", name = name));
             page.save_draft(cancel)?;
             page.reload(cancel)?;
-            page.switch_locale(code, cancel)?;
+            // 保存後の照合が別の言語の中身を読まないよう、入れ替わりを確かめられなければ成功と報告しない
+            if page.switch_locale_for_images(code, cancel)? == LocaleSwitch::ContentUnchanged {
+                return Err(Error::Dashboard(tr!(
+                    "services.cannot_confirm_the_localized_content_switched_after_save",
+                    code = code
+                )));
+            }
             verify_slot(
                 page,
                 fetcher,
@@ -1120,12 +1137,14 @@ fn slot_index(images: &ExpectedImages, slot: &ExpectedSlot) -> usize {
 
 /// スロット 1 つについて、現在値を照合し、違えば置き換える（未保存）。
 /// 一致していて何もしなかったら、そのとき読んだ画像を `Some` で返す。置き換えたら `None`。
-/// 保存の頻度と `cancel.check()` は呼び出し側ごとに違うため、ここには入れない
+/// 保存の頻度と `cancel.check()` は呼び出し側ごとに違うため、ここには入れない。
+/// `before_write` は差分があり置き換える前（最初の削除の前）に 1 回呼び、エラーなら何も触らずに返す
 fn replace_if_different(
     page: &mut dyn ImagePage,
     fetcher: &dyn ImageFetcher,
     slot: &ExpectedSlot,
     name: &str,
+    before_write: &dyn Fn() -> Result<()>,
     progress: &Progress<'_>,
     cancel: &CancelToken,
 ) -> Result<Option<Vec<CurrentImage>>> {
@@ -1143,6 +1162,7 @@ fn replace_if_different(
         ));
         return Ok(Some(current));
     }
+    before_write()?;
     replace_slot(page, slot, name, progress, cancel)?;
     Ok(None)
 }

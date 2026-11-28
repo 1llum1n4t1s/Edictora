@@ -191,7 +191,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "Edictora: save store listing to match source files",
             "Chrome Web Store (CWS) store listing description, image, and Privacy practices tab update: updates only the fields and images that differ from the source files, saves as draft, \
                  then reloads and verifies (images are replaced whole slot by slot; only=images / imageScope narrow it; only=privacy limits it to the Privacy practices tab). Without confirm: true it shows the differences and stops. If the item cannot be written (for example, pending review) \
-                 it stops without changing anything (exit code 4). Does not submit for review (use edictora_submit).",
+                 it stops without writing to that item (exit code 4); items or image slots processed earlier in the same run may already be saved, so check Result and Progress. Does not submit for review (use edictora_submit).",
             push_props,
             &[],
             false,
@@ -368,7 +368,7 @@ fn exit_code_meaning(code: i32) -> &'static str {
         exit_codes::DIFFERENCES => "differences found (not a failure)",
         exit_codes::USAGE => "invalid arguments or config (Chrome was not opened)",
         exit_codes::BLOCKED => {
-            "write aborted (pending review, state could not be determined, etc. Nothing was changed)"
+            "write aborted (pending review, state could not be determined, etc. The stopped target was not written; items processed earlier in this run may already be saved, so check Result and Progress)"
         }
         exit_codes::LOGIN_REQUIRED => "sign-in required",
         exit_codes::CANCELLED => "cancelled",

@@ -15,6 +15,7 @@
 - ダウンロード済みのパッケージも検証し直す（SDK は検証しない）。宣言の Size を上限にダウンロードを打ち切る。
 - nupkg から `Squirrel.exe` を取り出して `Update.exe` を差し替える処理は持たない（zip を展開しない。Update.exe はインストール時の版のまま）。
 - 起動時の自動適用（`VelopackApp::run`）はしない（ダウンロードしたその場で適用を任せる）。
+- 実行中ロックの排他ハンドルを継承可能にして Update.exe を起動し、Update.exe の終了まで排他を続ける。1.2.161 の Update.exe はフックなどの子プロセスへハンドルを継承させない（`CreateProcessW` の `bInheritHandles=false`、昇格は `ShellExecuteExW`）ので、ハンドルは Update.exe の終了で閉じる。起動に `inherit_handles(false)` や属性リストを足さない。出典: [apply_windows_impl.rs](https://github.com/velopack/velopack/blob/1.2.161/src/bins/src/commands/apply_windows_impl.rs)・[process_win.rs](https://github.com/velopack/velopack/blob/1.2.161/src/lib-rust/src/process_win.rs)。
 
 ## フックで行うこと
 

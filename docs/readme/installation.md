@@ -19,5 +19,5 @@ Run `Edictora-win-Setup.exe` (a Velopack installer). It installs to `%LOCALAPPDA
 - The Portable version (`Edictora-win-Portable.zip`) doesn't update at sign-in and doesn't add itself to `Path`. To update it, run `current\edictora.exe update` in the folder you extracted it to. Executables built from source don't update themselves.
 - Updates are never applied while `login`, `pull`, `diff`, `push` or `submit` is running; Edictora applies them later.
   - If you run one of these commands while an update is being applied, it exits with code 1 without opening Chrome. Wait a moment and run it again.
-  - Update.exe needs a few more seconds to replace files after the update process exits, and Edictora can't protect that gap. Right after an update, wait a moment before running a command.
+  - This also applies after the update process exits, until Update.exe has finished replacing the files.
 - Uninstalling removes `%LOCALAPPDATA%\Edictora` and the `Run` and `Path` entries. Your data (`%LOCALAPPDATA%\Edictora.Data`) and settings (`%APPDATA%\Edictora`) are kept; delete them yourself if you no longer need them.

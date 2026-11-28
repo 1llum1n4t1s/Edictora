@@ -26,7 +26,7 @@ Funciona como una única herramienta de línea de comandos (`edictora.exe`). Est
 - **Pestaña Privacidad**: si un elemento tiene `privacy` en la configuración, `pull`, `diff` y `push` también tratan la pestaña «Privacidad» del panel (Privacy practices: descripción del propósito único, justificación de cada permiso y declaración del uso de datos). Acótela con `--only privacy`. Solo se guarda como borrador; nunca se envía a revisión.
 - **submit**: envía un elemento a revisión. No cambia el ajuste «publicar automáticamente tras la revisión».
 - **login**: abre Chrome con el perfil dedicado para que inicie sesión en Google usted mismo.
-- **update**: descarga e instala una versión más reciente, si la hay. Solo funciona si instaló Edictora con Setup, y también se ejecuta automáticamente cuando inicia sesión en Windows.
+- **update**: descarga e instala una versión más reciente, si la hay. Si instaló Edictora con Setup, también se ejecuta automáticamente cuando inicia sesión en Windows; la versión Portable se actualiza manualmente con `current\edictora.exe update`.
 
 ## Idioma de visualización
 
@@ -50,7 +50,7 @@ Ejecute `Edictora-win-Setup.exe` (un instalador de Velopack). Se instala en `%LO
 - La versión Portable (`Edictora-win-Portable.zip`) no se actualiza automáticamente al iniciar sesión y no se añade a `Path`. Para actualizarla, ejecute `current\edictora.exe update` en la carpeta donde la extrajo. Los ejecutables compilados desde el código fuente no se actualizan por sí solos.
 - Las actualizaciones nunca se aplican mientras `login`, `pull`, `diff`, `push` o `submit` se están ejecutando. Edictora termina la descarga y aplica la actualización más tarde.
   - Si ejecuta uno de estos comandos mientras se está aplicando una actualización, termina con el código 1 sin abrir Chrome. Espere un momento y vuelva a ejecutarlo.
-  - Cuando el proceso de actualización termina, Update.exe necesita unos segundos más para reemplazar los archivos, y Edictora no puede proteger ese intervalo. Justo después de una actualización, espere un momento antes de ejecutar un comando.
+  - Esto también se aplica después de que termina el proceso de actualización, hasta que Update.exe termina de reemplazar los archivos.
 - La desinstalación elimina `%LOCALAPPDATA%\Edictora` y las entradas de `Run` y `Path`. Sus datos (`%LOCALAPPDATA%\Edictora.Data`) y su configuración (`%APPDATA%\Edictora`) se conservan, así que elimínelos usted mismo si ya no los necesita.
 
 ## Requisitos
@@ -134,6 +134,7 @@ Añada `images` a un elemento para gestionar sus imágenes. Como en el resto de 
 - `push --yes` reemplaza una ubicación entera (borra todo y sube en orden) solo si difiere, guarda un borrador, recarga y vuelve a comprobar. El orden es: icono de la tienda, mosaico pequeño, marquee, capturas globales y, después, las capturas localizadas de cada idioma.
 - **Borrar una imagen surte efecto de inmediato en el panel** (pregunta «no se puede deshacer» y, al recargar sin guardar, la ubicación seguía vacía). Si un push se interrumpe a medias, el borrador puede quedar sin algunas imágenes: vuelva a ejecutarlo para terminar. Edictora nunca toca un elemento pendiente de revisión.
 - Un elemento con un solo idioma no tiene capturas localizadas; use `--image-scope global`. Si un idioma de `localizedScreenshots` no está en el panel, Edictora se detiene antes de cambiar nada: use `--image-scope global` o `--locale`.
+- Si Edictora no puede confirmar que al cambiar de idioma cambió el contenido de la página (por ejemplo, si la descripción y las capturas localizadas son las mismas que en el idioma anterior), se detiene sin escribir (código de salida 4). Si no puede confirmar el cambio al volver a leer la página después de guardar, los cambios guardados se mantienen, pero termina con un error (código de salida 1) en lugar de informar éxito.
 - La escritura de imágenes solo funciona con el panel en japonés (los textos en inglés no están verificados).
 
 ```powershell
@@ -198,7 +199,7 @@ edictora submit --item <id> --yes               # Submit one item for review
 | Código de salida | Significado |
 |---|---|
 | 0 | Correcto (sin diferencias) |
-| 1 | Error de ejecución (falló una operación del panel, la verificación no coincide, etc.) |
+| 1 | Error de ejecución (falló una operación del panel, la verificación no coincide, otro edictora está usando el mismo perfil de Chrome, etc.) |
 | 2 | Argumentos o configuración no válidos (no se abre Chrome) |
 | 3 | Se encontraron diferencias (`diff`, o `push` sin `--yes`) |
 | 4 | Escritura interrumpida (revisión pendiente, o no se pudo determinar el estado) |
@@ -220,7 +221,7 @@ Para ver lo que ocurre, añada `--show-browser`. `login` siempre muestra una ven
 
 `edictora mcp` es un servidor MCP que funciona a través de la entrada y la salida estándar. Una vez registrado en Claude Code, Codex u otro cliente, la IA puede encontrar y usar Edictora cuando edite las fichas de su tienda.
 
-**Setup registra Edictora automáticamente en Claude Code y Codex**, si sus CLI oficiales (`claude` y `codex`) están en `PATH`. La desinstalación elimina solo los registros que apuntan a Edictora.
+**Setup registra Edictora automáticamente en Claude Code y Codex**, si sus CLI oficiales (`claude` y `codex`) están en `PATH`. Solo busca `claude.exe` y `codex.exe`, no los envoltorios `.cmd` (como los que instala npm); si solo tiene un `.cmd`, regístrelo manualmente con los pasos de abajo. La desinstalación elimina solo los registros que apuntan a Edictora.
 - Si faltaba una CLI en el momento de la instalación, o el registro no terminó a tiempo, Edictora lo reintenta en su próximo inicio de sesión. Lo mismo ocurre si instala una CLI más tarde.
 - Si usted elimina un registro después de que se añadiera, Edictora no lo vuelve a añadir.
 
@@ -300,6 +301,7 @@ Si usa una pasarela MCP (como Toolport), registre en ella el mismo comando (stdi
 - Edictora no escribe cuando no se puede confirmar que el estado del elemento es seguro para editar, como «Pendiente de revisión». Nunca cancela una revisión.
 - Los campos y los botones se encuentran por etiqueta, rol y texto, nunca por nombres de clase CSS. Si una búsqueda no coincide con exactamente un elemento, Edictora se detiene.
 - Chrome se inicia sin indicadores de automatización y se cierra de forma limpia. **El perfil nunca se elimina.**
+- Solo un edictora (CLI o herramienta MCP) usa un perfil de Chrome a la vez. Si otro edictora ya lo está usando, el comando que ejecutó después termina con el código 1 sin abrir Chrome. Justo antes de guardar, eliminar o subir imágenes, o enviar a revisión, Edictora vuelve a comprobar que la pestaña sigue en la página del elemento.
 - Las instantáneas de texto de la página tomadas al fallar se guardan en `%LOCALAPPDATA%\Edictora.Data\diagnostics`, nunca en su repositorio. Pueden contener los valores de los campos de la página del panel (el publisherId y el nombre y la dirección de correo de su cuenta de Google se ocultan).
 - Las actualizaciones de imágenes reemplazan solo las ubicaciones que difieren. No reordenan imágenes, y nunca pueden enviar a revisión (el código de imágenes no tiene forma de llamarlo).
 - Las actualizaciones de la pestaña Privacidad solo cambian los campos que difieren, nunca envían a revisión (el código no tiene forma de llamarlo) y se detienen sin escribir nada si los permisos del panel no coinciden con la configuración.

@@ -60,6 +60,9 @@ impl ApplyLauncher for ProcessApplyLauncher {
             use std::os::windows::process::CommandExt;
             command.creation_flags(crate::util::CREATE_NO_WINDOW);
         }
+        // 実行中ロックの排他は、継承可能にしたハンドルを Update.exe へ継承させて保っている
+        // （std の Command は既定で bInheritHandles=TRUE）。`inherit_handles(false)` や属性リスト
+        // （継承するハンドルの一覧）を足してはいけない。足すと適用中にロックが空き、Chrome を開くコマンドが動きうる
         command.spawn().map(|_| ()).map_err(|e| {
             update_err(crate::tr!(
                 "update.could_not_start_update_exe",

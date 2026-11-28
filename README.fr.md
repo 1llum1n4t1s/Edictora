@@ -26,7 +26,7 @@ Il s'exécute sous la forme d'un unique outil en ligne de commande (`edictora.ex
 - **Onglet Confidentialité** : si un élément a `privacy` dans la configuration, `pull`, `diff` et `push` gèrent aussi l'onglet « Confidentialité » du tableau de bord (Privacy practices : description de l'objectif unique, justification de chaque permission et déclaration d'utilisation des données). Limitez-les avec `--only privacy`. Enregistré uniquement comme brouillon ; jamais soumis à l'examen.
 - **submit** : envoie un élément pour examen. Il ne modifie pas le paramètre « publier automatiquement après examen ».
 - **login** : ouvre Chrome avec le profil dédié pour que vous puissiez vous connecter vous-même à Google.
-- **update** : télécharge et installe une version plus récente, s'il y en a une. Cela ne fonctionne que si vous avez installé Edictora avec Setup, et la commande s'exécute aussi automatiquement à l'ouverture de votre session Windows.
+- **update** : télécharge et installe une version plus récente, s'il y en a une. Si vous avez installé Edictora avec Setup, la commande s'exécute aussi automatiquement à l'ouverture de votre session Windows ; la version Portable se met à jour manuellement avec `current\edictora.exe update`.
 
 ## Langue d'affichage
 
@@ -50,7 +50,7 @@ Exécutez `Edictora-win-Setup.exe` (un programme d'installation Velopack). Il s'
 - La version Portable (`Edictora-win-Portable.zip`) ne se met pas à jour automatiquement à l'ouverture de session et ne s'ajoute pas au `Path`. Pour la mettre à jour, exécutez `current\edictora.exe update` dans le dossier où vous l'avez extraite. Les exécutables compilés à partir des sources ne se mettent pas à jour eux-mêmes.
 - Les mises à jour ne sont jamais appliquées pendant l'exécution de `login`, `pull`, `diff`, `push` ou `submit`. Edictora termine le téléchargement et applique la mise à jour plus tard.
   - Si vous lancez l'une de ces commandes pendant l'application d'une mise à jour, elle se termine avec le code 1 sans ouvrir Chrome. Patientez un instant, puis relancez-la.
-  - Une fois le processus de mise à jour terminé, Update.exe a besoin de quelques secondes de plus pour remplacer les fichiers, et Edictora ne peut pas protéger cet intervalle. Juste après une mise à jour, patientez un instant avant d'exécuter une commande.
+  - Cela s'applique aussi une fois le processus de mise à jour terminé, jusqu'à ce qu'Update.exe ait fini de remplacer les fichiers.
 - La désinstallation supprime `%LOCALAPPDATA%\Edictora` ainsi que les entrées `Run` et `Path`. Vos données (`%LOCALAPPDATA%\Edictora.Data`) et vos paramètres (`%APPDATA%\Edictora`) sont conservés ; supprimez-les vous-même si vous n'en avez plus besoin.
 
 ## Configuration requise
@@ -134,6 +134,7 @@ Ajoutez `images` à un élément pour gérer ses images. Comme pour les autres c
 - `push --yes` remplace un emplacement entier (tout supprimer, puis téléverser dans l'ordre) uniquement s'il diffère, enregistre un brouillon, recharge et vérifie à nouveau. Ordre : icône de la boutique, petite tuile, marquee, captures globales, puis les captures localisées de chaque langue.
 - **La suppression d'une image prend effet immédiatement sur le tableau de bord** (il demande « cette action est irréversible » et, après rechargement sans enregistrer, l'emplacement restait vide). Si un push s'arrête en cours de route, le brouillon peut rester privé de certaines images : relancez-le pour terminer. Edictora ne touche jamais un élément en attente d'examen.
 - Un élément à une seule langue n'a pas de captures localisées ; utilisez `--image-scope global`. Si une langue de `localizedScreenshots` n'est pas sur le tableau de bord, Edictora s'arrête avant de rien modifier : utilisez `--image-scope global` ou `--locale`.
+- Si Edictora ne peut pas confirmer que le changement de langue a modifié le contenu de la page (par exemple, si la description et les captures localisées sont les mêmes que dans la langue précédente), il s'arrête sans rien écrire (code de sortie 4). S'il ne peut pas confirmer le changement en relisant la page après l'enregistrement, les modifications enregistrées restent enregistrées, mais il se termine par une erreur (code de sortie 1) au lieu de signaler un succès.
 - L'écriture d'images ne fonctionne que lorsque le tableau de bord est en japonais (les libellés anglais ne sont pas vérifiés).
 
 ```powershell
@@ -198,7 +199,7 @@ edictora submit --item <id> --yes               # Submit one item for review
 | Code de sortie | Signification |
 |---|---|
 | 0 | Succès (aucune différence) |
-| 1 | Erreur d'exécution (échec d'une opération sur le tableau de bord, vérification non concordante, etc.) |
+| 1 | Erreur d'exécution (échec d'une opération sur le tableau de bord, vérification non concordante, même profil Chrome utilisé par un autre edictora, etc.) |
 | 2 | Arguments ou configuration non valides (Chrome n'est pas ouvert) |
 | 3 | Différences détectées (`diff`, ou `push` sans `--yes`) |
 | 4 | Écriture interrompue (examen en attente, ou état impossible à déterminer) |
@@ -220,7 +221,7 @@ Pour observer ce qui se passe, ajoutez `--show-browser`. `login` affiche toujour
 
 `edictora mcp` est un serveur MCP qui fonctionne via l'entrée et la sortie standard. Une fois enregistré auprès de Claude Code, de Codex ou d'un autre client, l'IA peut trouver et utiliser Edictora lorsqu'elle modifie vos fiches du Chrome Web Store.
 
-**Setup enregistre automatiquement Edictora auprès de Claude Code et de Codex**, si leurs CLI officielles (`claude` et `codex`) sont dans le `PATH`. La désinstallation supprime uniquement les enregistrements qui pointent vers Edictora.
+**Setup enregistre automatiquement Edictora auprès de Claude Code et de Codex**, si leurs CLI officielles (`claude` et `codex`) sont dans le `PATH`. Seuls `claude.exe` et `codex.exe` sont recherchés, pas les wrappers `.cmd` (installés par npm, par exemple) ; si vous n'avez qu'un `.cmd`, enregistrez Edictora manuellement en suivant les étapes ci-dessous. La désinstallation supprime uniquement les enregistrements qui pointent vers Edictora.
 - Si une CLI était absente au moment de l'installation, ou si l'enregistrement n'a pas abouti à temps, Edictora réessaie à votre prochaine ouverture de session. Il en va de même si vous installez une CLI plus tard.
 - Si vous supprimez vous-même un enregistrement après son ajout, Edictora ne le rajoute pas.
 
@@ -300,6 +301,7 @@ Si vous utilisez une passerelle MCP (comme Toolport), enregistrez la même comma
 - Edictora n'écrit pas lorsque le statut de l'élément ne peut pas être confirmé comme sûr pour la modification, par exemple « Examen en attente ». Il n'annule jamais un examen.
 - Les champs et les boutons sont trouvés par leur libellé, leur rôle et leur texte, jamais par des noms de classes CSS. Si une recherche ne correspond pas à exactement un élément, Edictora s'arrête.
 - Chrome est démarré sans indicateurs d'automatisation et fermé proprement. **Le profil n'est jamais supprimé.**
+- Un seul edictora (CLI ou outil MCP) utilise un profil Chrome à la fois. Si un autre edictora l'utilise déjà, la commande lancée en second se termine avec le code 1 sans ouvrir Chrome. Juste avant d'enregistrer, de supprimer ou d'importer des images, ou de soumettre pour examen, Edictora vérifie à nouveau que l'onglet est toujours sur la page de l'élément.
 - Les instantanés texte de la page pris en cas d'échec sont enregistrés dans `%LOCALAPPDATA%\Edictora.Data\diagnostics`, jamais dans votre dépôt. Ils peuvent contenir les valeurs des champs de la page du tableau de bord (le publisherId ainsi que le nom et l'adresse e-mail de votre compte Google sont masqués).
 - Les mises à jour d'images ne remplacent que les emplacements qui diffèrent. Elles ne touchent pas à l'ordre des images, et ne peuvent jamais soumettre à l'examen (le code des images n'a aucun moyen de l'appeler).
 - Les mises à jour de l'onglet Confidentialité ne modifient que les champs qui diffèrent, ne soumettent jamais à l'examen (le code n'a aucun moyen de l'appeler) et s'arrêtent sans rien écrire si les permissions du tableau de bord ne correspondent pas à la configuration.
